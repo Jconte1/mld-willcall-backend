@@ -109,6 +109,34 @@ publicAppointmentsRouter.get("/:id", async (req, res) => {
 });
 
 /**
+ * GET /api/public/appointments/:id/unsubscribe?token=...
+ */
+publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
+  const parsed = tokenSchema.safeParse(req.query);
+  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+
+  if (!parsed.success) {
+    return res.redirect(`${frontend}/unsubscribe?status=invalid`);
+  }
+
+  const token = await validateToken(req.params.id, parsed.data.token);
+  if (!token) {
+    return res.redirect(`${frontend}/unsubscribe?status=invalid`);
+  }
+
+  await prisma.pickupAppointment.update({
+    where: { id: req.params.id },
+    data: {
+      emailOptIn: false,
+      emailOptInAt: null,
+      emailOptInSource: "unsubscribe",
+    },
+  });
+
+  return res.redirect(`${frontend}/unsubscribe?status=success`);
+});
+
+/**
  * PATCH /api/public/appointments/:id?token=...
  * Body: { action: "cancel" } or { action: "reschedule", selectedDate, selectedSlots }
  */

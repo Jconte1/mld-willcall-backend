@@ -10,6 +10,7 @@ import { buildEmailMessage } from "../templates/email/buildEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { sendEmail } from "../providers/email/sendEmail";
 import { AppointmentWithContact, NotificationPayload } from "../types";
+import { buildUnsubscribeLink } from "../links/buildLink";
 
 function buildPayload(
   appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
@@ -18,6 +19,7 @@ function buildPayload(
 ): NotificationPayload {
   const snapshot = (job.payloadSnapshot || {}) as Record<string, any>;
   const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
+  const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
 
   return {
     appointmentId: appointment.id,
@@ -26,11 +28,24 @@ function buildPayload(
     endAt: appointment.endAt,
     orderNbrs,
     link,
+    unsubscribeLink: unsubscribeLink || undefined,
     oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
     oldEndAt: snapshot.oldEndAt ? new Date(snapshot.oldEndAt) : undefined,
     cancelReason: snapshot.cancelReason ?? null,
     staffInitiated: Boolean(snapshot.staffInitiated),
   };
+}
+
+function buildUnsubscribeFromLink(link: string, appointmentId: string) {
+  try {
+    const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "") || "http://localhost";
+    const url = new URL(link, base);
+    const token = url.searchParams.get("token");
+    if (!token) return "";
+    return buildUnsubscribeLink(appointmentId, token);
+  } catch {
+    return "";
+  }
 }
 
 export async function sendJob(

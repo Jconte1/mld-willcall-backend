@@ -37,6 +37,7 @@ export type NotificationPayload = {
   endAt: Date;
   orderNbrs?: string[];
   link: string;
+  unsubscribeLink?: string;
   customerName?: string;
   oldStartAt?: Date;
   oldEndAt?: Date;
