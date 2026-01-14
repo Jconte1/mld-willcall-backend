@@ -1,9 +1,5 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
-const node_fetch_1 = __importDefault(require("node-fetch"));
 const acumaticaBaseUrl = process.env.ACUMATICA_BASE_URL;
 class AcumaticaService {
     constructor(baseUrl, clientId, clientSecret, username, password) {
@@ -42,7 +38,7 @@ class AcumaticaService {
                 body.append("password", this.password);
                 body.append("scope", "api offline_access");
             }
-            const response = await (0, node_fetch_1.default)(url, {
+            const response = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: body.toString(),
@@ -71,7 +67,7 @@ class AcumaticaService {
             const url = `${this.baseUrl}/entity/CustomEndpoint/24.200.001/${entityName}`;
             console.log("Making PUT request to:", url);
             console.log("Payload:", JSON.stringify(entity, null, 2));
-            const response = await (0, node_fetch_1.default)(url, {
+            const response = await fetch(url, {
                 method: "PUT",
                 headers: {
                     "Content-Type": "application/json",

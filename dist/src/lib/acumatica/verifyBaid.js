@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifyBaidInAcumatica = verifyBaidInAcumatica;
 const node_https_1 = __importDefault(require("node:https"));
-const node_fetch_1 = __importDefault(require("node-fetch"));
 const acumaticaService_1 = __importDefault(require("./auth/acumaticaService"));
 function requireEnv(name) {
     const v = process.env[name]?.trim();
@@ -48,14 +47,13 @@ async function fetchCustomerRowsByBaid(restService, baid) {
     if (IS_DEV) {
         console.log(`${LOG_PREFIX} -> request`, { baid, url });
     }
-    const resp = await (0, node_fetch_1.default)(url, {
+    const resp = await fetch(url, {
         method: "GET",
         headers: {
             Accept: "application/json",
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
         },
-        agent: agent,
     });
     const text = await resp.text().catch(() => "");
     const ms = Date.now() - t0;

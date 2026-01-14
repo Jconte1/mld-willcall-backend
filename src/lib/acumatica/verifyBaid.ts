@@ -67,7 +67,6 @@ async function fetchCustomerRowsByBaid(restService: AcumaticaService, baid: stri
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    agent: agent as any,
   });
 
   const text = await resp.text().catch(() => "");

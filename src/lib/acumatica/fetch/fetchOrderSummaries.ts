@@ -109,7 +109,6 @@ export default async function fetchOrderSummaries(
         Accept: "application/json",
         Authorization: `Bearer ${token}`,
       },
-      agent: agent as any,
     });
     const ms = Date.now() - t0;
     const text = await resp.text();

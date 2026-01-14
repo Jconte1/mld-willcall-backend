@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchPaymentInfo;
 const node_https_1 = __importDefault(require("node:https"));
-const node_fetch_1 = __importDefault(require("node-fetch"));
 async function fetchPaymentInfo(restService, baid, { orderNbrs = [], chunkSize = Number(process.env.PAYMENTS_CHUNK_SIZE || 20), pageSize = 500, } = {}) {
     if (!Array.isArray(orderNbrs) || !orderNbrs.length) {
         console.log(`[fetchPaymentInfo] baid=${baid} no orderNbrs provided`);
@@ -26,14 +25,13 @@ async function fetchPaymentInfo(restService, baid, { orderNbrs = [], chunkSize =
         params.set("$top", String(pageSize));
         const url = `${base}?${params.toString()}`;
         const t0 = Date.now();
-        const resp = await (0, node_fetch_1.default)(url, {
+        const resp = await fetch(url, {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
                 Accept: "application/json",
                 Authorization: `Bearer ${token}`,
             },
-            agent: agent,
         });
         const ms = Date.now() - t0;
         const text = await resp.text();

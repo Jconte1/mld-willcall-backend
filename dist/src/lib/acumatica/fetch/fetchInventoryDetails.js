@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchInventoryDetails;
 const node_https_1 = __importDefault(require("node:https"));
-const node_fetch_1 = __importDefault(require("node-fetch"));
 async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize = Number(process.env.LINES_BATCH_SIZE || 16), pool = Number(process.env.LINES_POOL || 4), maxSockets = Number(process.env.LINES_MAX_SOCKETS || 8), retries = Number(process.env.LINES_RETRIES || 4), maxUrl = Number(process.env.ACUMATICA_MAX_URL || 7000), timeoutMs = Number(process.env.LINES_TIMEOUT_MS || 25000), minDelayMs = Number(process.env.LINES_MIN_DELAY_MS || 150), } = {}) {
     if (!Array.isArray(orderNbrs) || orderNbrs.length === 0)
         return [];
@@ -88,7 +87,7 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
             let resp;
             let text = "";
             try {
-                resp = await (0, node_fetch_1.default)(url, {
+                resp = await fetch(url, {
                     method: "GET",
                     headers: {
                         "Content-Type": "application/json",
@@ -96,7 +95,6 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
                         "Accept-Encoding": "gzip, deflate",
                         Authorization: `Bearer ${token}`,
                     },
-                    agent: agent,
                     signal: controller.signal,
                 });
                 text = await resp.text();

@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchAddressContact;
 const node_https_1 = __importDefault(require("node:https"));
-const node_fetch_1 = __importDefault(require("node-fetch"));
 async function fetchAddressContact(restService, baid, { orderNbrs = [], chunkSize = 40, pageSize = 500, useOrderBy = false, cutoffLiteral = null, } = {}) {
     const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
@@ -33,14 +32,13 @@ async function fetchAddressContact(restService, baid, { orderNbrs = [], chunkSiz
         params.set("$skip", String(skip));
         const url = `${base}?${params.toString()}`;
         const t0 = Date.now();
-        const resp = await (0, node_fetch_1.default)(url, {
+        const resp = await fetch(url, {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
                 Accept: "application/json",
                 Authorization: `Bearer ${token}`,
             },
-            agent: agent,
         });
         const ms = Date.now() - t0;
         const text = await resp.text();

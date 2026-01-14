@@ -53,7 +53,6 @@ export default async function fetchAddressContact(
         Accept: "application/json",
         Authorization: `Bearer ${token}`,
       },
-      agent: agent as any,
     });
     const ms = Date.now() - t0;
     const text = await resp.text();

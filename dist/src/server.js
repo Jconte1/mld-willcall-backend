@@ -46,7 +46,10 @@ app.use("/api/acumatica", acumatica_1.acumaticaRouter);
 app.use((req, res) => {
     res.status(404).json({ message: "Not found" });
 });
-const port = Number(process.env.PORT ?? "5000");
-app.listen(port, () => {
-    console.log(`mld-willcall-backend listening on :${port}`);
-});
+exports.default = app;
+if (!process.env.VERCEL) {
+    const port = Number(process.env.PORT ?? "5000");
+    app.listen(port, () => {
+        console.log(`mld-willcall-backend listening on :${port}`);
+    });
+}

@@ -124,7 +124,6 @@ export default async function fetchInventoryDetails(
             "Accept-Encoding": "gzip, deflate",
             Authorization: `Bearer ${token}`,
           },
-          agent: agent as any,
           signal: controller.signal,
         });
         text = await resp.text();

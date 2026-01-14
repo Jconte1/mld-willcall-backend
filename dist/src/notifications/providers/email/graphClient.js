@@ -1,10 +1,6 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getGraphAccessToken = getGraphAccessToken;
-const node_fetch_1 = __importDefault(require("node-fetch"));
 async function getGraphAccessToken() {
     const tenantId = process.env.MS_GRAPH_TENANT_ID || "";
     const clientId = process.env.MS_GRAPH_CLIENT_ID || "";
@@ -19,7 +15,7 @@ async function getGraphAccessToken() {
     body.set("client_secret", clientSecret);
     body.set("scope", "https://graph.microsoft.com/.default");
     body.set("grant_type", "client_credentials");
-    const resp = await (0, node_fetch_1.default)(url, {
+    const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),

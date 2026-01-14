@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchOrderSummaries;
 const node_https_1 = __importDefault(require("node:https"));
-const node_fetch_1 = __importDefault(require("node-fetch"));
 const denver_1 = require("../../time/denver");
 async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, maxPages: maxPagesArg, useOrderBy = false, } = {}) {
     const token = await restService.getToken();
@@ -85,14 +84,13 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
         params.set("$skip", String(page * pageSize));
         const url = `${base}?${params.toString()}`;
         const t0 = Date.now();
-        const resp = await (0, node_fetch_1.default)(url, {
+        const resp = await fetch(url, {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
                 Accept: "application/json",
                 Authorization: `Bearer ${token}`,
             },
-            agent: agent,
         });
         const ms = Date.now() - t0;
         const text = await resp.text();
