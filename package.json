@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
+    "postinstall": "prisma generate",
     "start": "node dist/server.js",
     "notifications:worker": "ts-node src/notifications/worker.ts",
     "prisma:generate": "prisma generate",

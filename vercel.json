@@ -3,6 +3,11 @@
   "builds": [
     { "src": "src/server.ts", "use": "@vercel/node" }
   ],
+  "functions": {
+    "src/server.ts": {
+      "includeFiles": ["prisma/**"]
+    }
+  },
   "routes": [
     { "src": "/(.*)", "dest": "src/server.ts" }
   ]
