@@ -29,7 +29,6 @@ jobs:
           IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/mld-notifications-worker:${{ github.sha }}
           docker build -t $IMAGE .
           docker push $IMAGE
-        working-directory: mld-willcall-backend
 
       - name: Deploy to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
