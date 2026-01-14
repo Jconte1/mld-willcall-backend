@@ -1,7 +1,11 @@
 import https from "node:https";
-import fetch from "node-fetch";
 
 import AcumaticaService from "./auth/acumaticaService";
+
+async function getFetch() {
+  const { default: fetch } = await import("node-fetch");
+  return fetch;
+}
 
 function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
@@ -47,6 +51,7 @@ function truncate(str: string, max = 2000) {
 async function fetchCustomerRowsByBaid(restService: AcumaticaService, baid: string): Promise<AnyJson[]> {
   const t0 = Date.now();
 
+  const fetch = await getFetch();
   const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/Customer`;
 

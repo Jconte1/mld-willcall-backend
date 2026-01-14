@@ -1,7 +1,11 @@
 import https from "node:https";
-import fetch from "node-fetch";
 
 type AnyRow = Record<string, any>;
+
+async function getFetch() {
+  const { default: fetch } = await import("node-fetch");
+  return fetch;
+}
 
 export default async function fetchInventoryDetails(
   restService: { baseUrl: string; getToken: () => Promise<string> },
@@ -27,6 +31,7 @@ export default async function fetchInventoryDetails(
 ): Promise<AnyRow[]> {
   if (!Array.isArray(orderNbrs) || orderNbrs.length === 0) return [];
 
+  const fetch = await getFetch();
   const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
   const agent = new https.Agent({ keepAlive: true, maxSockets });
