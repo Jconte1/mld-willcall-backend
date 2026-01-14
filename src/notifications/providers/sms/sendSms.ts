@@ -18,8 +18,8 @@ export async function sendSms(to: string, body: string): Promise<SmsResult> {
     return { ok: true, skipped: true };
   }
   if (!accountSid || !authToken || !from) {
-    console.warn("[notifications][sms] missing Twilio env vars");
-    throw new Error("Twilio env vars are missing");
+    console.warn("[notifications][sms] skipped (twilio env vars missing)");
+    return { ok: true, skipped: true };
   }
 
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
