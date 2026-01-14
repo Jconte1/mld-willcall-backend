@@ -5,7 +5,7 @@
   ],
   "functions": {
     "src/server.ts": {
-      "includeFiles": ["prisma/**"]
+      "includeFiles": "prisma/**"
     }
   },
   "routes": [
