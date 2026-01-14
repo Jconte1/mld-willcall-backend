@@ -3,11 +3,6 @@ import { oneYearAgoDenver, toDenverDateTimeOffsetLiteral } from "../../time/denv
 
 type AnyRow = Record<string, any>;
 
-async function getFetch() {
-  const { default: fetch } = await import("node-fetch");
-  return fetch;
-}
-
 export default async function fetchOrderSummaries(
   restService: { baseUrl: string; getToken: () => Promise<string> },
   baid: string,
@@ -21,7 +16,6 @@ export default async function fetchOrderSummaries(
     useOrderBy?: boolean;
   } = {}
 ): Promise<AnyRow[]> {
-  const fetch = await getFetch();
   const token = await restService.getToken();
 
   const envPage = Number(process.env.ACU_PAGE_SIZE || "");

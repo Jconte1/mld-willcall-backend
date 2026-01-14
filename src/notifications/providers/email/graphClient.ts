@@ -1,5 +1,4 @@
 export async function getGraphAccessToken() {
-  const { default: fetch } = await import("node-fetch");
   const tenantId = process.env.MS_GRAPH_TENANT_ID || "";
   const clientId = process.env.MS_GRAPH_CLIENT_ID || "";
   const clientSecret = process.env.MS_GRAPH_CLIENT_SECRET || "";

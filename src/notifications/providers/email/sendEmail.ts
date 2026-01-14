@@ -10,7 +10,6 @@ function resolveRecipient(email: string) {
 }
 
 export async function sendEmail(to: string, subject: string, body: string): Promise<EmailResult> {
-  const { default: fetch } = await import("node-fetch");
   const fromEmail = process.env.MS_GRAPH_FROM_EMAIL || "";
   const recipient = resolveRecipient(to);
 

@@ -2,11 +2,6 @@ import https from "node:https";
 
 type AnyRow = Record<string, any>;
 
-async function getFetch() {
-  const { default: fetch } = await import("node-fetch");
-  return fetch;
-}
-
 export default async function fetchPaymentInfo(
   restService: { baseUrl: string; getToken: () => Promise<string> },
   baid: string,
@@ -25,7 +20,6 @@ export default async function fetchPaymentInfo(
     return [];
   }
 
-  const fetch = await getFetch();
   const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
   const agent = new https.Agent({ keepAlive: true, maxSockets: 8 });

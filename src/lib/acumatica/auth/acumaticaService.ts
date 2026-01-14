@@ -1,10 +1,5 @@
 const acumaticaBaseUrl = process.env.ACUMATICA_BASE_URL;
 
-async function getFetch() {
-  const { default: fetch } = await import("node-fetch");
-  return fetch;
-}
-
 type TokenResponse = {
   access_token: string;
   refresh_token?: string;
@@ -58,7 +53,6 @@ class AcumaticaService {
       }
 
       console.log("Fetching new token...");
-      const fetch = await getFetch();
       const url = `${this.baseUrl}/identity/connect/token`;
       const body = new URLSearchParams({
         grant_type: this.refreshToken ? "refresh_token" : "password",
@@ -110,7 +104,6 @@ class AcumaticaService {
       const url = `${this.baseUrl}/entity/CustomEndpoint/24.200.001/${entityName}`;
       console.log("Making PUT request to:", url);
       console.log("Payload:", JSON.stringify(entity, null, 2));
-      const fetch = await getFetch();
 
       const response = await fetch(url, {
         method: "PUT",
