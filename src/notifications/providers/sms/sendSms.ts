@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 type SmsResult = { ok: boolean; skipped?: boolean };
 
 function resolveRecipient(phone: string) {
@@ -10,6 +8,7 @@ function resolveRecipient(phone: string) {
 }
 
 export async function sendSms(to: string, body: string): Promise<SmsResult> {
+  const { default: fetch } = await import("node-fetch");
   const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
   const authToken = process.env.TWILIO_AUTH_TOKEN || "";
   const from = process.env.TWILIO_FROM_NUMBER || "";
