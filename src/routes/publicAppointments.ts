@@ -144,7 +144,7 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
     await notifyCustomerCancelled(
       prisma,
       updated,
-      appointment.orders.map((o) => o.orderNbr)
+      appointment.orders.map((o: { orderNbr: string }) => o.orderNbr)
     );
 
     const nextLink = await getLatestLink(updated.id);
@@ -209,7 +209,7 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   await notifyAppointmentRescheduled(
     prisma,
     updated,
-    appointment.orders.map((o) => o.orderNbr),
+    appointment.orders.map((o: { orderNbr: string }) => o.orderNbr),
     appointment.startAt,
     appointment.endAt,
     true

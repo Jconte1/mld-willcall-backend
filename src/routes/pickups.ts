@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
+import { PrismaClient, PickupAppointmentStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAuth, blockIfMustChangePassword } from "../middleware/auth";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
@@ -95,7 +95,7 @@ pickupsRouter.get("/", async (req, res) => {
     include: { orders: true },
   });
 
-  const normalized = pickups.map((pickup) => ({
+  const normalized = pickups.map((pickup: any) => ({
     ...pickup,
     locationId: normalizeLocationId(pickup.locationId) ?? pickup.locationId,
   }));
@@ -135,7 +135,7 @@ pickupsRouter.post("/", async (req, res) => {
     return res.status(404).json({ message: "Customer not found" });
   }
 
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const appointment = await tx.pickupAppointment.create({
       data: {
         userId: user.id,
@@ -237,7 +237,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
     return res.status(403).json({ message: "Forbidden" });
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     if (body.data.orderNbrs) {
       await tx.pickupAppointmentOrder.deleteMany({ where: { appointmentId: existing.id } });
       const orderRows = body.data.orderNbrs.map((orderNbr) => ({
@@ -270,7 +270,8 @@ pickupsRouter.patch("/:id", async (req, res) => {
 
   const notifyCustomer = body.data.notifyCustomer ?? false;
   const cancelReason = body.data.cancelReason ?? null;
-  const nextOrderNbrs = body.data.orderNbrs ?? existing.orders.map((o) => o.orderNbr);
+  const nextOrderNbrs =
+    body.data.orderNbrs ?? existing.orders.map((o: { orderNbr: string }) => o.orderNbr);
 
   const timeChanged =
     (body.data.startAt && new Date(body.data.startAt).getTime() !== existing.startAt.getTime()) ||
@@ -290,7 +291,10 @@ pickupsRouter.patch("/:id", async (req, res) => {
   const orderListChanged =
     Array.isArray(body.data.orderNbrs) &&
     (body.data.orderNbrs.length !== existing.orders.length ||
-      body.data.orderNbrs.some((orderNbr) => !existing.orders.some((o) => o.orderNbr === orderNbr)));
+      body.data.orderNbrs.some(
+        (orderNbr) =>
+          !existing.orders.some((o: { orderNbr: string }) => o.orderNbr === orderNbr)
+      ));
 
   try {
     if (!terminalStatusChange && (timeChanged || locationChanged)) {

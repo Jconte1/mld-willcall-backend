@@ -32,7 +32,7 @@ staffUsersRouter.get("/", async (_req, res) => {
     }
   });
 
-  const normalized = users.map((user) => ({
+  const normalized = users.map((user: (typeof users)[number]) => ({
     ...user,
     locationAccess: normalizeLocationIds(user.locationAccess ?? []),
   }));
