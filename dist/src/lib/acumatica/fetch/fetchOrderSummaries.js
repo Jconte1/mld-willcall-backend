@@ -28,6 +28,34 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
         "NoteID",
     ].join(",");
     const custom = "Document.AttributeBUYERGROUP";
+    const excludedShipVia = [
+        "DELIVERY SLC",
+        "DELIVERY SW",
+        "DIRECT SHIP",
+        "GROUND",
+        "MLD DROP SHIP",
+        "NEXT DAY AIR",
+        "RED LABEL",
+        "2ND DAY AIR",
+        "3RD DAY AIR",
+        "COMMON CARRIER",
+        "BEST WAY",
+        "DEL ST GEORGE",
+        "DELIVERY",
+        "DELIVERY BOISE",
+        "DELIVERY PROVO",
+        "DELIVERY JACKSO",
+        "DELIVERY KETCHU",
+        "DELIVERY LAYTON",
+        "DELIVERY PLUMBI",
+        "RUSH",
+        "TRANS BOISE",
+        "TRANS JACKSON",
+        "TRANS PROVO",
+        "TRANS SLC",
+        "WAIVER PROVO",
+        "WAIVER SLC",
+    ];
     const all = [];
     for (let page = 0; page < maxPages; page++) {
         const params = new URLSearchParams();
@@ -47,6 +75,7 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
             "Status ne 'Purchase Hold'",
             "Status ne 'Not Approved'",
             "Status ne 'Risk Hold'",
+            ...excludedShipVia.map((v) => `ShipVia ne '${v}'`),
         ].join(" and "));
         params.set("$select", select);
         params.set("$custom", custom);
@@ -70,7 +99,7 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
         if (!resp.ok)
             throw new Error(text || `ERP error for ${baid}`);
         const arr = text ? JSON.parse(text) : [];
-        const rows = Array.isArray(arr) ? arr : [];
+        const rows = Array.isArray(arr) ? arr : Array.isArray(arr?.value) ? arr.value : [];
         all.push(...rows);
         console.log(`[fetchOrderSummaries] baid=${baid} page=${page} size=${pageSize} rows=${rows.length} ms=${ms} truncated=${rows.length === pageSize}`);
         if (rows.length < pageSize)

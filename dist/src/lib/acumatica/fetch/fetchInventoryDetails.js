@@ -19,9 +19,14 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
         "Details/LineType",
         "Details/UnitPrice",
         "Details/OpenQty",
+        "Details/OrderQty",
+        "Details/Amount",
         "Details/UsrETA",
         "Details/Here",
+        "Details/Allocations/Allocated",
+        "Details/Allocations/Qty",
         "Details/WarehouseID",
+        "Details/TaxZone"
     ].join(",");
     const chunks = chunk(orderNbrs, Math.max(1, batchSize));
     const all = [];
@@ -64,7 +69,7 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
         const params = new URLSearchParams();
         params.set("$filter", filter);
         params.set("$select", select);
-        params.set("$expand", "Details");
+        params.set("$expand", "Details,Details/Allocations");
         params.set("$top", String(500));
         const url = `${base}?${params.toString()}`;
         if (url.length > maxUrl && batch.length > 1) {
@@ -141,7 +146,7 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
             let rows = [];
             try {
                 const json = text ? JSON.parse(text) : [];
-                rows = Array.isArray(json) ? json : [];
+                rows = Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
             }
             catch {
                 rows = [];

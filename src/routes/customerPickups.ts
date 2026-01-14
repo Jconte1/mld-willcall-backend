@@ -61,6 +61,31 @@ const BLOCKING_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Confirmed,
 ];
 
+type PendingAppointment = {
+  userId: string;
+  email: string;
+  pickupReference: string;
+  locationId: string;
+  startAt: Date;
+  endAt: Date;
+  status: PickupAppointmentStatus;
+  customerFirstName: string;
+  customerLastName: string | null;
+  customerEmail: string;
+  customerPhone: string | null;
+  smsOptIn: boolean;
+  smsOptInAt: Date | null;
+  smsOptInSource: string | null;
+  smsOptInPhone: string | null;
+  emailOptIn: boolean;
+  emailOptInAt: Date | null;
+  emailOptInSource: string | null;
+  emailOptInEmail: string | null;
+  vehicleInfo: string | null;
+  customerNotes: string | null;
+  orderNbrs: string[];
+};
+
 const DENVER_TZ = "America/Denver";
 const OPEN_HOUR = 8;
 const CLOSE_HOUR = 17;
@@ -231,7 +256,7 @@ customerPickupsRouter.post("/", async (req, res) => {
 
   const payload = parsed.data;
 
-  const appointmentsToCreate = [];
+  const appointmentsToCreate: PendingAppointment[] = [];
   const ordersToCreate: { appointmentIndex: number; orderNbr: string }[] = [];
 
   for (const group of payload.groups) {

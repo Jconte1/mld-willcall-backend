@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireLocationAccess = requireLocationAccess;
+const locationIds_1 = require("../lib/locationIds");
 function requireLocationAccess(locationId) {
     return (req, res, next) => {
         if (!req.auth)
@@ -8,7 +9,7 @@ function requireLocationAccess(locationId) {
         // Admin can access all
         if (req.auth.role === "ADMIN")
             return next();
-        if (!req.auth.locationAccess.includes(locationId)) {
+        if (!(0, locationIds_1.expandLocationIds)(req.auth.locationAccess).includes(locationId)) {
             return res.status(403).json({ message: "Forbidden" });
         }
         return next();

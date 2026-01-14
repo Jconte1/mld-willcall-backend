@@ -11,9 +11,11 @@ const auth_1 = require("./routes/auth");
 const staffAuth_1 = require("./routes/staffAuth");
 const customerAuth_1 = require("./routes/customerAuth");
 const customerOrders_1 = require("./routes/customerOrders");
+const customerPickups_1 = require("./routes/customerPickups");
 const staffUsers_1 = require("./routes/staffUsers");
 const pickups_1 = require("./routes/pickups");
 const acumatica_1 = require("./routes/acumatica");
+const publicAppointments_1 = require("./routes/publicAppointments");
 const app = (0, express_1.default)();
 const frontend = process.env.FRONTEND_URL ?? "https://mld-willcall.vercel.app";
 app.use((0, helmet_1.default)());
@@ -31,6 +33,10 @@ app.use("/api/staff", staffAuth_1.staffAuthRouter);
 app.use("/api/customer", customerAuth_1.customerAuthRouter);
 // Customer orders
 app.use("/api/customer/orders", customerOrders_1.customerOrdersRouter);
+// Customer pickups
+app.use("/api/customer/pickups", customerPickups_1.customerPickupsRouter);
+// Public appointments (secure link)
+app.use("/api/public/appointments", publicAppointments_1.publicAppointmentsRouter);
 // Admin user management
 app.use("/api/staff/users", staffUsers_1.staffUsersRouter);
 // Pickups

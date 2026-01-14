@@ -1,0 +1,47 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sendSms = sendSms;
+const node_fetch_1 = __importDefault(require("node-fetch"));
+function resolveRecipient(phone) {
+    if (process.env.NODE_ENV !== "production") {
+        return process.env.NOTIFICATIONS_TEST_PHONE || "";
+    }
+    return phone;
+}
+async function sendSms(to, body) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
+    const authToken = process.env.TWILIO_AUTH_TOKEN || "";
+    const from = process.env.TWILIO_FROM_NUMBER || "";
+    const recipient = resolveRecipient(to);
+    if (!recipient) {
+        console.log("[notifications][sms] skipped (no recipient)", { to });
+        return { ok: true, skipped: true };
+    }
+    if (!accountSid || !authToken || !from) {
+        console.warn("[notifications][sms] missing Twilio env vars");
+        throw new Error("Twilio env vars are missing");
+    }
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const params = new URLSearchParams();
+    params.set("To", recipient);
+    params.set("From", from);
+    params.set("Body", body);
+    const resp = await (0, node_fetch_1.default)(url, {
+        method: "POST",
+        headers: {
+            Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        console.error("[notifications][sms] send failed", resp.status, text);
+        throw new Error(`Twilio SMS failed: ${resp.status} ${text}`);
+    }
+    console.log("[notifications][sms] sent", { to: recipient });
+    return { ok: true };
+}

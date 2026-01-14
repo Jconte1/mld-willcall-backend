@@ -4,16 +4,15 @@ import {
   NotificationChannel,
   NotificationJobStatus,
   PrismaClient,
-  PickupAppointment,
 } from "@prisma/client";
 import { buildSmsMessage } from "../templates/sms/buildSms";
 import { buildEmailMessage } from "../templates/email/buildEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { sendEmail } from "../providers/email/sendEmail";
-import { NotificationPayload } from "../types";
+import { AppointmentWithContact, NotificationPayload } from "../types";
 
 function buildPayload(
-  appointment: PickupAppointment & { orders?: { orderNbr: string }[] },
+  appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
   job: AppointmentNotificationJob,
   link: string
 ): NotificationPayload {
@@ -37,7 +36,7 @@ function buildPayload(
 export async function sendJob(
   prisma: PrismaClient,
   job: AppointmentNotificationJob,
-  appointment: PickupAppointment & { orders?: { orderNbr: string }[] }
+  appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] }
 ) {
   const link = (job.payloadSnapshot as any)?.link as string | undefined;
   if (!link) {

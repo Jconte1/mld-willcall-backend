@@ -48,7 +48,7 @@ async function fetchPaymentInfo(restService, baid, { orderNbrs = [], chunkSize =
         catch {
             arr = [];
         }
-        const rows = Array.isArray(arr) ? arr : [];
+        const rows = Array.isArray(arr) ? arr : Array.isArray(arr?.value) ? arr.value : [];
         return { rows, ms };
     };
     for (let i = 0; i < chunks.length; i++) {

@@ -2,14 +2,14 @@ import {
   AppointmentNotificationType,
   NotificationChannel,
   PrismaClient,
-  PickupAppointment,
 } from "@prisma/client";
 import { enqueueJob } from "../jobs/enqueueJob";
 import { sendJob } from "../jobs/sendJob";
+import { AppointmentWithContact } from "../types";
 
 export async function sendImmediate(
   prisma: PrismaClient,
-  appointment: PickupAppointment & { orders?: { orderNbr: string }[] },
+  appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
   type: AppointmentNotificationType,
   payloadSnapshot: Record<string, any>,
   channel: NotificationChannel = NotificationChannel.Both,

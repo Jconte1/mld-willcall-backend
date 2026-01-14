@@ -55,7 +55,7 @@ async function fetchAddressContact(restService, baid, { orderNbrs = [], chunkSiz
         catch {
             json = [];
         }
-        const rows = Array.isArray(json) ? json : [];
+        const rows = Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
         return { rows, ms, truncated: rows.length === pageSize };
     };
     const all = [];

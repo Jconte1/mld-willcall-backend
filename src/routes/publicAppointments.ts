@@ -156,11 +156,12 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
     return res.status(400).json({ message: "Invalid request body" });
   }
 
-  if (
-    appointment.status === PickupAppointmentStatus.Completed ||
-    appointment.status === PickupAppointmentStatus.NoShow ||
-    appointment.status === PickupAppointmentStatus.Cancelled
-  ) {
+  const disallowedStatuses: PickupAppointmentStatus[] = [
+    PickupAppointmentStatus.Completed,
+    PickupAppointmentStatus.NoShow,
+    PickupAppointmentStatus.Cancelled,
+  ];
+  if (disallowedStatuses.includes(appointment.status as PickupAppointmentStatus)) {
     return res.status(409).json({ message: "Appointment cannot be rescheduled." });
   }
 

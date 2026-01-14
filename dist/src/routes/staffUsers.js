@@ -5,12 +5,13 @@ const express_1 = require("express");
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const passwords_1 = require("../lib/passwords");
+const locationIds_1 = require("../lib/locationIds");
 const auth_1 = require("../middleware/auth");
 const prisma = new client_1.PrismaClient();
 exports.staffUsersRouter = (0, express_1.Router)();
 exports.staffUsersRouter.use(auth_1.requireAuth);
 exports.staffUsersRouter.use((0, auth_1.requireRole)("ADMIN"));
-const LOCS = zod_1.z.array(zod_1.z.enum(["slc", "boise"]));
+const LOCS = zod_1.z.array(zod_1.z.enum(["slc-hq", "slc-outlet", "boise-willcall"]));
 /**
  * GET /api/staff/users
  */
@@ -29,7 +30,11 @@ exports.staffUsersRouter.get("/", async (_req, res) => {
             updatedAt: true
         }
     });
-    return res.json({ users });
+    const normalized = users.map((user) => ({
+        ...user,
+        locationAccess: (0, locationIds_1.normalizeLocationIds)(user.locationAccess ?? []),
+    }));
+    return res.json({ users: normalized });
 });
 /**
  * POST /api/staff/users
@@ -41,7 +46,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
         email: zod_1.z.string().email(),
         name: zod_1.z.string().min(1),
         role: zod_1.z.enum(["ADMIN", "STAFF"]).default("STAFF"),
-        locationAccess: LOCS.default(["slc"])
+        locationAccess: LOCS.default(["slc-hq"])
     }).safeParse(req.body);
     if (!body.success)
         return res.status(400).json({ message: "Invalid request body" });
@@ -55,7 +60,9 @@ exports.staffUsersRouter.post("/", async (req, res) => {
             email,
             name: body.data.name,
             role: body.data.role === "ADMIN" ? client_1.StaffRole.ADMIN : client_1.StaffRole.STAFF,
-            locationAccess: body.data.role === "ADMIN" ? ["slc", "boise"] : body.data.locationAccess,
+            locationAccess: body.data.role === "ADMIN"
+                ? ["slc-hq", "slc-outlet", "boise-willcall"]
+                : body.data.locationAccess,
             passwordHash,
             isActive: true,
             mustChangePassword: true
@@ -72,7 +79,13 @@ exports.staffUsersRouter.post("/", async (req, res) => {
             updatedAt: true
         }
     });
-    return res.status(201).json({ user: created, tempPassword });
+    return res.status(201).json({
+        user: {
+            ...created,
+            locationAccess: (0, locationIds_1.normalizeLocationIds)(created.locationAccess ?? []),
+        },
+        tempPassword,
+    });
 });
 /**
  * GET /api/staff/users/:id
@@ -94,7 +107,12 @@ exports.staffUsersRouter.get("/:id", async (req, res) => {
     });
     if (!user)
         return res.status(404).json({ message: "Not found" });
-    return res.json({ user });
+    return res.json({
+        user: {
+            ...user,
+            locationAccess: (0, locationIds_1.normalizeLocationIds)(user.locationAccess ?? []),
+        },
+    });
 });
 /**
  * PATCH /api/staff/users/:id
@@ -126,7 +144,7 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
             name: body.data.name,
             role: nextRole === "ADMIN" ? client_1.StaffRole.ADMIN : client_1.StaffRole.STAFF,
             locationAccess: nextRole === "ADMIN"
-                ? ["slc", "boise"]
+                ? ["slc-hq", "slc-outlet", "boise-willcall"]
                 : (body.data.locationAccess ?? existing.locationAccess),
             isActive: body.data.isActive,
             mustChangePassword: body.data.mustChangePassword
@@ -143,5 +161,10 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
             updatedAt: true
         }
     });
-    return res.json({ user: updated });
+    return res.json({
+        user: {
+            ...updated,
+            locationAccess: (0, locationIds_1.normalizeLocationIds)(updated.locationAccess ?? []),
+        },
+    });
 });

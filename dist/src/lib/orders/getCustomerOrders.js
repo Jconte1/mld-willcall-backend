@@ -3,56 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerOrders = getCustomerOrders;
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
-const CANCELLED = new Set(["Cancelled", "Canceled"]);
-const HOLD = new Set(["On Hold", "Credit Hold", "Purchase Hold", "Risk Hold"]);
-const COMPLETE = new Set(["Completed", "Invoiced"]);
-function normalize(str) {
-    return String(str || "").toLowerCase();
-}
-function inferOrderType(summary) {
-    const hay = [summary.buyerGroup, summary.jobName, summary.shipVia]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-    if (hay.includes("plumb"))
-        return "Plumbing";
-    if (hay.includes("hard"))
-        return "Hardware";
-    if (hay.includes("appliance") || hay.includes("appl"))
-        return "Appliance";
-    if (hay.includes("electrical"))
-        return "Electrical";
-    return summary.buyerGroup || summary.shipVia || "General";
-}
-function inferFulfillmentStatus(erpStatus, lineSummary) {
-    if (CANCELLED.has(erpStatus))
-        return "Cancelled";
-    if (HOLD.has(erpStatus))
-        return "On Hold";
-    if (COMPLETE.has(erpStatus))
-        return "Complete";
-    if (lineSummary.totalLines > 0) {
-        if (lineSummary.openLines === 0)
-            return "Complete";
-        if (lineSummary.openLines < lineSummary.totalLines)
-            return "Partially Complete";
-        return "Pending";
-    }
-    return "Processing";
-}
-function toNumber(value) {
-    if (value == null)
-        return null;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-}
-function inferPaymentStatus(unpaidBalance, status) {
-    if (unpaidBalance != null && unpaidBalance > 0)
-        return "Balance Due";
-    if (status)
-        return status;
-    return null;
-}
+const orderHelpers_1 = require("./orderHelpers");
+const ACTIVE_APPOINTMENT_STATUSES = [
+    client_1.PickupAppointmentStatus.Scheduled,
+    client_1.PickupAppointmentStatus.Confirmed,
+    client_1.PickupAppointmentStatus.InProgress,
+    client_1.PickupAppointmentStatus.Ready,
+    client_1.PickupAppointmentStatus.Completed,
+    client_1.PickupAppointmentStatus.NoShow,
+];
 async function getCustomerOrders(baid) {
     const summaries = await prisma.erpOrderSummary.findMany({
         where: { baid, isActive: true },
@@ -77,15 +36,55 @@ async function getCustomerOrders(baid) {
             },
         },
     });
+    const orderNbrs = summaries.map((summary) => summary.orderNbr);
+    const appointmentOrders = orderNbrs.length
+        ? await prisma.pickupAppointmentOrder.findMany({
+            where: {
+                orderNbr: { in: orderNbrs },
+                appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
+            },
+            include: { appointment: true },
+        })
+        : [];
+    const orderNbrsByAppointment = new Map();
+    for (const row of appointmentOrders) {
+        const set = orderNbrsByAppointment.get(row.appointmentId) ?? new Set();
+        set.add(row.orderNbr);
+        orderNbrsByAppointment.set(row.appointmentId, set);
+    }
+    const appointmentByOrder = new Map();
+    for (const row of appointmentOrders) {
+        const appointment = row.appointment;
+        if (!appointment)
+            continue;
+        const existing = appointmentByOrder.get(row.orderNbr);
+        if (!existing || appointment.startAt > existing.startAt) {
+            appointmentByOrder.set(row.orderNbr, {
+                id: appointment.id,
+                status: appointment.status,
+                startAt: appointment.startAt,
+                endAt: appointment.endAt,
+                locationId: appointment.locationId,
+                orderNbrs: Array.from(orderNbrsByAppointment.get(appointment.id) ?? []),
+            });
+        }
+    }
     const summaryIds = summaries.map((s) => s.id);
     const lines = summaryIds.length
         ? await prisma.erpOrderLine.findMany({
             where: { orderSummaryId: { in: summaryIds } },
-            select: { orderSummaryId: true, openQty: true, warehouse: true },
+            select: {
+                orderSummaryId: true,
+                openQty: true,
+                warehouse: true,
+                isAllocated: true,
+                allocatedQty: true,
+            },
         })
         : [];
     const lineStatsById = new Map();
     const warehousesById = new Map();
+    const readinessById = new Map();
     for (const line of lines) {
         const current = lineStatsById.get(line.orderSummaryId) || {
             totalLines: 0,
@@ -102,6 +101,17 @@ async function getCustomerOrders(baid) {
             set.add(line.warehouse);
             warehousesById.set(line.orderSummaryId, set);
         }
+        const readiness = readinessById.get(line.orderSummaryId) || {
+            hasOpen: false,
+            hasReady: false,
+        };
+        if (openQty > 0) {
+            readiness.hasOpen = true;
+            if (line.isAllocated && (line.allocatedQty ?? 0) > 0) {
+                readiness.hasReady = true;
+            }
+        }
+        readinessById.set(line.orderSummaryId, readiness);
     }
     for (const stats of lineStatsById.values()) {
         stats.closedLines = stats.totalLines - stats.openLines;
@@ -112,11 +122,13 @@ async function getCustomerOrders(baid) {
             openLines: 0,
             closedLines: 0,
         };
-        const orderType = inferOrderType(summary);
-        const fulfillmentStatus = inferFulfillmentStatus(summary.status, stats);
-        const unpaidBalance = toNumber(summary.ErpOrderPayment?.unpaidBalance);
-        const paymentStatus = inferPaymentStatus(unpaidBalance, summary.ErpOrderPayment?.status ?? null);
+        const orderType = (0, orderHelpers_1.inferOrderType)(summary);
+        const fulfillmentStatus = (0, orderHelpers_1.inferFulfillmentStatus)(summary.status, stats);
+        const unpaidBalance = (0, orderHelpers_1.toNumber)(summary.ErpOrderPayment?.unpaidBalance);
+        const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, summary.ErpOrderPayment?.terms ?? null, summary.ErpOrderPayment?.status ?? null);
         const warehouses = Array.from(warehousesById.get(summary.id) ?? new Set()).sort();
+        const readiness = readinessById.get(summary.id) || { hasOpen: false, hasReady: false };
+        const isPickupReady = !readiness.hasOpen || readiness.hasReady;
         return {
             id: summary.id,
             orderNbr: summary.orderNbr,
@@ -132,6 +144,8 @@ async function getCustomerOrders(baid) {
             paymentStatus,
             warehouses,
             lineSummary: stats,
+            isPickupReady,
+            appointment: appointmentByOrder.get(summary.orderNbr) ?? null,
         };
     });
 }

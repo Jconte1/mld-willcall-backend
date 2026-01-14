@@ -9,6 +9,7 @@ const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const passwords_1 = require("../lib/passwords");
+const locationIds_1 = require("../lib/locationIds");
 const auth_1 = require("../middleware/auth");
 const prisma = new client_1.PrismaClient();
 exports.staffAuthRouter = (0, express_1.Router)();
@@ -39,10 +40,11 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
     const secret = process.env.JWT_SECRET;
     if (!secret)
         return res.status(500).json({ message: "Server misconfigured: JWT_SECRET missing" });
+    const normalizedLocationAccess = (0, locationIds_1.normalizeLocationIds)(user.locationAccess ?? []);
     const token = jsonwebtoken_1.default.sign({
         email: user.email,
         role: user.role,
-        locationAccess: user.locationAccess,
+        locationAccess: normalizedLocationAccess,
         mustChangePassword: user.mustChangePassword
     }, secret, {
         subject: user.id,
@@ -55,7 +57,7 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
             email: user.email,
             name: user.name,
             role: user.role,
-            locationAccess: user.locationAccess,
+            locationAccess: normalizedLocationAccess,
             mustChangePassword: user.mustChangePassword,
             isActive: user.isActive
         }
@@ -88,6 +90,10 @@ exports.staffAuthRouter.post("/change-password", auth_1.requireAuth, async (req,
     await prisma.staffUser.update({
         where: { id: user.id },
         data: { passwordHash: newHash, mustChangePassword: false }
+    });
+    console.info("[staffAuth/change-password] success", {
+        staffUserId: user.id,
+        email: user.email
     });
     return res.json({ ok: true });
 });

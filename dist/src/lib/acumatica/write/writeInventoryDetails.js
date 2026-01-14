@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = writeInventoryDetails;
+// writeInventoryDetails.ts
 const client_1 = require("@prisma/client");
+const node_crypto_1 = require("node:crypto");
 const prisma = new client_1.PrismaClient();
 async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}) {
     const lines = [];
@@ -16,6 +18,23 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
             const lt = optStr(val(d, "LineType"));
             if (!lt || lt.trim().toLowerCase() !== "goods for inventory")
                 continue;
+            const taxZone = pickTaxZone(row, d);
+            const taxRate = taxRateFromZone(taxZone);
+            // --- Allocation logic (nested under Details -> Allocations) ---
+            const allocations = Array.isArray(d?.Allocations) ? d.Allocations : [];
+            // isAllocated = TRUE if ANY allocation row has Allocated=true
+            const isAllocated = allocations.some((a) => Boolean(val(a, "Allocated")) === true) || false;
+            // allocatedQty = SUM of Qty where Allocated=true (stored as Int in schema)
+            // NOTE: Qty in Acumatica is usually whole units but can be decimal; we round to int for your schema.
+            const allocatedQtyRaw = allocations
+                .filter((a) => Boolean(val(a, "Allocated")) === true)
+                .reduce((sum, a) => {
+                const q = Number(val(a, "Qty"));
+                return sum + (Number.isFinite(q) ? q : 0);
+            }, 0);
+            const allocatedQty = Number.isFinite(allocatedQtyRaw)
+                ? Math.round(allocatedQtyRaw)
+                : 0;
             lines.push({
                 orderNbr,
                 baid,
@@ -24,6 +43,11 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
                 inventoryId: optStr(val(d, "InventoryID")),
                 lineType: optStr(val(d, "LineType")),
                 openQty: optDec(val(d, "OpenQty"), 4),
+                orderQty: optDec(val(d, "OrderQty"), 4),
+                amount: optDec(val(d, "Amount"), 2),
+                taxRate,
+                isAllocated,
+                allocatedQty,
                 unitPrice: optDec(val(d, "UnitPrice"), 2),
                 usrETA: toDate(val(d, "UsrETA")),
                 here: optStr(val(d, "Here")),
@@ -63,6 +87,7 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
             if (!orderSummaryId)
                 return null;
             return {
+                id: (0, node_crypto_1.randomUUID)(),
                 orderSummaryId,
                 baid: l.baid,
                 orderNbr: l.orderNbr,
@@ -71,9 +96,15 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
                 inventoryId: l.inventoryId,
                 lineType: l.lineType,
                 openQty: l.openQty,
+                orderQty: l.orderQty,
+                amount: l.amount,
+                taxRate: l.taxRate,
+                isAllocated: l.isAllocated,
+                allocatedQty: l.allocatedQty,
                 unitPrice: l.unitPrice,
                 usrETA: l.usrETA,
                 here: l.here,
+                updatedAt: new Date(),
             };
         })
             .filter(Boolean);
@@ -102,6 +133,31 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
             linesDroppedEmpty: 0,
         },
     };
+}
+// Prefer line-level TaxZone if it exists; fallback to order-level if your payload ends up that way.
+function pickTaxZone(orderRow, detailRow) {
+    return (optStr(val(detailRow, "TaxZone")) ||
+        optStr(val(orderRow, "TaxZone")) ||
+        optStr(val(orderRow, "TaxZoneID")) ||
+        null);
+}
+function taxRateFromZone(zone) {
+    if (!zone)
+        return null;
+    const z = zone.trim();
+    if (z === "SALT LAKE")
+        return 7.65;
+    if (z === "IDAHO")
+        return 6.0;
+    if (z === "JACKSON")
+        return 7.0;
+    if (z === "CEDAR CITY")
+        return 7.65;
+    if (z === "KETCHUM")
+        return 6.0;
+    if (z === "PROVO")
+        return 7.65;
+    return null;
 }
 function val(obj, key) {
     const v = obj?.[key];
