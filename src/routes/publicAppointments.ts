@@ -119,7 +119,12 @@ publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
     return res.redirect(`${frontend}/unsubscribe?status=invalid`);
   }
 
-  const token = await validateToken(req.params.id, parsed.data.token);
+  const token = await prisma.appointmentAccessToken.findFirst({
+    where: {
+      appointmentId: req.params.id,
+      token: parsed.data.token,
+    },
+  });
   if (!token) {
     return res.redirect(`${frontend}/unsubscribe?status=invalid`);
   }
