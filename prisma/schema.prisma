@@ -1,0 +1,508 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AccountUserRole {
+  id        String      @id
+  createdAt DateTime    @default(now())
+  updatedAt DateTime
+  baid      String      @db.VarChar(64)
+  userId    String
+  role      AccountRole
+  isActive  Boolean     @default(true)
+  users     users       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([baid, role, isActive])
+  @@index([baid, userId, role, isActive])
+}
+
+model Device {
+  id         String   @id
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+  userId     String
+  platform   String   @db.VarChar(16)
+  pushToken  String   @unique
+  lastSeenAt DateTime @default(now())
+  isActive   Boolean  @default(true)
+  users      users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ErpOrderAddress {
+  id              String          @id @default(cuid())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  orderSummaryId  String          @unique @db.VarChar(64)
+  baid            String          @db.VarChar(64)
+  orderNbr        String          @db.VarChar(64)
+  addressLine1    String?         @db.VarChar(256)
+  addressLine2    String?         @db.VarChar(256)
+  city            String?         @db.VarChar(128)
+  state           String?         @db.VarChar(64)
+  postalCode      String?         @db.VarChar(32)
+  ErpOrderSummary ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+
+  @@index([baid, orderNbr])
+  @@index([orderSummaryId])
+}
+
+model ErpOrderContact {
+  id              String          @id @default(cuid())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  orderSummaryId  String          @unique @db.VarChar(64)
+  baid            String          @db.VarChar(64)
+  orderNbr        String          @db.VarChar(64)
+  deliveryEmail   String?         @db.VarChar(256)
+  siteNumber      String?         @db.VarChar(128)
+  osContact       String?         @db.VarChar(256)
+  confirmedVia    String?         @default("") @db.VarChar(256)
+  confirmedWith   String?         @default("") @db.VarChar(256)
+  sixWeekFailed   Boolean?        @default(false)
+  tenDaySent      Boolean?        @default(false)
+  threeDaySent    Boolean?        @default(false)
+  ErpOrderSummary ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+
+  @@index([baid, orderNbr])
+  @@index([orderSummaryId])
+}
+
+model ErpOrderLine {
+  id              String          @id
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  orderSummaryId  String          @db.VarChar(64)
+  baid            String          @db.VarChar(64)
+  orderNbr        String          @db.VarChar(64)
+  lineDescription String?         @db.VarChar(512)
+  inventoryId     String?         @db.VarChar(128)
+  lineType        String?         @db.VarChar(64)
+  openQty         Decimal?        @db.Decimal(18, 4)
+  orderQty        Decimal?        @db.Decimal(18, 4)
+  unitPrice       Decimal?        @db.Decimal(18, 2)
+  amount          Decimal?        @db.Decimal(18, 2)
+  taxRate         Decimal?        @db.Decimal(18, 2)
+  isAllocated     Boolean         @default(false)
+  allocatedQty    Int             @default(0)
+  usrETA          DateTime?
+  here            String?         @db.VarChar(512)
+  warehouse       String?         @db.VarChar(512)
+  ErpOrderSummary ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+
+  @@index([baid, orderNbr])
+  @@index([orderSummaryId])
+}
+
+model ErpOrderPayment {
+  id              String          @id
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  orderSummaryId  String          @unique @db.VarChar(64)
+  baid            String          @db.VarChar(64)
+  orderNbr        String          @db.VarChar(64)
+  orderTotal      Decimal?        @db.Decimal(18, 2)
+  unpaidBalance   Decimal?        @db.Decimal(18, 2)
+  terms           String          @db.VarChar(64)
+  status          String          @default("Active") @db.VarChar(48)
+  ErpOrderSummary ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+
+  @@index([baid, orderNbr])
+  @@index([orderSummaryId])
+}
+
+model ErpOrderSummary {
+  id              String            @id @default(cuid())
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime
+  baid            String            @db.VarChar(64)
+  orderNbr        String            @db.VarChar(64)
+  locationId      String?           @db.VarChar(64)
+  status          String            @db.VarChar(48)
+  deliveryDate    DateTime?
+  lastSeenAt      DateTime          @default(now())
+  isActive        Boolean           @default(true)
+  jobName         String?           @db.VarChar(128)
+  shipVia         String?           @db.VarChar(64)
+  customerName    String            @default("") @db.VarChar(64)
+  buyerGroup      String?           @default("") @db.VarChar(64)
+  noteId          String?           @default("") @db.VarChar(64)
+  ErpOrderAddress ErpOrderAddress?
+  ErpOrderContact ErpOrderContact?
+  ErpOrderLine    ErpOrderLine[]
+  ErpOrderPayment ErpOrderPayment?
+  NotificationJob NotificationJob[]
+  OrderAssignment OrderAssignment[]
+
+  @@unique([baid, orderNbr])
+  @@index([baid, deliveryDate])
+  @@index([baid, isActive, status])
+}
+
+model ErpSyncRun {
+  id         String    @id
+  baid       String    @db.VarChar(64)
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean?
+  note       String?
+
+  @@index([baid, startedAt])
+}
+
+model NotificationJob {
+  id                       String          @id
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime
+  orderSummaryId           String
+  phase                    String          @db.VarChar(8)
+  scheduledAt              DateTime
+  status                   String          @db.VarChar(16)
+  attemptCount             Int             @default(0)
+  escalationPostedAt       DateTime?
+  idempotencyKey           String          @unique
+  orderNbr                 String?         @db.VarChar(64)
+  closedAt                 DateTime?
+  lastAttemptAt            DateTime?
+  lastDeliveryDateSnapshot DateTime?
+  ErpOrderSummary          ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+
+  @@unique([orderSummaryId, phase])
+  @@index([phase, orderNbr])
+  @@index([scheduledAt, status])
+}
+
+model OrderAssignment {
+  id              String          @id
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  orderSummaryId  String          @db.VarChar(64)
+  userId          String
+  role            String          @db.VarChar(16)
+  source          String          @db.VarChar(32)
+  isActive        Boolean         @default(true)
+  ErpOrderSummary ErpOrderSummary @relation(fields: [orderSummaryId], references: [id], onDelete: Cascade)
+  users           users           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orderSummaryId, role, isActive])
+  @@index([userId, isActive])
+}
+
+model QuoteRequest {
+  id         String    @id
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime
+  firstName  String
+  lastName   String
+  company    String?
+  email      String
+  phone      String
+  address1   String
+  address2   String?
+  city       String
+  state      String
+  zip        String
+  notes      String?
+  cart       Json
+  status     String    @default("pending")
+  verifiedAt DateTime?
+}
+
+model accounts {
+  id                    String    @id
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  userId                String
+  users                 users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model closeout_inventory {
+  id           String   @id
+  productId    String
+  modelNumber  String
+  acumaticaSku String   @unique
+  price        Decimal?
+  quantity     Int      @default(0)
+  lastSyncedAt DateTime @default(now())
+  newInBox     Boolean  @default(false)
+  bin          String   @default("default")
+  msrp         Decimal  @default(0.0)
+  warehouse    String   @default("SALT LAKE WAREHOUSE")
+  products     products @relation(fields: [productId], references: [id])
+
+  @@index([modelNumber])
+  @@index([productId])
+}
+
+model products {
+  id                 String               @id
+  model              String               @unique
+  major              String?
+  minor              String?
+  brand              String?
+  data               Json
+  created_at         DateTime             @default(now())
+  type               String?
+  features           String[]
+  width              String?
+  fuelType           String[]
+  configuration      String[]
+  productType        String[]
+  slug               String?              @unique
+  popularity         Int                  @default(0)
+  category           String?
+  closeout_inventory closeout_inventory[]
+}
+
+model sessions {
+  id             String   @id
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+  expiresAt      DateTime
+  token          String   @unique
+  ipAddress      String?
+  userAgent      String?
+  impersonatedBy String?
+  userId         String
+  users          users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model users {
+  id                 String              @id
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime
+  name               String
+  email              String              @unique
+  emailVerified      Boolean             @default(false)
+  image              String?
+  baid               String?             @db.VarChar(64)
+  AccountUserRole    AccountUserRole[]
+  customerCredential CustomerCredential?
+  Device             Device[]
+  OrderAssignment    OrderAssignment[]
+  accounts           accounts[]
+  sessions           sessions[]
+  pickupAppointments PickupAppointment[]
+}
+
+model CustomerCredential {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  passwordHash String
+  phone        String   @db.VarChar(32)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  users        users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model verifications {
+  id         String   @id
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  @@index([identifier])
+}
+
+model StaffUser {
+  id                 String               @id @default(cuid())
+  email              String               @unique
+  name               String
+  passwordHash       String
+  role               StaffRole            @default(STAFF)
+  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
+  locationAccess     String[]
+  isActive           Boolean              @default(true)
+  mustChangePassword Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  resetTokens        PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id          String    @id @default(cuid())
+  staffUserId String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId])
+  @@index([expiresAt])
+}
+
+model PickupAppointment {
+  id                String                   @id @default(cuid())
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  userId            String
+  email             String                   @db.VarChar(256)
+  pickupReference   String?                  @db.VarChar(256)
+  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
+  locationId        String                   @db.VarChar(64)
+  startAt           DateTime
+  endAt             DateTime
+  status            PickupAppointmentStatus  @default(Scheduled)
+  customerFirstName String                   @db.VarChar(128)
+  customerLastName  String?                  @db.VarChar(128)
+  customerEmail     String                   @db.VarChar(256)
+  customerPhone     String?                  @db.VarChar(32)
+  smsOptIn          Boolean                  @default(false)
+  smsOptInAt        DateTime?
+  smsOptInSource    String?                  @db.VarChar(128)
+  smsOptInPhone     String?                  @db.VarChar(32)
+  emailOptIn        Boolean                  @default(false)
+  emailOptInAt      DateTime?
+  emailOptInSource  String?                  @db.VarChar(128)
+  emailOptInEmail   String?                  @db.VarChar(256)
+  vehicleInfo       String?
+  customerNotes     String?
+  users             users                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders            PickupAppointmentOrder[]
+  notificationJobs  AppointmentNotificationJob[]
+  accessTokens      AppointmentAccessToken[]
+
+  @@index([locationId, startAt])
+  @@index([status])
+  @@index([email])
+  @@index([userId])
+}
+
+model PickupAppointmentOrder {
+  id            String            @id @default(cuid())
+  appointmentId String
+  orderNbr      String            @db.VarChar(64)
+  baid          String?           @db.VarChar(64)
+  appointment   PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, orderNbr])
+  @@index([orderNbr])
+  @@index([appointmentId])
+}
+
+model Pickup {
+  /// Legacy pickup table; staff scheduling uses PickupAppointment.
+  id                String       @id @default(cuid())
+  pickupReference   String
+  locationId        String
+  startAt           DateTime
+  endAt             DateTime
+  status            PickupStatus @default(Scheduled)
+  customerFirstName String
+  customerLastName  String?
+  customerEmail     String
+  customerPhone     String?
+  vehicleInfo       String?
+  customerNotes     String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([locationId])
+  @@index([status])
+  @@index([pickupReference])
+}
+
+enum AccountRole {
+  ADMIN
+  PM
+}
+
+enum StaffRole {
+  ADMIN
+  STAFF
+}
+
+enum PickupStatus {
+  Scheduled
+  InProgress
+  Ready
+  Completed
+  Cancelled
+}
+
+enum PickupAppointmentStatus {
+  Scheduled
+  Confirmed
+  InProgress
+  Ready
+  Completed
+  Cancelled
+  NoShow
+}
+
+enum AppointmentNotificationType {
+  ScheduledConfirm
+  Reminder1Day
+  Reminder1Hour
+  Rescheduled
+  Cancelled
+  Completed
+  OrderListChanged
+}
+
+enum NotificationChannel {
+  Email
+  SMS
+  Both
+}
+
+enum NotificationJobStatus {
+  Pending
+  Sent
+  Skipped
+  Cancelled
+  Failed
+}
+
+model AppointmentNotificationJob {
+  id              String                      @id @default(cuid())
+  appointmentId   String
+  type            AppointmentNotificationType
+  channel         NotificationChannel         @default(Both)
+  scheduledAt     DateTime
+  status          NotificationJobStatus       @default(Pending)
+  attemptCount    Int                         @default(0)
+  lastAttemptAt   DateTime?
+  sentAt          DateTime?
+  idempotencyKey  String                      @unique
+  payloadSnapshot Json?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  appointment     PickupAppointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt, status])
+  @@index([appointmentId])
+}
+
+model AppointmentAccessToken {
+  id             String            @id @default(cuid())
+  appointmentId  String
+  token          String            @unique
+  issuedAt       DateTime          @default(now())
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  appointment    PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([expiresAt])
+}

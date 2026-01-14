@@ -1,0 +1,39 @@
+name: Deploy Notifications Worker
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and Push Image
+        run: |
+          IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/mld-notifications-worker:${{ github.sha }}
+          docker build -t $IMAGE .
+          docker push $IMAGE
+        working-directory: mld-willcall-backend
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: ${{ secrets.ACR_LOGIN_SERVER }}/mld-notifications-worker:${{ github.sha }}
+          containerAppName: mld-notifications-worker-prod
+          resourceGroup: rg-mld-notifications-prod
