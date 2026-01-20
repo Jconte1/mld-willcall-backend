@@ -12,6 +12,7 @@ import { staffUsersRouter } from "./routes/staffUsers";
 import { pickupsRouter } from "./routes/pickups";
 import { acumaticaRouter } from "./routes/acumatica";
 import { publicAppointmentsRouter } from "./routes/publicAppointments";
+import { publicOrderReadyRouter } from "./routes/publicOrderReady";
 
 const app = express();
 
@@ -43,6 +44,9 @@ app.use("/api/customer/pickups", customerPickupsRouter);
 
 // Public appointments (secure link)
 app.use("/api/public/appointments", publicAppointmentsRouter);
+
+// Public order-ready (secure link)
+app.use("/api/public/order-ready", publicOrderReadyRouter);
 
 // Admin user management
 app.use("/api/staff/users", staffUsersRouter);

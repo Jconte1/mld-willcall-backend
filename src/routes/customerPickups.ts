@@ -25,8 +25,10 @@ const groupSchema = z.object({
   selectedSlots: z.array(slotSchema).min(1).max(2),
 });
 
-const createSchema = z.object({
-  userId: z.string().min(1),
+const createSchema = z
+  .object({
+    userId: z.string().min(1).optional(),
+    orderReadyToken: z.string().min(1).optional(),
   email: z.string().email(),
   firstName: z.string().min(1),
   lastName: z.string().optional().default(""),
@@ -36,7 +38,15 @@ const createSchema = z.object({
   vehicleInfo: z.string().optional(),
   notes: z.string().optional(),
   groups: z.array(groupSchema).min(1),
-});
+  })
+  .superRefine((data, ctx) => {
+    if (!data.userId && !data.orderReadyToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "userId or orderReadyToken is required.",
+      });
+    }
+  });
 
 const availabilitySchema = z.object({
   locationId: z.string().min(1),
@@ -62,7 +72,7 @@ const BLOCKING_STATUSES: PickupAppointmentStatus[] = [
 ];
 
 type PendingAppointment = {
-  userId: string;
+  userId: string | null;
   email: string;
   pickupReference: string;
   locationId: string;
@@ -255,6 +265,21 @@ customerPickupsRouter.post("/", async (req, res) => {
   }
 
   const payload = parsed.data;
+  const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs)));
+  let orderReadyNoticeId: string | null = null;
+  if (payload.orderReadyToken) {
+    if (orderNbrs.length !== 1) {
+      return res.status(400).json({ message: "Order-ready appointments must include one order." });
+    }
+    const token = await prisma.orderReadyAccessToken.findFirst({
+      where: { token: payload.orderReadyToken, revokedAt: null },
+      include: { orderReady: { select: { id: true, orderNbr: true } } },
+    });
+    if (!token || token.orderReady.orderNbr !== orderNbrs[0]) {
+      return res.status(403).json({ message: "Invalid order-ready token." });
+    }
+    orderReadyNoticeId = token.orderReady.id;
+  }
 
   const appointmentsToCreate: PendingAppointment[] = [];
   const ordersToCreate: { appointmentIndex: number; orderNbr: string }[] = [];
@@ -285,7 +310,7 @@ customerPickupsRouter.post("/", async (req, res) => {
     );
 
     appointmentsToCreate.push({
-      userId: payload.userId,
+      userId: payload.userId ?? null,
       email: payload.email,
       pickupReference: group.orderNbrs.join(", "),
       locationId: group.locationId,
@@ -370,6 +395,13 @@ customerPickupsRouter.post("/", async (req, res) => {
     }
     return createdAppointments;
   });
+
+  if (orderReadyNoticeId && created.length > 0) {
+    await prisma.orderReadyNotice.update({
+      where: { id: orderReadyNoticeId },
+      data: { scheduledAppointmentId: created[0].id },
+    });
+  }
 
   for (const [index, appointment] of created.entries()) {
     const orderNbrs = appointmentsToCreate[index]?.orderNbrs ?? [];

@@ -30,6 +30,19 @@ export function normalizeLocationId(id?: string | null) {
   return id;
 }
 
+export function normalizeWarehouseToLocationId(warehouse?: string | null) {
+  if (!warehouse) return undefined;
+  const normalized = warehouse.trim().replace(/\s+/g, " ").toUpperCase();
+  let legacy: string | undefined;
+
+  if (normalized.includes("OUTLET")) legacy = "slc-outlet";
+  else if (normalized.includes("BOISE")) legacy = "boise";
+  else if (normalized.includes("SALT LAKE") || normalized.includes("SLC")) legacy = "slc";
+
+  // TODO: Add any missing warehouse mappings once identified in Acumatica.
+  return normalizeLocationId(legacy ?? normalized);
+}
+
 export function expandLocationIds(ids: string[] = []) {
   const expanded = new Set<string>();
   const normalized = normalizeLocationIds(ids);

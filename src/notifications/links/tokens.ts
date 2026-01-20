@@ -56,3 +56,24 @@ export async function getActiveToken(prisma: PrismaClient, appointmentId: string
     orderBy: { issuedAt: "desc" },
   });
 }
+
+export async function createOrderReadyToken(prisma: PrismaClient, orderReadyId: string) {
+  const rawToken = generateToken();
+  await prisma.orderReadyAccessToken.create({
+    data: {
+      orderReadyId,
+      token: rawToken,
+    },
+  });
+  return { token: rawToken };
+}
+
+export async function getActiveOrderReadyToken(prisma: PrismaClient, orderReadyId: string) {
+  return prisma.orderReadyAccessToken.findFirst({
+    where: {
+      orderReadyId,
+      revokedAt: null,
+    },
+    orderBy: { issuedAt: "desc" },
+  });
+}

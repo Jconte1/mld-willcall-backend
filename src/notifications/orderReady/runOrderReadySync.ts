@@ -1,0 +1,218 @@
+import { PrismaClient } from "@prisma/client";
+import { fetchOrderReadyReport } from "../../lib/acumatica/fetch/fetchOrderReadyReport";
+import { normalizeWarehouseToLocationId } from "../../lib/locationIds";
+import { buildOrderReadyLink } from "../links/buildLink";
+import { createOrderReadyToken, getActiveOrderReadyToken } from "../links/tokens";
+import { sendEmail } from "../providers/email/sendEmail";
+import { buildOrderReadyEmail } from "../templates/email/buildOrderReadyEmail";
+
+const DENVER_TZ = "America/Denver";
+const JOB_NAME = "order-ready-daily";
+const RESEND_DAYS = 5;
+const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
+
+function getDenverParts(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: DENVER_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+    weekday: new Intl.DateTimeFormat("en-US", { timeZone: DENVER_TZ, weekday: "short" }).format(
+      date
+    ),
+  };
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+async function shouldRunToday(prisma: PrismaClient, now: Date) {
+  const parts = getDenverParts(now);
+  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
+  if (parts.hour < 9) return false;
+
+  const existing = await prisma.orderReadyJobState.findUnique({
+    where: { name: JOB_NAME },
+  });
+  if (existing?.lastRunAt) {
+    const last = getDenverParts(existing.lastRunAt);
+    if (last.date === parts.date) return false;
+  }
+  return true;
+}
+
+async function markRun(prisma: PrismaClient, now: Date) {
+  await prisma.orderReadyJobState.upsert({
+    where: { name: JOB_NAME },
+    update: { lastRunAt: now },
+    create: { name: JOB_NAME, lastRunAt: now },
+  });
+}
+
+export async function runOrderReadySync(prisma: PrismaClient) {
+  const now = new Date();
+  if (!(await shouldRunToday(prisma, now))) return;
+
+  console.log("[order-ready] running daily sync");
+  const rows = await fetchOrderReadyReport();
+  console.log("[order-ready] rows fetched", { count: rows.length });
+
+  const seenOrderNbrs = new Set<string>();
+  let sentCount = 0;
+  for (const row of rows) {
+    if (!row.orderNbr) continue;
+
+    const orderNbr = row.orderNbr.trim();
+    seenOrderNbrs.add(orderNbr);
+    const contactEmail = (row.attributeDelEmail || "").trim() || null;
+    const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
+    const locationId = mappedLocationId ?? "slc-hq";
+
+    const notice = await prisma.orderReadyNotice.upsert({
+      where: { orderNbr },
+      update: {
+        baid: row.customerId ?? null,
+        status: row.status ?? null,
+        orderType: row.orderType ?? null,
+        shipVia: row.shipVia ?? null,
+        qtyUnallocated: row.qtyUnallocated ?? null,
+        qtyAllocated: row.qtyAllocated ?? null,
+        unpaidBalance: row.unpaidBalance ?? null,
+        termsId: row.termsId ?? null,
+        customerId: row.customerId ?? null,
+        customerLocationId: row.customerLocationId ?? null,
+        attributeBuyerGroup: row.attributeBuyerGroup ?? null,
+        attributeOsContact: row.attributeOsContact ?? null,
+        attributeSiteNumber: row.attributeSiteNumber ?? null,
+        attributeDelEmail: row.attributeDelEmail ?? null,
+        contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+        contactPhone: row.attributeSiteNumber ?? null, // TODO: replace with actual contact phone field
+        contactEmail,
+        locationId,
+        smsOptIn: false, // TODO: replace with actual opt-in field
+        lastReadyAt: now,
+      },
+      create: {
+        orderNbr,
+        baid: row.customerId ?? null,
+        status: row.status ?? null,
+        orderType: row.orderType ?? null,
+        shipVia: row.shipVia ?? null,
+        qtyUnallocated: row.qtyUnallocated ?? null,
+        qtyAllocated: row.qtyAllocated ?? null,
+        unpaidBalance: row.unpaidBalance ?? null,
+        termsId: row.termsId ?? null,
+        customerId: row.customerId ?? null,
+        customerLocationId: row.customerLocationId ?? null,
+        attributeBuyerGroup: row.attributeBuyerGroup ?? null,
+        attributeOsContact: row.attributeOsContact ?? null,
+        attributeSiteNumber: row.attributeSiteNumber ?? null,
+        attributeDelEmail: row.attributeDelEmail ?? null,
+        contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+        contactPhone: row.attributeSiteNumber ?? null, // TODO: replace with actual contact phone field
+        contactEmail,
+        locationId,
+        smsOptIn: false, // TODO: replace with actual opt-in field
+        lastReadyAt: now,
+      },
+    });
+
+    const normalizedStatus = (notice.status || "").toLowerCase();
+    if (normalizedStatus === "scheduled" || normalizedStatus === "completed") {
+      continue;
+    }
+
+    const scheduledAppointment = await prisma.pickupAppointmentOrder.findFirst({
+      where: {
+        orderNbr,
+        appointment: {
+          status: { in: ["Scheduled", "Confirmed", "InProgress", "Ready", "Completed"] },
+        },
+      },
+      include: { appointment: true },
+      orderBy: { appointment: { startAt: "desc" } },
+    });
+
+    if (scheduledAppointment?.appointmentId) {
+      await prisma.orderReadyNotice.update({
+        where: { id: notice.id },
+        data: { scheduledAppointmentId: scheduledAppointment.appointmentId },
+      });
+      continue;
+    }
+
+    const eligible =
+      !notice.lastNotifiedAt ||
+      (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
+    if (!eligible) continue;
+
+    if (!notice.contactEmail && !process.env.NOTIFICATIONS_TEST_EMAIL) {
+      // TODO: When production-ready, require a real contactEmail before sending.
+      console.log("[order-ready] skipped (missing email)", { orderNbr });
+      continue;
+    }
+
+    const activeToken = await getActiveOrderReadyToken(prisma, notice.id);
+    const tokenRow = activeToken ?? (await createOrderReadyToken(prisma, notice.id));
+    const link = buildOrderReadyLink(orderNbr, tokenRow.token);
+    const message = buildOrderReadyEmail(orderNbr, link);
+    const recipient = notice.contactEmail || process.env.NOTIFICATIONS_TEST_EMAIL || "";
+    if (!recipient) {
+      console.log("[order-ready] skipped (missing recipient)", { orderNbr });
+      continue;
+    }
+
+    if (sentCount >= MAX_SEND_PER_RUN) {
+      console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
+      continue;
+    }
+
+    await sendEmail(recipient, message.subject, message.body);
+    sentCount += 1;
+
+    await prisma.orderReadyNotice.update({
+      where: { id: notice.id },
+      data: {
+        lastNotifiedAt: now,
+        nextEligibleNotifyAt: addDays(now, RESEND_DAYS),
+      },
+    });
+
+    console.log("[order-ready] notified", { orderNbr });
+  }
+
+  const staleNotices = await prisma.orderReadyNotice.findMany({
+    where: { orderNbr: { notIn: Array.from(seenOrderNbrs) } },
+    select: { id: true, orderNbr: true },
+  });
+
+  if (staleNotices.length) {
+    await prisma.orderReadyNotice.updateMany({
+      where: { id: { in: staleNotices.map((notice) => notice.id) } },
+      data: {
+        status: "NotReady",
+        nextEligibleNotifyAt: null,
+      },
+    });
+
+    await prisma.orderReadyAccessToken.updateMany({
+      where: { orderReadyId: { in: staleNotices.map((notice) => notice.id) }, revokedAt: null },
+      data: { revokedAt: now },
+    });
+
+    console.log("[order-ready] marked not-ready", { count: staleNotices.length });
+  }
+
+  await markRun(prisma, now);
+}

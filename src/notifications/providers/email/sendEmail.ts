@@ -3,8 +3,11 @@ import { getGraphAccessToken } from "./graphClient";
 type EmailResult = { ok: boolean; skipped?: boolean };
 
 function resolveRecipient(email: string) {
+  if (process.env.NOTIFICATIONS_TEST_EMAIL) {
+    return process.env.NOTIFICATIONS_TEST_EMAIL;
+  }
   if (process.env.NODE_ENV !== "production") {
-    return process.env.NOTIFICATIONS_TEST_EMAIL || "";
+    return "";
   }
   return email;
 }

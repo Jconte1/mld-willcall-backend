@@ -7,6 +7,7 @@ import {
 } from "../notifications";
 import { buildAppointmentLink } from "../notifications/links/buildLink";
 import { getActiveToken, createAppointmentToken } from "../notifications/links/tokens";
+import { toNumber } from "../lib/orders/orderHelpers";
 
 const prisma = new PrismaClient();
 export const publicAppointmentsRouter = Router();
@@ -105,7 +106,38 @@ publicAppointmentsRouter.get("/:id", async (req, res) => {
   });
   if (!appointment) return res.status(404).json({ message: "Not found" });
 
-  return res.json({ appointment });
+  const orderNbrs = appointment.orders.map((order) => order.orderNbr);
+  const lines = orderNbrs.length
+    ? await prisma.erpOrderLine.findMany({
+        where: { orderNbr: { in: orderNbrs } },
+        select: {
+          orderNbr: true,
+          inventoryId: true,
+          lineDescription: true,
+          openQty: true,
+          orderQty: true,
+          allocatedQty: true,
+          isAllocated: true,
+        },
+        orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
+      })
+    : [];
+
+  const orderLines = orderNbrs.map((orderNbr) => ({
+    orderNbr,
+    items: lines
+      .filter((line) => line.orderNbr === orderNbr)
+      .map((line) => ({
+        inventoryId: line.inventoryId,
+        lineDescription: line.lineDescription,
+        openQty: toNumber(line.openQty),
+        orderQty: toNumber(line.orderQty),
+        allocatedQty: toNumber(line.allocatedQty),
+        isAllocated: line.isAllocated,
+      })),
+  }));
+
+  return res.json({ appointment, orderLines });
 });
 
 /**

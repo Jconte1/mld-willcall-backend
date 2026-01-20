@@ -3,6 +3,11 @@ export function buildAppointmentLink(appointmentId: string, token: string) {
   return `${base}/appointments/${appointmentId}?token=${encodeURIComponent(token)}`;
 }
 
+export function buildOrderReadyLink(orderNbr: string, token: string) {
+  const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "");
+  return `${base}/orders/ready/${encodeURIComponent(orderNbr)}?token=${encodeURIComponent(token)}`;
+}
+
 function getBackendBaseUrl() {
   const explicit = process.env.BACKEND_URL || process.env.BACKEND_API_URL;
   if (explicit) return explicit.replace(/\/+$/, "");

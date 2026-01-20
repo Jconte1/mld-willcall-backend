@@ -355,7 +355,7 @@ model PickupAppointment {
   id                String                   @id @default(cuid())
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
-  userId            String
+  userId            String?
   email             String                   @db.VarChar(256)
   pickupReference   String?                  @db.VarChar(256)
   /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
@@ -377,10 +377,11 @@ model PickupAppointment {
   emailOptInEmail   String?                  @db.VarChar(256)
   vehicleInfo       String?
   customerNotes     String?
-  users             users                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  users             users?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
   orders            PickupAppointmentOrder[]
   notificationJobs  AppointmentNotificationJob[]
   accessTokens      AppointmentAccessToken[]
+  orderReadyNotices OrderReadyNotice[]
 
   @@index([locationId, startAt])
   @@index([status])
@@ -505,4 +506,57 @@ model AppointmentAccessToken {
 
   @@index([appointmentId])
   @@index([expiresAt])
+}
+
+model OrderReadyNotice {
+  id                   String                   @id @default(cuid())
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  orderNbr             String                   @unique @db.VarChar(64)
+  baid                 String?                  @db.VarChar(64)
+  status               String?                  @db.VarChar(128)
+  orderType            String?                  @db.VarChar(128)
+  shipVia              String?                  @db.VarChar(128)
+  qtyUnallocated       Decimal?                 @db.Decimal(18, 4)
+  qtyAllocated         Decimal?                 @db.Decimal(18, 4)
+  unpaidBalance        Decimal?                 @db.Decimal(18, 2)
+  termsId              String?                  @db.VarChar(128)
+  customerId           String?                  @db.VarChar(128)
+  customerLocationId   String?                  @db.VarChar(128)
+  attributeBuyerGroup  String?                  @db.VarChar(256)
+  attributeOsContact   String?                  @db.VarChar(256)
+  attributeSiteNumber  String?                  @db.VarChar(256)
+  attributeDelEmail    String?                  @db.VarChar(256)
+  contactName          String?                  @db.VarChar(256)
+  contactPhone         String?                  @db.VarChar(64)
+  contactEmail         String?                  @db.VarChar(256)
+  locationId           String?                  @db.VarChar(64)
+  smsOptIn             Boolean                  @default(false)
+  lastNotifiedAt       DateTime?
+  nextEligibleNotifyAt DateTime?
+  lastReadyAt          DateTime?
+  scheduledAppointmentId String?
+  scheduledAppointment PickupAppointment?       @relation(fields: [scheduledAppointmentId], references: [id], onDelete: SetNull)
+  accessTokens         OrderReadyAccessToken[]
+
+  @@index([locationId])
+  @@index([status])
+  @@index([nextEligibleNotifyAt])
+}
+
+model OrderReadyAccessToken {
+  id            String          @id @default(cuid())
+  orderReadyId  String
+  token         String          @unique
+  issuedAt      DateTime        @default(now())
+  revokedAt     DateTime?
+  orderReady    OrderReadyNotice @relation(fields: [orderReadyId], references: [id], onDelete: Cascade)
+
+  @@index([orderReadyId])
+}
+
+model OrderReadyJobState {
+  id         String   @id @default(cuid())
+  name       String   @unique @db.VarChar(64)
+  lastRunAt  DateTime?
 }
