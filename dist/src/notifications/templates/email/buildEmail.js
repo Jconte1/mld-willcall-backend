@@ -11,7 +11,7 @@ function formatOrderList(orderNbrs = []) {
         return "(none)";
     return orderNbrs.join(", ");
 }
-function renderTemplate({ title, preheader, message, when, orders, link, staffNote, }) {
+function renderTemplate({ title, preheader, message, when, orders, link, unsubscribeLink, staffNote, }) {
     return `<!doctype html>
 <html>
   <head>
@@ -62,6 +62,7 @@ function renderTemplate({ title, preheader, message, when, orders, link, staffNo
             <tr>
               <td style="padding:20px 28px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;">
                 If you did not request this, you can ignore this email.
+                ${unsubscribeLink ? `<div style="margin-top:10px;"><a href="${unsubscribeLink}" style="color:#6b7280;text-decoration:underline;">Unsubscribe from email updates</a></div>` : ""}
               </td>
             </tr>
           </table>
@@ -88,6 +89,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -101,6 +103,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -114,6 +117,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -128,6 +132,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -143,6 +148,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -157,6 +163,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -170,6 +177,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };
@@ -183,6 +191,7 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                 }),
             };

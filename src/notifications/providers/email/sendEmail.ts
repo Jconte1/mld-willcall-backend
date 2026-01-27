@@ -1,20 +1,30 @@
 import { getGraphAccessToken } from "./graphClient";
 
 type EmailResult = { ok: boolean; skipped?: boolean };
+type SendEmailOptions = { allowTestOverride?: boolean; allowNonProdSend?: boolean };
 
-function resolveRecipient(email: string) {
-  if (process.env.NOTIFICATIONS_TEST_EMAIL) {
+function resolveRecipient(
+  email: string,
+  { allowTestOverride = true, allowNonProdSend = false }: SendEmailOptions = {}
+) {
+  // TODO: Revisit this behavior before production; allowNonProdSend is intended for local testing only.
+  if (allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
     return process.env.NOTIFICATIONS_TEST_EMAIL;
   }
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !allowNonProdSend) {
     return "";
   }
   return email;
 }
 
-export async function sendEmail(to: string, subject: string, body: string): Promise<EmailResult> {
+export async function sendEmail(
+  to: string,
+  subject: string,
+  body: string,
+  options: SendEmailOptions = {}
+): Promise<EmailResult> {
   const fromEmail = process.env.MS_GRAPH_FROM_EMAIL || "";
-  const recipient = resolveRecipient(to);
+  const recipient = resolveRecipient(to, options);
 
   if (!recipient) {
     console.log("[notifications][email] skipped (no recipient)", { to });

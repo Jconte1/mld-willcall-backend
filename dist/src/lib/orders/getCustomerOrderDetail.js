@@ -9,8 +9,6 @@ const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Confirmed,
     client_1.PickupAppointmentStatus.InProgress,
     client_1.PickupAppointmentStatus.Ready,
-    client_1.PickupAppointmentStatus.Completed,
-    client_1.PickupAppointmentStatus.NoShow,
 ];
 async function getCustomerOrderDetail(baid, orderNbr) {
     const summary = await prisma.erpOrderSummary.findUnique({
@@ -80,6 +78,14 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             orderNbrs: appointmentOrders.map((row) => row.orderNbr),
         }
         : null;
+    const lastCompletedAppointment = await prisma.pickupAppointmentOrder.findFirst({
+        where: {
+            orderNbr,
+            appointment: { status: client_1.PickupAppointmentStatus.Completed },
+        },
+        include: { appointment: true },
+        orderBy: { appointment: { endAt: "desc" } },
+    });
     return {
         summary: {
             id: summary.id,
@@ -97,6 +103,9 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             paymentStatus,
             lineSummary,
             warehouses,
+            lastPickupAt: lastCompletedAppointment?.appointment?.endAt ??
+                lastCompletedAppointment?.appointment?.startAt ??
+                null,
             appointment,
         },
         address: summary.ErpOrderAddress

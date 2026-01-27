@@ -27,6 +27,13 @@ export default async function writeInventoryDetails(
 
       const taxZone = pickTaxZone(row, d);
       const taxRate = taxRateFromZone(taxZone);
+      // TEMP: log tax zone mapping for troubleshooting (remove when done).
+      console.log("[inventory-details][tax]", {
+        orderNbr,
+        inventoryId: optStr(val(d, "InventoryID")),
+        taxZone,
+        taxRate,
+      });
 
       // --- Allocation logic (nested under Details -> Allocations) ---
       const allocations = Array.isArray(d?.Allocations) ? d.Allocations : [];

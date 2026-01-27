@@ -10,6 +10,8 @@ const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
 const RESEND_DAYS = 5;
 const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
+const RUN_HOUR = 9;
+const RUN_MINUTE = 30;
 
 function getDenverParts(date: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -37,19 +39,18 @@ function addDays(date: Date, days: number) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-async function shouldRunToday(prisma: PrismaClient, now: Date) {
-  const parts = getDenverParts(now);
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-  if (parts.hour < 9) return false;
-
+async function shouldRun(prisma: PrismaClient, now: Date) {
   const existing = await prisma.orderReadyJobState.findUnique({
     where: { name: JOB_NAME },
   });
-  if (existing?.lastRunAt) {
-    const last = getDenverParts(existing.lastRunAt);
-    if (last.date === parts.date) return false;
+  const parts = getDenverParts(now);
+  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
+  if (parts.hour < RUN_HOUR || (parts.hour === RUN_HOUR && parts.minute < RUN_MINUTE)) {
+    return false;
   }
-  return true;
+  if (!existing?.lastRunAt) return true;
+  const last = getDenverParts(existing.lastRunAt);
+  return last.date !== parts.date;
 }
 
 async function markRun(prisma: PrismaClient, now: Date) {
@@ -62,7 +63,7 @@ async function markRun(prisma: PrismaClient, now: Date) {
 
 export async function runOrderReadySync(prisma: PrismaClient) {
   const now = new Date();
-  if (!(await shouldRunToday(prisma, now))) return;
+  if (!(await shouldRun(prisma, now))) return;
 
   console.log("[order-ready] running daily sync");
   const rows = await fetchOrderReadyReport();

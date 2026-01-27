@@ -35,6 +35,10 @@ function canAccessLocation(req: any, locationId: string): boolean {
   return expandLocationIds(req.auth.locationAccess ?? []).includes(locationId);
 }
 
+function canWritePickups(req: any): boolean {
+  return req.auth?.role !== "VIEWER";
+}
+
 /**
  * GET /api/staff/pickups
  * Optional query: locationId, status, from, to
@@ -108,6 +112,10 @@ pickupsRouter.get("/", async (req, res) => {
  * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
  */
 pickupsRouter.post("/", async (req, res) => {
+  if (!canWritePickups(req)) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+
   const body = z.object({
     locationId: z.enum(LOCATION_IDS),
     customerEmail: z.string().email(),
@@ -203,6 +211,10 @@ pickupsRouter.get("/:id", async (req, res) => {
  * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
 pickupsRouter.patch("/:id", async (req, res) => {
+  if (!canWritePickups(req)) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+
   const body = z.object({
     status: STATUS.optional(),
     startAt: z.string().datetime().optional(),

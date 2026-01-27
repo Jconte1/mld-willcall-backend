@@ -9,8 +9,6 @@ const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Confirmed,
     client_1.PickupAppointmentStatus.InProgress,
     client_1.PickupAppointmentStatus.Ready,
-    client_1.PickupAppointmentStatus.Completed,
-    client_1.PickupAppointmentStatus.NoShow,
 ];
 async function getCustomerOrders(baid) {
     const summaries = await prisma.erpOrderSummary.findMany({
@@ -46,6 +44,15 @@ async function getCustomerOrders(baid) {
             include: { appointment: true },
         })
         : [];
+    const completedAppointmentOrders = orderNbrs.length
+        ? await prisma.pickupAppointmentOrder.findMany({
+            where: {
+                orderNbr: { in: orderNbrs },
+                appointment: { status: client_1.PickupAppointmentStatus.Completed },
+            },
+            include: { appointment: true },
+        })
+        : [];
     const orderNbrsByAppointment = new Map();
     for (const row of appointmentOrders) {
         const set = orderNbrsByAppointment.get(row.appointmentId) ?? new Set();
@@ -67,6 +74,17 @@ async function getCustomerOrders(baid) {
                 locationId: appointment.locationId,
                 orderNbrs: Array.from(orderNbrsByAppointment.get(appointment.id) ?? []),
             });
+        }
+    }
+    const lastCompletedByOrder = new Map();
+    for (const row of completedAppointmentOrders) {
+        const appointment = row.appointment;
+        if (!appointment)
+            continue;
+        const current = lastCompletedByOrder.get(row.orderNbr);
+        const next = appointment.endAt ?? appointment.startAt;
+        if (!current || next > current) {
+            lastCompletedByOrder.set(row.orderNbr, next);
         }
     }
     const summaryIds = summaries.map((s) => s.id);
@@ -145,6 +163,7 @@ async function getCustomerOrders(baid) {
             warehouses,
             lineSummary: stats,
             isPickupReady,
+            lastPickupAt: lastCompletedByOrder.get(summary.orderNbr) ?? null,
             appointment: appointmentByOrder.get(summary.orderNbr) ?? null,
         };
     });

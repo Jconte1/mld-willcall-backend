@@ -1,12 +1,33 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.upsertOrderSummariesForBAID = upsertOrderSummariesForBAID;
+exports.upsertOrderSummariesDelta = upsertOrderSummariesDelta;
 exports.purgeOldOrders = purgeOldOrders;
 const client_1 = require("@prisma/client");
 const node_crypto_1 = require("node:crypto");
 const prisma = new client_1.PrismaClient();
-async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency = 10 } = {}) {
-    const now = new Date();
+const INACTIVE_STATUSES = new Set([
+    "Canceled",
+    "Cancelled",
+    "On Hold",
+    "Pending Approval",
+    "Rejected",
+    "Pending Processing",
+    "Awaiting Payment",
+    "Credit Hold",
+    "Completed",
+    "Invoiced",
+    "Expired",
+    "Purchase Hold",
+    "Not Approved",
+    "Risk Hold",
+]);
+function shouldBeActive(status) {
+    if (!status)
+        return true;
+    return !INACTIVE_STATUSES.has(String(status));
+}
+function mapOrderSummaryRows(rawRows) {
     const incoming = [];
     for (const row of Array.isArray(rawRows) ? rawRows : []) {
         const orderNbr = firstVal(row, ["OrderNbr", "orderNbr", "nbr"]);
@@ -38,6 +59,11 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
             noteId: optStr(noteId),
         });
     }
+    return incoming;
+}
+async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency = 10 } = {}) {
+    const now = new Date();
+    const incoming = mapOrderSummaryRows(rawRows);
     console.log(`[upsertOrderSummaries] baid=${baid} incoming=${incoming.length}`);
     const existing = await prisma.erpOrderSummary.findMany({
         where: { baid, deliveryDate: { gte: cutoff } },
@@ -131,6 +157,96 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
         data: { isActive: false, updatedAt: now },
     });
     return { inserted, updated, inactivated };
+}
+async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {}) {
+    const now = new Date();
+    const incoming = mapOrderSummaryRows(rawRows);
+    console.log(`[upsertOrderSummariesDelta] baid=${baid} incoming=${incoming.length}`);
+    const existing = await prisma.erpOrderSummary.findMany({
+        where: { baid, orderNbr: { in: incoming.map((r) => r.orderNbr) } },
+        select: {
+            orderNbr: true,
+            status: true,
+            locationId: true,
+            deliveryDate: true,
+            shipVia: true,
+            jobName: true,
+            customerName: true,
+            buyerGroup: true,
+            noteId: true,
+            isActive: true,
+        },
+    });
+    const byNbr = new Map(existing.map((r) => [r.orderNbr, r]));
+    const toInsert = [];
+    const toUpdate = [];
+    for (const r of incoming) {
+        const prev = byNbr.get(r.orderNbr);
+        if (!prev) {
+            toInsert.push(r);
+        }
+        else {
+            const nextActive = shouldBeActive(r.status);
+            const changed = r.status !== prev.status ||
+                (r.locationId || null) !== (prev.locationId || null) ||
+                +new Date(r.deliveryDate) !== +new Date(prev.deliveryDate ?? 0) ||
+                (r.shipVia || null) !== (prev.shipVia || null) ||
+                (r.jobName || null) !== (prev.jobName || null) ||
+                (r.customerName || null) !== (prev.customerName || null) ||
+                (r.buyerGroup || null) !== (prev.buyerGroup || null) ||
+                (r.noteId || null) !== (prev.noteId || null) ||
+                nextActive !== Boolean(prev.isActive);
+            if (changed)
+                toUpdate.push(r);
+        }
+    }
+    let inserted = 0;
+    if (toInsert.length) {
+        const { count } = await prisma.erpOrderSummary.createMany({
+            data: toInsert.map((r) => ({
+                id: (0, node_crypto_1.randomUUID)(),
+                baid,
+                orderNbr: r.orderNbr,
+                status: r.status,
+                locationId: r.locationId,
+                jobName: r.jobName ?? null,
+                customerName: r.customerName ?? "",
+                shipVia: r.shipVia ?? null,
+                deliveryDate: r.deliveryDate,
+                lastSeenAt: now,
+                isActive: shouldBeActive(r.status),
+                buyerGroup: r.buyerGroup ?? "",
+                noteId: r.noteId ?? "",
+                updatedAt: now,
+            })),
+            skipDuplicates: true,
+        });
+        inserted = count;
+        console.log(`[upsertOrderSummariesDelta] inserted=${inserted} baid=${baid}`);
+    }
+    let updated = 0;
+    if (toUpdate.length) {
+        await runWithConcurrency(toUpdate, concurrency, async (r) => {
+            await prisma.erpOrderSummary.update({
+                where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
+                data: {
+                    status: r.status,
+                    locationId: r.locationId,
+                    jobName: r.jobName ?? null,
+                    customerName: r.customerName ?? "",
+                    shipVia: r.shipVia ?? null,
+                    deliveryDate: r.deliveryDate,
+                    buyerGroup: r.buyerGroup ?? "",
+                    noteId: r.noteId ?? "",
+                    lastSeenAt: now,
+                    isActive: shouldBeActive(r.status),
+                },
+            });
+            updated += 1;
+        });
+        console.log(`[upsertOrderSummariesDelta] updated=${updated} baid=${baid}`);
+    }
+    return { inserted, updated };
 }
 async function purgeOldOrders(cutoff) {
     const { count } = await prisma.erpOrderSummary.deleteMany({

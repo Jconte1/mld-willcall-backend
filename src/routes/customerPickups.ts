@@ -69,6 +69,8 @@ const updateOrdersSchema = z.object({
 const BLOCKING_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
   PickupAppointmentStatus.Confirmed,
+  PickupAppointmentStatus.InProgress,
+  PickupAppointmentStatus.Ready,
 ];
 
 type PendingAppointment = {
@@ -100,6 +102,35 @@ const DENVER_TZ = "America/Denver";
 const OPEN_HOUR = 8;
 const CLOSE_HOUR = 17;
 const SLOT_MINUTES = 15;
+
+async function hasAccountAccess(
+  userId: string,
+  appointmentId: string
+) {
+  const user = await prisma.users.findUnique({
+    where: { id: userId },
+    select: { isDeveloper: true },
+  });
+  if (user?.isDeveloper) return true;
+
+  const orderNbrs = await prisma.pickupAppointmentOrder.findMany({
+    where: { appointmentId },
+    select: { orderNbr: true },
+  });
+  if (!orderNbrs.length) return false;
+
+  const summary = await prisma.erpOrderSummary.findFirst({
+    where: { orderNbr: { in: orderNbrs.map((o) => o.orderNbr) } },
+    select: { baid: true },
+  });
+  if (!summary?.baid) return false;
+
+  const role = await prisma.accountUserRole.findFirst({
+    where: { userId, baid: summary.baid, isActive: true },
+    select: { id: true },
+  });
+  return Boolean(role);
+}
 
 function pad(num: number) {
   return String(num).padStart(2, "0");
@@ -430,7 +461,8 @@ customerPickupsRouter.patch("/:id/cancel", async (req, res) => {
   if (!appointment) return res.status(404).json({ message: "Not found" });
 
   if (appointment.userId !== parsed.data.userId || appointment.email !== parsed.data.email) {
-    return res.status(403).json({ message: "Forbidden" });
+    const allowed = await hasAccountAccess(parsed.data.userId, appointment.id);
+    if (!allowed) return res.status(403).json({ message: "Forbidden" });
   }
 
   if (appointment.status === PickupAppointmentStatus.Cancelled) {
@@ -474,7 +506,8 @@ customerPickupsRouter.patch("/:id/orders", async (req, res) => {
   if (!appointment) return res.status(404).json({ message: "Not found" });
 
   if (appointment.userId !== parsed.data.userId || appointment.email !== parsed.data.email) {
-    return res.status(403).json({ message: "Forbidden" });
+    const allowed = await hasAccountAccess(parsed.data.userId, appointment.id);
+    if (!allowed) return res.status(403).json({ message: "Forbidden" });
   }
 
   const nextOrderNbrs = Array.from(new Set(parsed.data.orderNbrs));

@@ -19,8 +19,10 @@ const groupSchema = zod_1.z.object({
     selectedDate: zod_1.z.string().regex(DATE_RE),
     selectedSlots: zod_1.z.array(slotSchema).min(1).max(2),
 });
-const createSchema = zod_1.z.object({
-    userId: zod_1.z.string().min(1),
+const createSchema = zod_1.z
+    .object({
+    userId: zod_1.z.string().min(1).optional(),
+    orderReadyToken: zod_1.z.string().min(1).optional(),
     email: zod_1.z.string().email(),
     firstName: zod_1.z.string().min(1),
     lastName: zod_1.z.string().optional().default(""),
@@ -30,6 +32,14 @@ const createSchema = zod_1.z.object({
     vehicleInfo: zod_1.z.string().optional(),
     notes: zod_1.z.string().optional(),
     groups: zod_1.z.array(groupSchema).min(1),
+})
+    .superRefine((data, ctx) => {
+    if (!data.userId && !data.orderReadyToken) {
+        ctx.addIssue({
+            code: zod_1.z.ZodIssueCode.custom,
+            message: "userId or orderReadyToken is required.",
+        });
+    }
 });
 const availabilitySchema = zod_1.z.object({
     locationId: zod_1.z.string().min(1),
@@ -49,11 +59,38 @@ const updateOrdersSchema = zod_1.z.object({
 const BLOCKING_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
+    client_1.PickupAppointmentStatus.InProgress,
+    client_1.PickupAppointmentStatus.Ready,
 ];
 const DENVER_TZ = "America/Denver";
 const OPEN_HOUR = 8;
 const CLOSE_HOUR = 17;
 const SLOT_MINUTES = 15;
+async function hasAccountAccess(userId, appointmentId) {
+    const user = await prisma.users.findUnique({
+        where: { id: userId },
+        select: { isDeveloper: true },
+    });
+    if (user?.isDeveloper)
+        return true;
+    const orderNbrs = await prisma.pickupAppointmentOrder.findMany({
+        where: { appointmentId },
+        select: { orderNbr: true },
+    });
+    if (!orderNbrs.length)
+        return false;
+    const summary = await prisma.erpOrderSummary.findFirst({
+        where: { orderNbr: { in: orderNbrs.map((o) => o.orderNbr) } },
+        select: { baid: true },
+    });
+    if (!summary?.baid)
+        return false;
+    const role = await prisma.accountUserRole.findFirst({
+        where: { userId, baid: summary.baid, isActive: true },
+        select: { id: true },
+    });
+    return Boolean(role);
+}
 function pad(num) {
     return String(num).padStart(2, "0");
 }
@@ -195,6 +232,21 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         return res.status(400).json({ message: "Invalid request body", issues: parsed.error.issues });
     }
     const payload = parsed.data;
+    const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs)));
+    let orderReadyNoticeId = null;
+    if (payload.orderReadyToken) {
+        if (orderNbrs.length !== 1) {
+            return res.status(400).json({ message: "Order-ready appointments must include one order." });
+        }
+        const token = await prisma.orderReadyAccessToken.findFirst({
+            where: { token: payload.orderReadyToken, revokedAt: null },
+            include: { orderReady: { select: { id: true, orderNbr: true } } },
+        });
+        if (!token || token.orderReady.orderNbr !== orderNbrs[0]) {
+            return res.status(403).json({ message: "Invalid order-ready token." });
+        }
+        orderReadyNoticeId = token.orderReady.id;
+    }
     const appointmentsToCreate = [];
     const ordersToCreate = [];
     for (const group of payload.groups) {
@@ -214,7 +266,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         const startAt = makeDateTime(group.selectedDate, orderedSlots[0].startTime);
         const endAt = makeDateTime(group.selectedDate, orderedSlots[orderedSlots.length - 1].endTime);
         appointmentsToCreate.push({
-            userId: payload.userId,
+            userId: payload.userId ?? null,
             email: payload.email,
             pickupReference: group.orderNbrs.join(", "),
             locationId: group.locationId,
@@ -229,10 +281,10 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             smsOptInAt: payload.smsOptIn ? new Date() : null,
             smsOptInSource: payload.smsOptIn ? "confirmation-form" : null,
             smsOptInPhone: payload.smsOptIn ? payload.phone || null : null,
-            emailOptIn: Boolean(payload.emailOptIn),
-            emailOptInAt: payload.emailOptIn ? new Date() : null,
-            emailOptInSource: payload.emailOptIn ? "confirmation-form" : null,
-            emailOptInEmail: payload.emailOptIn ? payload.email : null,
+            emailOptIn: true,
+            emailOptInAt: new Date(),
+            emailOptInSource: "confirmation-form",
+            emailOptInEmail: payload.email,
             vehicleInfo: payload.vehicleInfo || null,
             customerNotes: payload.notes || null,
             orderNbrs: group.orderNbrs,
@@ -294,6 +346,12 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         }
         return createdAppointments;
     });
+    if (orderReadyNoticeId && created.length > 0) {
+        await prisma.orderReadyNotice.update({
+            where: { id: orderReadyNoticeId },
+            data: { scheduledAppointmentId: created[0].id },
+        });
+    }
     for (const [index, appointment] of created.entries()) {
         const orderNbrs = appointmentsToCreate[index]?.orderNbrs ?? [];
         try {
@@ -319,7 +377,9 @@ exports.customerPickupsRouter.patch("/:id/cancel", async (req, res) => {
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
     if (appointment.userId !== parsed.data.userId || appointment.email !== parsed.data.email) {
-        return res.status(403).json({ message: "Forbidden" });
+        const allowed = await hasAccountAccess(parsed.data.userId, appointment.id);
+        if (!allowed)
+            return res.status(403).json({ message: "Forbidden" });
     }
     if (appointment.status === client_1.PickupAppointmentStatus.Cancelled) {
         return res.json({ appointment });
@@ -359,7 +419,9 @@ exports.customerPickupsRouter.patch("/:id/orders", async (req, res) => {
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
     if (appointment.userId !== parsed.data.userId || appointment.email !== parsed.data.email) {
-        return res.status(403).json({ message: "Forbidden" });
+        const allowed = await hasAccountAccess(parsed.data.userId, appointment.id);
+        if (!allowed)
+            return res.status(403).json({ message: "Forbidden" });
     }
     const nextOrderNbrs = Array.from(new Set(parsed.data.orderNbrs));
     const remaining = nextOrderNbrs.length;

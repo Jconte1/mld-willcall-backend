@@ -20,6 +20,13 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
                 continue;
             const taxZone = pickTaxZone(row, d);
             const taxRate = taxRateFromZone(taxZone);
+            // TEMP: log tax zone mapping for troubleshooting (remove when done).
+            console.log("[inventory-details][tax]", {
+                orderNbr,
+                inventoryId: optStr(val(d, "InventoryID")),
+                taxZone,
+                taxRate,
+            });
             // --- Allocation logic (nested under Details -> Allocations) ---
             const allocations = Array.isArray(d?.Allocations) ? d.Allocations : [];
             // isAllocated = TRUE if ANY allocation row has Allocated=true

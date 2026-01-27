@@ -7,6 +7,7 @@ const zod_1 = require("zod");
 const notifications_1 = require("../notifications");
 const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
+const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const prisma = new client_1.PrismaClient();
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
@@ -93,7 +94,64 @@ exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
     });
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
-    return res.json({ appointment });
+    const orderNbrs = appointment.orders.map((order) => order.orderNbr);
+    const lines = orderNbrs.length
+        ? await prisma.erpOrderLine.findMany({
+            where: { orderNbr: { in: orderNbrs } },
+            select: {
+                orderNbr: true,
+                inventoryId: true,
+                lineDescription: true,
+                openQty: true,
+                orderQty: true,
+                allocatedQty: true,
+                isAllocated: true,
+            },
+            orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
+        })
+        : [];
+    const orderLines = orderNbrs.map((orderNbr) => ({
+        orderNbr,
+        items: lines
+            .filter((line) => line.orderNbr === orderNbr)
+            .map((line) => ({
+            inventoryId: line.inventoryId,
+            lineDescription: line.lineDescription,
+            openQty: (0, orderHelpers_1.toNumber)(line.openQty),
+            orderQty: (0, orderHelpers_1.toNumber)(line.orderQty),
+            allocatedQty: (0, orderHelpers_1.toNumber)(line.allocatedQty),
+            isAllocated: line.isAllocated,
+        })),
+    }));
+    return res.json({ appointment, orderLines });
+});
+/**
+ * GET /api/public/appointments/:id/unsubscribe?token=...
+ */
+exports.publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
+    const parsed = tokenSchema.safeParse(req.query);
+    const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+    if (!parsed.success) {
+        return res.redirect(`${frontend}/unsubscribe?status=invalid`);
+    }
+    const token = await prisma.appointmentAccessToken.findFirst({
+        where: {
+            appointmentId: req.params.id,
+            token: parsed.data.token,
+        },
+    });
+    if (!token) {
+        return res.redirect(`${frontend}/unsubscribe?status=invalid`);
+    }
+    await prisma.pickupAppointment.update({
+        where: { id: req.params.id },
+        data: {
+            emailOptIn: false,
+            emailOptInAt: null,
+            emailOptInSource: "unsubscribe",
+        },
+    });
+    return res.redirect(`${frontend}/unsubscribe?status=success`);
 });
 /**
  * PATCH /api/public/appointments/:id?token=...

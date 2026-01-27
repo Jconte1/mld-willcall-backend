@@ -3,6 +3,23 @@ import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { verifyPassword, validatePasswordRules, hashPassword } from "../lib/passwords";
+
+function logInstance(label: string) {
+  const raw = process.env.DATABASE_URL || "";
+  let safeDb = "unknown";
+  try {
+    const url = new URL(raw);
+    safeDb = `${url.hostname}${url.port ? `:${url.port}` : ""}${url.pathname ? url.pathname : ""}`;
+  } catch {
+    safeDb = "unknown";
+  }
+  console.info(`[staffAuth/${label}] instance`, {
+    pid: process.pid,
+    db: safeDb,
+    host: process.env.HOST || "",
+    port: process.env.PORT || "",
+  });
+}
 import { normalizeLocationIds } from "../lib/locationIds";
 import { requireAuth } from "../middleware/auth";
 
@@ -22,6 +39,7 @@ const LOGIN_BODY = z.object({
  * Intended to be used by NextAuth Credentials authorize() on the frontend.
  */
 staffAuthRouter.post("/login", async (req, res) => {
+  logInstance("login");
   const parsed = LOGIN_BODY.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Invalid request body" });
 
@@ -75,6 +93,13 @@ staffAuthRouter.post("/login", async (req, res) => {
  * Sets mustChangePassword = false on success.
  */
 staffAuthRouter.post("/change-password", requireAuth, async (req, res) => {
+  logInstance("change-password");
+  console.info("[staffAuth/change-password] auth", {
+    hasAuth: Boolean(req.auth),
+    id: req.auth?.id,
+    email: req.auth?.email,
+    role: req.auth?.role,
+  });
   const body = z.object({
     currentPassword: z.string().min(1),
     newPassword: z.string().min(1)
@@ -83,6 +108,12 @@ staffAuthRouter.post("/change-password", requireAuth, async (req, res) => {
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
 
   const user = await prisma.staffUser.findUnique({ where: { id: req.auth!.id } });
+  console.info("[staffAuth/change-password] user lookup", {
+    found: Boolean(user),
+    id: user?.id,
+    email: user?.email,
+    isActive: user?.isActive,
+  });
   if (!user || !user.isActive) return res.status(401).json({ message: "Unauthorized" });
 
   const ok = await verifyPassword(body.data.currentPassword, user.passwordHash);

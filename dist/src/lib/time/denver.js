@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.startOfDayDenver = startOfDayDenver;
 exports.oneYearAgoDenver = oneYearAgoDenver;
 exports.toDenverDateTimeOffsetLiteral = toDenverDateTimeOffsetLiteral;
+exports.toDenverDateTimeOffsetLiteralAt = toDenverDateTimeOffsetLiteralAt;
+exports.denver3amWindowStartLiteral = denver3amWindowStartLiteral;
 exports.toDenver = toDenver;
 exports.atDenver = atDenver;
 exports.addDaysDenver = addDaysDenver;
@@ -45,6 +47,61 @@ function toDenverDateTimeOffsetLiteral(d) {
         }
     }
     return `datetimeoffset'${y}-${m}-${day}T00:00:00${offset}'`;
+}
+function toDenverDateTimeOffsetLiteralAt(date) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZoneName: "shortOffset",
+    }).formatToParts(date);
+    const get = (t) => parts.find((p) => p.type === t)?.value ?? "00";
+    const yyyy = get("year");
+    const MM = get("month");
+    const dd = get("day");
+    const hh = get("hour");
+    const mm = get("minute");
+    const ss = get("second");
+    const offsetRaw = (get("timeZoneName") || "").replace("GMT", "") || "+00:00";
+    return `datetimeoffset'${yyyy}-${MM}-${dd}T${hh}:${mm}:${ss}${offsetRaw}'`;
+}
+function denver3amWindowStartLiteral(now = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZoneName: "shortOffset",
+    }).formatToParts(now);
+    const get = (t) => parts.find((p) => p.type === t)?.value;
+    const yyyy = get("year");
+    const MM = get("month");
+    const dd = get("day");
+    const hh = Number(get("hour") || 0);
+    const offsetRaw = (get("timeZoneName") || "").replace("GMT", "") || "+00:00";
+    if (hh >= 3) {
+        return `datetimeoffset'${yyyy}-${MM}-${dd}T03:00:00${offsetRaw}'`;
+    }
+    const today3 = new Date(`${yyyy}-${MM}-${dd}T03:00:00${offsetRaw}`);
+    const yParts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(new Date(today3.getTime() - 24 * 60 * 60 * 1000));
+    const yY = yParts.find((p) => p.type === "year")?.value;
+    const yM = yParts.find((p) => p.type === "month")?.value;
+    const yD = yParts.find((p) => p.type === "day")?.value;
+    return `datetimeoffset'${yY}-${yM}-${yD}T03:00:00${offsetRaw}'`;
 }
 function toDenver(date = new Date()) {
     return new Date(date.toLocaleString("en-US", { timeZone: DENVER_TZ }));

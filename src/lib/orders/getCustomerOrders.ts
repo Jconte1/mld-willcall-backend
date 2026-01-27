@@ -31,6 +31,7 @@ type OrderSummaryView = {
   warehouses: string[];
   lineSummary: LineStats;
   isPickupReady: boolean;
+  lastPickupAt: Date | null;
   appointment: {
     id: string;
     status: PickupAppointmentStatus;
@@ -46,8 +47,6 @@ const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Confirmed,
   PickupAppointmentStatus.InProgress,
   PickupAppointmentStatus.Ready,
-  PickupAppointmentStatus.Completed,
-  PickupAppointmentStatus.NoShow,
 ];
 
 export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[]> {
@@ -86,6 +85,16 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       })
     : [];
 
+  const completedAppointmentOrders = orderNbrs.length
+    ? await prisma.pickupAppointmentOrder.findMany({
+        where: {
+          orderNbr: { in: orderNbrs },
+          appointment: { status: PickupAppointmentStatus.Completed },
+        },
+        include: { appointment: true },
+      })
+    : [];
+
   const orderNbrsByAppointment = new Map<string, Set<string>>();
   for (const row of appointmentOrders) {
     const set = orderNbrsByAppointment.get(row.appointmentId) ?? new Set<string>();
@@ -107,6 +116,17 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
         locationId: appointment.locationId,
         orderNbrs: Array.from(orderNbrsByAppointment.get(appointment.id) ?? []),
       });
+    }
+  }
+
+  const lastCompletedByOrder = new Map<string, Date>();
+  for (const row of completedAppointmentOrders) {
+    const appointment = row.appointment;
+    if (!appointment) continue;
+    const current = lastCompletedByOrder.get(row.orderNbr);
+    const next = appointment.endAt ?? appointment.startAt;
+    if (!current || next > current) {
+      lastCompletedByOrder.set(row.orderNbr, next);
     }
   }
 
@@ -195,6 +215,7 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       warehouses,
       lineSummary: stats,
       isPickupReady,
+      lastPickupAt: lastCompletedByOrder.get(summary.orderNbr) ?? null,
       appointment: appointmentByOrder.get(summary.orderNbr) ?? null,
     };
   });

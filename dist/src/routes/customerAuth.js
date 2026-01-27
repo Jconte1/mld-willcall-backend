@@ -1,9 +1,13 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.customerAuthRouter = void 0;
 const express_1 = require("express");
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const passwords_1 = require("../lib/passwords");
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const prisma = new client_1.PrismaClient();
@@ -20,6 +24,14 @@ const REGISTER_BODY = zod_1.z.object({
         .string()
         .transform((v) => v.trim().toUpperCase())
         .refine((v) => BAID_REGEX.test(v), { message: "BAID must be BA followed by 7 digits" }),
+    zip: zod_1.z
+        .string()
+        .transform((v) => v.replace(/\D/g, "").slice(0, 5))
+        .refine((v) => /^\d{5}$/.test(v), { message: "ZIP must be 5 digits" }),
+    inviteCode: zod_1.z
+        .string()
+        .transform((v) => v.replace(/\s+/g, ""))
+        .refine((v) => v.length >= 6, { message: "Invite code is required" }),
     password: zod_1.z.string().min(1),
 });
 const VERIFY_BAID_BODY = zod_1.z.object({
@@ -27,6 +39,10 @@ const VERIFY_BAID_BODY = zod_1.z.object({
         .string()
         .transform((v) => v.replace(/\s+/g, "").toUpperCase())
         .refine((v) => BAID_REGEX.test(v), { message: "BAID must be BA followed by 7 digits" }),
+    zip: zod_1.z
+        .string()
+        .transform((v) => v.replace(/\D/g, "").slice(0, 5))
+        .refine((v) => /^\d{5}$/.test(v), { message: "ZIP must be 5 digits" }),
 });
 const LOGIN_BODY = zod_1.z.object({
     email: zod_1.z.string().email(),
@@ -35,9 +51,13 @@ const LOGIN_BODY = zod_1.z.object({
 function msSince(t0) {
     return Date.now() - t0;
 }
+function hashInviteCode(code) {
+    const secret = process.env.INVITE_CODE_SECRET || "";
+    return node_crypto_1.default.createHash("sha256").update(`${code}:${secret}`).digest("hex");
+}
 /**
  * POST /api/customer/register
- * Body: { name, email, phone, baid, password }
+ * Body: { name, email, phone, baid, zip, inviteCode, password }
  * Returns: { user }
  */
 exports.customerAuthRouter.post("/register", async (req, res) => {
@@ -54,6 +74,8 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
     const email = parsed.data.email.toLowerCase().trim();
     const phone = parsed.data.phone; // digits-only
     const baid = parsed.data.baid; // uppercased
+    const zip = parsed.data.zip;
+    const inviteCode = parsed.data.inviteCode;
     console.log("[willcall][customer][register] start", {
         email,
         baid,
@@ -79,11 +101,58 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
     }
     const passwordHash = await (0, passwords_1.hashPassword)(parsed.data.password);
     try {
+        const verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
+        if (!verified) {
+            console.warn("[willcall][customer][register] baid verification failed", {
+                email,
+                baid,
+                ms: msSince(t0),
+            });
+            return res.status(400).json({
+                message: "We couldn't confirm these details. Please contact your salesperson.",
+            });
+        }
+        const now = new Date();
+        const codeHash = hashInviteCode(inviteCode);
+        const invite = await prisma.inviteCode.findFirst({
+            where: {
+                baid,
+                status: "Pending",
+                expiresAt: { gt: now },
+                codeHash,
+            },
+        });
+        if (!invite) {
+            console.warn("[willcall][customer][register] invite invalid", {
+                email,
+                baid,
+                ms: msSince(t0),
+            });
+            return res.status(400).json({
+                message: "We couldn't confirm these details. Please contact your salesperson.",
+            });
+        }
+        if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
+            const match = invite.recipientEmail.toLowerCase().trim() === email;
+            if (!match) {
+                console.warn("[willcall][customer][register] invite email mismatch", {
+                    email,
+                    baid,
+                    ms: msSince(t0),
+                });
+                return res.status(400).json({
+                    message: "We couldn't confirm these details. Please contact your salesperson.",
+                });
+            }
+        }
+        const adminCount = await prisma.accountUserRole.count({
+            where: { baid, role: "ADMIN", isActive: true },
+        });
+        const assignedRole = adminCount > 0 ? invite.role : "ADMIN";
         const user = await prisma.$transaction(async (tx) => {
-            const now = new Date();
             const created = await tx.users.create({
                 data: {
-                    id: crypto.randomUUID(),
+                    id: node_crypto_1.default.randomUUID(),
                     name,
                     email,
                     baid,
@@ -96,6 +165,24 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
                     userId: created.id,
                     passwordHash,
                     phone,
+                },
+            });
+            await tx.accountUserRole.create({
+                data: {
+                    id: node_crypto_1.default.randomUUID(),
+                    baid,
+                    userId: created.id,
+                    role: assignedRole,
+                    isActive: true,
+                    updatedAt: now,
+                },
+            });
+            await tx.inviteCode.update({
+                where: { id: invite.id },
+                data: {
+                    status: "Used",
+                    usedAt: now,
+                    usedByUserId: created.id,
                 },
             });
             return created;
@@ -114,6 +201,7 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
                 baid: user.baid,
                 phone,
                 emailVerified: user.emailVerified,
+                accountRole: assignedRole,
             },
         });
     }
@@ -146,16 +234,20 @@ exports.customerAuthRouter.post("/verify-baid", async (req, res) => {
         return res.status(400).json({ ok: false, message: "Invalid BAID" });
     }
     const baid = parsed.data.baid;
+    const zip = parsed.data.zip;
     console.log("[willcall][customer][verify-baid] start", { baid });
     try {
-        const exists = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid);
+        const exists = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
         console.log("[willcall][customer][verify-baid] result", {
             baid,
             exists,
             ms: msSince(t0),
         });
         if (!exists) {
-            return res.status(404).json({ ok: false, message: "BAID not found" });
+            return res.status(404).json({
+                ok: false,
+                message: "We couldn't confirm these details. Please contact your salesperson.",
+            });
         }
         return res.json({ ok: true });
     }
@@ -217,6 +309,12 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
         email,
         ms: msSince(t0),
     });
+    const roles = await prisma.accountUserRole.findMany({
+        where: { userId: user.id, isActive: true },
+    });
+    const accountRole = roles.find((r) => r.role === "ADMIN")?.role ??
+        roles.find((r) => r.role === "PM")?.role ??
+        null;
     return res.json({
         user: {
             id: user.id,
@@ -225,6 +323,8 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
             baid: user.baid,
             phone: cred.phone,
             emailVerified: user.emailVerified,
+            accountRole,
+            isDeveloper: Boolean(user.isDeveloper),
         },
     });
 });

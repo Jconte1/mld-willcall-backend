@@ -8,6 +8,9 @@ exports.computeTokenExpiry = computeTokenExpiry;
 exports.createAppointmentToken = createAppointmentToken;
 exports.rotateAppointmentToken = rotateAppointmentToken;
 exports.getActiveToken = getActiveToken;
+exports.createOrderReadyToken = createOrderReadyToken;
+exports.getActiveOrderReadyToken = getActiveOrderReadyToken;
+exports.rotateOrderReadyToken = rotateOrderReadyToken;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const MAX_TOKEN_DAYS = 30;
 const END_PLUS_DAYS = 7;
@@ -47,4 +50,30 @@ async function getActiveToken(prisma, appointmentId) {
         },
         orderBy: { issuedAt: "desc" },
     });
+}
+async function createOrderReadyToken(prisma, orderReadyId) {
+    const rawToken = generateToken();
+    await prisma.orderReadyAccessToken.create({
+        data: {
+            orderReadyId,
+            token: rawToken,
+        },
+    });
+    return { token: rawToken };
+}
+async function getActiveOrderReadyToken(prisma, orderReadyId) {
+    return prisma.orderReadyAccessToken.findFirst({
+        where: {
+            orderReadyId,
+            revokedAt: null,
+        },
+        orderBy: { issuedAt: "desc" },
+    });
+}
+async function rotateOrderReadyToken(prisma, orderReadyId) {
+    await prisma.orderReadyAccessToken.updateMany({
+        where: { orderReadyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+    });
+    return createOrderReadyToken(prisma, orderReadyId);
 }

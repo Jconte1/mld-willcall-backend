@@ -2,15 +2,19 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendEmail = sendEmail;
 const graphClient_1 = require("./graphClient");
-function resolveRecipient(email) {
-    if (process.env.NODE_ENV !== "production") {
-        return process.env.NOTIFICATIONS_TEST_EMAIL || "";
+function resolveRecipient(email, { allowTestOverride = true, allowNonProdSend = false } = {}) {
+    // TODO: Revisit this behavior before production; allowNonProdSend is intended for local testing only.
+    if (allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
+        return process.env.NOTIFICATIONS_TEST_EMAIL;
+    }
+    if (process.env.NODE_ENV !== "production" && !allowNonProdSend) {
+        return "";
     }
     return email;
 }
-async function sendEmail(to, subject, body) {
+async function sendEmail(to, subject, body, options = {}) {
     const fromEmail = process.env.MS_GRAPH_FROM_EMAIL || "";
-    const recipient = resolveRecipient(to);
+    const recipient = resolveRecipient(to, options);
     if (!recipient) {
         console.log("[notifications][email] skipped (no recipient)", { to });
         return { ok: true, skipped: true };

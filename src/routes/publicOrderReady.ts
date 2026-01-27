@@ -3,6 +3,11 @@ import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
+import { buildOrderReadyLink } from "../notifications/links/buildLink";
+import { rotateOrderReadyToken } from "../notifications/links/tokens";
+import { sendEmail } from "../notifications/providers/email/sendEmail";
+import { sendSms } from "../notifications/providers/sms/sendSms";
+import { buildOrderReadyEmail } from "../notifications/templates/email/buildOrderReadyEmail";
 
 const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
@@ -10,6 +15,28 @@ export const publicOrderReadyRouter = Router();
 const tokenSchema = z.object({
   token: z.string().min(1),
 });
+
+const resendSchema = z
+  .object({
+    orderNbr: z.string().min(1),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.email && !data.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "email or phone is required",
+      });
+      return;
+    }
+    if (data.email && data.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "provide only one of email or phone",
+      });
+    }
+  });
 
 const SCHEDULED_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
@@ -19,7 +46,64 @@ const SCHEDULED_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Completed,
 ];
 
-const STALE_MS = 24 * 60 * 60 * 1000;
+const STALE_MS = 60 * 60 * 1000;
+const LOCKOUT_MAX_ATTEMPTS = 5;
+const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
+
+function normalizePhone(value: string | null | undefined) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits || null;
+}
+
+function getClientIp(req: any) {
+  const xf = (req.headers["x-forwarded-for"] as string | undefined) || "";
+  if (xf) return xf.split(",")[0].trim();
+  return req.ip || req.connection?.remoteAddress || "";
+}
+
+async function checkLockout(key: string) {
+  const row = await prisma.inviteLockout.findUnique({ where: { key } });
+  if (!row?.lockedUntil) return { locked: false };
+  if (row.lockedUntil.getTime() <= Date.now()) return { locked: false };
+  return { locked: true, lockedUntil: row.lockedUntil };
+}
+
+async function recordAttempt(key: string, ok: boolean) {
+  const now = new Date();
+  const row = await prisma.inviteLockout.findUnique({ where: { key } });
+  if (!row) {
+    await prisma.inviteLockout.create({
+      data: {
+        key,
+        attemptCount: ok ? 0 : 1,
+        lastAttemptAt: now,
+        lockedUntil: ok ? null : null,
+      },
+    });
+    return;
+  }
+
+  if (ok) {
+    await prisma.inviteLockout.update({
+      where: { key },
+      data: { attemptCount: 0, lastAttemptAt: now, lockedUntil: null },
+    });
+    return;
+  }
+
+  const withinWindow =
+    row.lastAttemptAt && now.getTime() - row.lastAttemptAt.getTime() < LOCKOUT_WINDOW_MS;
+  const nextCount = withinWindow ? row.attemptCount + 1 : 1;
+  const lockedUntil = nextCount >= LOCKOUT_MAX_ATTEMPTS ? new Date(now.getTime() + LOCKOUT_WINDOW_MS) : null;
+  await prisma.inviteLockout.update({
+    where: { key },
+    data: { attemptCount: nextCount, lastAttemptAt: now, lockedUntil },
+  });
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
 
 /**
  * GET /api/public/order-ready/:orderNbr?token=...
@@ -126,6 +210,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       orderTotal: true,
       unpaidBalance: true,
       terms: true,
+      status: true,
     },
   });
 
@@ -153,8 +238,82 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
           orderTotal: toNumber(payment.orderTotal),
           unpaidBalance: toNumber(payment.unpaidBalance),
           terms: payment.terms,
+          status: payment.status,
         }
       : null,
     orderLines,
+  });
+});
+
+/**
+ * POST /api/public/order-ready/resend
+ * Body: { orderNbr, email? } OR { orderNbr, phone? }
+ */
+publicOrderReadyRouter.post("/resend", async (req, res) => {
+  const parsed = resendSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.json({
+      ok: true,
+      message: "If your information matches, you will receive a link shortly.",
+    });
+  }
+
+  const orderNbr = parsed.data.orderNbr.trim();
+  const email = parsed.data.email?.toLowerCase().trim() ?? null;
+  const phone = normalizePhone(parsed.data.phone);
+  const ip = getClientIp(req);
+
+  const orderKey = `order-ready:${orderNbr}`;
+  const ipKey = ip ? `order-ready-ip:${ip}` : "";
+  const [orderLock, ipLock] = await Promise.all([
+    checkLockout(orderKey),
+    ipKey ? checkLockout(ipKey) : Promise.resolve({ locked: false }),
+  ]);
+
+  if (orderLock.locked || ipLock.locked) {
+    return res.json({
+      ok: true,
+      message: "If your information matches, you will receive a link shortly.",
+    });
+  }
+
+  const notice = await prisma.orderReadyNotice.findUnique({
+    where: { orderNbr },
+  });
+
+  const contactEmail = (notice?.contactEmail || "").toLowerCase().trim() || null;
+  const contactPhone = normalizePhone(notice?.contactPhone);
+  const match =
+    (email && contactEmail && email === contactEmail) ||
+    (phone && contactPhone && phone === contactPhone);
+
+  const matched = Boolean(match);
+  await recordAttempt(orderKey, matched);
+  if (ipKey) await recordAttempt(ipKey, matched);
+
+  if (match && notice) {
+    const tokenRow = await rotateOrderReadyToken(prisma, notice.id);
+    const link = buildOrderReadyLink(orderNbr, tokenRow.token);
+
+    if (email) {
+      const message = buildOrderReadyEmail(orderNbr, link);
+      await sendEmail(email, message.subject, message.body);
+    } else if (phone) {
+      const smsBody = `Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+      await sendSms(phone, smsBody);
+    }
+
+    await prisma.orderReadyNotice.update({
+      where: { id: notice.id },
+      data: {
+        lastNotifiedAt: new Date(),
+        nextEligibleNotifyAt: addDays(new Date(), 5),
+      },
+    });
+  }
+
+  return res.json({
+    ok: true,
+    message: "If your information matches, you will receive a link shortly.",
   });
 });

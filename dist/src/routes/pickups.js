@@ -26,6 +26,9 @@ function canAccessLocation(req, locationId) {
         return true;
     return (0, locationIds_1.expandLocationIds)(req.auth.locationAccess ?? []).includes(locationId);
 }
+function canWritePickups(req) {
+    return req.auth?.role !== "VIEWER";
+}
 /**
  * GET /api/staff/pickups
  * Optional query: locationId, status, from, to
@@ -90,6 +93,9 @@ exports.pickupsRouter.get("/", async (req, res) => {
  * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
  */
 exports.pickupsRouter.post("/", async (req, res) => {
+    if (!canWritePickups(req)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
     const body = zod_1.z.object({
         locationId: zod_1.z.enum(LOCATION_IDS),
         customerEmail: zod_1.z.string().email(),
@@ -177,6 +183,9 @@ exports.pickupsRouter.get("/:id", async (req, res) => {
  * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
 exports.pickupsRouter.patch("/:id", async (req, res) => {
+    if (!canWritePickups(req)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
     const body = zod_1.z.object({
         status: STATUS.optional(),
         startAt: zod_1.z.string().datetime().optional(),

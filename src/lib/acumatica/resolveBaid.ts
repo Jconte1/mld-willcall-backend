@@ -23,9 +23,17 @@ export async function resolveSingleBaid(input: ResolveInput) {
 
   if (baidIn && (userId || email)) {
     const user = userId
-      ? await prisma.users.findUnique({ where: { id: userId }, select: { baid: true } })
-      : await prisma.users.findUnique({ where: { email: email! }, select: { baid: true } });
-    if (!user?.baid) throw new Error("User not found or has no BAID.");
+      ? await prisma.users.findUnique({
+          where: { id: userId },
+          select: { baid: true, isDeveloper: true },
+        })
+      : await prisma.users.findUnique({
+          where: { email: email! },
+          select: { baid: true, isDeveloper: true },
+        });
+    if (!user) throw new Error("User not found.");
+    if (user.isDeveloper) return baidIn;
+    if (!user.baid) throw new Error("User not found or has no BAID.");
     if (user.baid !== baidIn) throw new Error("Provided BAID does not match user's BAID.");
     return baidIn;
   }

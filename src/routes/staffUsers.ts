@@ -4,6 +4,8 @@ import { z } from "zod";
 import { generateTempPassword, hashPassword } from "../lib/passwords";
 import { normalizeLocationIds } from "../lib/locationIds";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { sendEmail } from "../notifications/providers/email/sendEmail";
+import { buildStaffOnboardingEmail } from "../notifications/templates/email/buildStaffOnboardingEmail";
 
 const prisma = new PrismaClient();
 export const staffUsersRouter = Router();
@@ -49,11 +51,17 @@ staffUsersRouter.post("/", async (req, res) => {
   const body = z.object({
     email: z.string().email(),
     name: z.string().min(1),
-    role: z.enum(["ADMIN", "STAFF"]).default("STAFF"),
+    role: z.enum(["ADMIN", "STAFF", "VIEWER"]).default("STAFF"),
       locationAccess: LOCS.default(["slc-hq"])
   }).safeParse(req.body);
 
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
+
+  console.log("[staff-users] create request", {
+    email: body.data.email,
+    role: body.data.role,
+    locationAccess: body.data.locationAccess,
+  });
 
   const email = body.data.email.toLowerCase();
   if (!email.endsWith("@mld.com")) return res.status(400).json({ message: "Email must end with @mld.com" });
@@ -65,7 +73,12 @@ staffUsersRouter.post("/", async (req, res) => {
     data: {
       email,
       name: body.data.name,
-      role: body.data.role === "ADMIN" ? StaffRole.ADMIN : StaffRole.STAFF,
+      role:
+        body.data.role === "ADMIN"
+          ? StaffRole.ADMIN
+          : body.data.role === "VIEWER"
+            ? StaffRole.VIEWER
+            : StaffRole.STAFF,
       locationAccess:
         body.data.role === "ADMIN"
           ? ["slc-hq", "slc-outlet", "boise-willcall"]
@@ -87,12 +100,44 @@ staffUsersRouter.post("/", async (req, res) => {
     }
   });
 
+  console.log("[staff-users] created", {
+    id: created.id,
+    email: created.email,
+    role: created.role,
+    locationAccess: created.locationAccess,
+  });
+
+  const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+  if (!frontendUrl) {
+    return res.status(500).json({ message: "Server misconfigured: FRONTEND_URL missing" });
+  }
+
+  const loginUrl = `${frontendUrl}/staff`;
+  const message = buildStaffOnboardingEmail(created.name, loginUrl, tempPassword);
+
+  try {
+    await sendEmail(created.email, message.subject, message.body, {
+      allowTestOverride: false,
+      allowNonProdSend: true,
+    });
+  } catch (err) {
+    console.error("[staff-users] onboarding email failed", err);
+    return res.status(200).json({
+      user: {
+        ...created,
+        locationAccess: normalizeLocationIds(created.locationAccess ?? []),
+      },
+      emailSent: false,
+      message: "User created but onboarding email failed to send.",
+    });
+  }
+
   return res.status(201).json({
     user: {
       ...created,
       locationAccess: normalizeLocationIds(created.locationAccess ?? []),
     },
-    tempPassword,
+    emailSent: true,
   });
 });
 
@@ -132,13 +177,20 @@ staffUsersRouter.patch("/:id", async (req, res) => {
   const body = z.object({
     email: z.string().email().optional(),
     name: z.string().min(1).optional(),
-    role: z.enum(["ADMIN", "STAFF"]).optional(),
+    role: z.enum(["ADMIN", "STAFF", "VIEWER"]).optional(),
     locationAccess: LOCS.optional(),
     isActive: z.boolean().optional(),
     mustChangePassword: z.boolean().optional()
   }).safeParse(req.body);
 
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
+
+  console.log("[staff-users] update request", {
+    id: req.params.id,
+    role: body.data.role,
+    locationAccess: body.data.locationAccess,
+    isActive: body.data.isActive,
+  });
 
   const existing = await prisma.staffUser.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ message: "Not found" });
@@ -155,7 +207,12 @@ staffUsersRouter.patch("/:id", async (req, res) => {
     data: {
       email: nextEmail,
       name: body.data.name,
-      role: nextRole === "ADMIN" ? StaffRole.ADMIN : StaffRole.STAFF,
+      role:
+        nextRole === "ADMIN"
+          ? StaffRole.ADMIN
+          : nextRole === "VIEWER"
+            ? StaffRole.VIEWER
+            : StaffRole.STAFF,
       locationAccess:
         nextRole === "ADMIN"
           ? ["slc-hq", "slc-outlet", "boise-willcall"]
@@ -176,10 +233,28 @@ staffUsersRouter.patch("/:id", async (req, res) => {
     }
   });
 
+  console.log("[staff-users] updated", {
+    id: updated.id,
+    role: updated.role,
+    locationAccess: updated.locationAccess,
+    isActive: updated.isActive,
+  });
+
   return res.json({
     user: {
       ...updated,
       locationAccess: normalizeLocationIds(updated.locationAccess ?? []),
     },
   });
+});
+
+/**
+ * DELETE /api/staff/users/:id
+ */
+staffUsersRouter.delete("/:id", async (req, res) => {
+  const existing = await prisma.staffUser.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ message: "Not found" });
+
+  await prisma.staffUser.delete({ where: { id: req.params.id } });
+  return res.json({ ok: true });
 });

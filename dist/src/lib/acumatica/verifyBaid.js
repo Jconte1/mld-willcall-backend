@@ -35,13 +35,13 @@ function truncate(str, max = 2000) {
         return "";
     return str.length > max ? str.slice(0, max) + `… (truncated, ${str.length} chars)` : str;
 }
-async function fetchCustomerRowsByBaid(restService, baid) {
+async function fetchCustomerRowsByBaid(restService, baid, zip) {
     const t0 = Date.now();
     const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/Customer`;
     const params = new URLSearchParams();
     params.set("$top", "1");
-    params.set("$filter", `CustomerID eq '${odataEscape(baid)}'`);
+    params.set("$filter", `CustomerID eq '${odataEscape(baid)}' and Zip5 eq '${odataEscape(zip)}'`);
     const url = `${base}?${params.toString()}`;
     const agent = new node_https_1.default.Agent({ keepAlive: true, maxSockets: 8 });
     if (IS_DEV) {
@@ -90,14 +90,17 @@ async function fetchCustomerRowsByBaid(restService, baid) {
 /**
  * Returns true if the BAID exists in Acumatica.
  */
-async function verifyBaidInAcumatica(baid) {
+async function verifyBaidInAcumatica(baid, zip) {
     const cleaned = String(baid || "").trim().toUpperCase();
+    const cleanedZip = String(zip || "").replace(/\D/g, "").slice(0, 5);
     if (!cleaned)
+        return false;
+    if (cleanedZip.length !== 5)
         return false;
     if (IS_DEV)
         console.log(`${LOG_PREFIX} start`, { baid: cleaned });
     const restService = createErpClient();
-    const rows = await fetchCustomerRowsByBaid(restService, cleaned);
+    const rows = await fetchCustomerRowsByBaid(restService, cleaned, cleanedZip);
     const ok = Array.isArray(rows) && rows.length > 0;
     if (IS_DEV)
         console.log(`${LOG_PREFIX} result`, { baid: cleaned, ok, rows: rows.length });

@@ -21,6 +21,62 @@ model AccountUserRole {
   @@index([baid, userId, role, isActive])
 }
 
+model InviteCode {
+  id              String           @id @default(cuid())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  baid            String           @db.VarChar(64)
+  role            AccountRole
+  recipientEmail  String?          @db.VarChar(256)
+  recipientPhone  String?          @db.VarChar(64)
+  codeHash        String           @db.VarChar(256)
+  status          InviteCodeStatus @default(Pending)
+  expiresAt       DateTime
+  sentAt          DateTime?
+  usedAt          DateTime?
+  usedByUserId    String?
+  createdByUserId String?
+  usedBy          users?           @relation("InviteUsedBy", fields: [usedByUserId], references: [id], onDelete: SetNull)
+  createdBy       users?           @relation("InviteCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([baid, status])
+  @@index([expiresAt])
+}
+
+model InviteRequestLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  baid      String?  @db.VarChar(64)
+  ip        String?  @db.VarChar(64)
+  userAgent String?
+  result    String   @db.VarChar(32)
+  reason    String?  @db.VarChar(128)
+
+  @@index([baid, createdAt])
+}
+
+model InviteLockout {
+  key           String   @id @db.VarChar(128)
+  attemptCount  Int      @default(0)
+  lockedUntil   DateTime?
+  lastAttemptAt DateTime?
+}
+
+model RoleAuditLog {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  baid         String   @db.VarChar(64)
+  actorUserId  String?
+  targetUserId String?
+  action       String   @db.VarChar(32)
+  fromRole     String?  @db.VarChar(32)
+  toRole       String?  @db.VarChar(32)
+  note         String?
+  ip           String?  @db.VarChar(64)
+
+  @@index([baid, createdAt])
+}
+
 model Device {
   id         String   @id
   createdAt  DateTime @default(now())
@@ -291,9 +347,12 @@ model users {
   emailVerified      Boolean             @default(false)
   image              String?
   baid               String?             @db.VarChar(64)
+  isDeveloper        Boolean             @default(false)
   AccountUserRole    AccountUserRole[]
   customerCredential CustomerCredential?
   Device             Device[]
+  inviteCodesUsed    InviteCode[]        @relation("InviteUsedBy")
+  inviteCodesCreated InviteCode[]        @relation("InviteCreatedBy")
   OrderAssignment    OrderAssignment[]
   accounts           accounts[]
   sessions           sessions[]
@@ -428,9 +487,17 @@ enum AccountRole {
   PM
 }
 
+enum InviteCodeStatus {
+  Pending
+  Used
+  Revoked
+  Expired
+}
+
 enum StaffRole {
   ADMIN
   STAFF
+  VIEWER
 }
 
 enum PickupStatus {
@@ -542,6 +609,17 @@ model OrderReadyNotice {
   @@index([locationId])
   @@index([status])
   @@index([nextEligibleNotifyAt])
+}
+
+model BaidSyncState {
+  baid              String   @id @db.VarChar(64)
+  lastSyncAt        DateTime?
+  lastAttemptAt     DateTime?
+  lastSuccessAt     DateTime?
+  lastErrorAt       DateTime?
+  lastErrorMessage  String?
+  inProgress        Boolean  @default(false)
+  inProgressSince   DateTime?
 }
 
 model OrderReadyAccessToken {

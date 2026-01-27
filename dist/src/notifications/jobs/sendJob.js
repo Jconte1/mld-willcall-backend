@@ -6,9 +6,11 @@ const buildSms_1 = require("../templates/sms/buildSms");
 const buildEmail_1 = require("../templates/email/buildEmail");
 const sendSms_1 = require("../providers/sms/sendSms");
 const sendEmail_1 = require("../providers/email/sendEmail");
+const buildLink_1 = require("../links/buildLink");
 function buildPayload(appointment, job, link) {
     const snapshot = (job.payloadSnapshot || {});
     const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
+    const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
     return {
         appointmentId: appointment.id,
         locationId: appointment.locationId,
@@ -16,11 +18,25 @@ function buildPayload(appointment, job, link) {
         endAt: appointment.endAt,
         orderNbrs,
         link,
+        unsubscribeLink: unsubscribeLink || undefined,
         oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
         oldEndAt: snapshot.oldEndAt ? new Date(snapshot.oldEndAt) : undefined,
         cancelReason: snapshot.cancelReason ?? null,
         staffInitiated: Boolean(snapshot.staffInitiated),
     };
+}
+function buildUnsubscribeFromLink(link, appointmentId) {
+    try {
+        const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "") || "http://localhost";
+        const url = new URL(link, base);
+        const token = url.searchParams.get("token");
+        if (!token)
+            return "";
+        return (0, buildLink_1.buildUnsubscribeLink)(appointmentId, token);
+    }
+    catch {
+        return "";
+    }
 }
 async function sendJob(prisma, job, appointment) {
     const link = job.payloadSnapshot?.link;

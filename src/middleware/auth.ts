@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 export type AuthUser = {
   id: string;
   email: string;
-  role: "ADMIN" | "STAFF";
+  role: "ADMIN" | "STAFF" | "VIEWER";
   locationAccess: string[];
   mustChangePassword: boolean;
 };
@@ -40,7 +40,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     };
 
     return next();
-  } catch {
+  } catch (err) {
+    console.warn("[auth] invalid token", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
@@ -52,7 +55,7 @@ export function blockIfMustChangePassword(req: Request, res: Response, next: Nex
   return next();
 }
 
-export function requireRole(role: "ADMIN" | "STAFF") {
+export function requireRole(role: "ADMIN" | "STAFF" | "VIEWER") {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.auth) return res.status(401).json({ message: "Unauthenticated" });
     if (req.auth.role !== role) return res.status(403).json({ message: "Forbidden" });

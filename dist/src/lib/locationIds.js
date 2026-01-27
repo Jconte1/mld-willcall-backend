@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeLocationIds = normalizeLocationIds;
 exports.normalizeLocationId = normalizeLocationId;
+exports.normalizeWarehouseToLocationId = normalizeWarehouseToLocationId;
 exports.expandLocationIds = expandLocationIds;
 const LEGACY_LOCATION_IDS = {
     slc: ["slc-hq", "slc-outlet"],
@@ -33,6 +34,20 @@ function normalizeLocationId(id) {
     if (id === "slc")
         return "slc-hq";
     return id;
+}
+function normalizeWarehouseToLocationId(warehouse) {
+    if (!warehouse)
+        return undefined;
+    const normalized = warehouse.trim().replace(/\s+/g, " ").toUpperCase();
+    let legacy;
+    if (normalized.includes("OUTLET"))
+        legacy = "slc-outlet";
+    else if (normalized.includes("BOISE"))
+        legacy = "boise";
+    else if (normalized.includes("SALT LAKE") || normalized.includes("SLC"))
+        legacy = "slc";
+    // TODO: Add any missing warehouse mappings once identified in Acumatica.
+    return normalizeLocationId(legacy ?? normalized);
 }
 function expandLocationIds(ids = []) {
     const expanded = new Set();

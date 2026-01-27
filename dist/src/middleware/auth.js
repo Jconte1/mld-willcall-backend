@@ -27,7 +27,10 @@ function requireAuth(req, res, next) {
         };
         return next();
     }
-    catch {
+    catch (err) {
+        console.warn("[auth] invalid token", {
+            error: err instanceof Error ? err.message : String(err),
+        });
         return res.status(401).json({ message: "Invalid or expired token" });
     }
 }

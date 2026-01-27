@@ -13,8 +13,6 @@ const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Confirmed,
   PickupAppointmentStatus.InProgress,
   PickupAppointmentStatus.Ready,
-  PickupAppointmentStatus.Completed,
-  PickupAppointmentStatus.NoShow,
 ];
 
 export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
@@ -101,6 +99,15 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
       }
     : null;
 
+  const lastCompletedAppointment = await prisma.pickupAppointmentOrder.findFirst({
+    where: {
+      orderNbr,
+      appointment: { status: PickupAppointmentStatus.Completed },
+    },
+    include: { appointment: true },
+    orderBy: { appointment: { endAt: "desc" } },
+  });
+
   return {
     summary: {
       id: summary.id,
@@ -118,6 +125,10 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
       paymentStatus,
       lineSummary,
       warehouses,
+      lastPickupAt:
+        lastCompletedAppointment?.appointment?.endAt ??
+        lastCompletedAppointment?.appointment?.startAt ??
+        null,
       appointment,
     },
     address: summary.ErpOrderAddress

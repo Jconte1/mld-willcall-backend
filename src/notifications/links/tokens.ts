@@ -77,3 +77,11 @@ export async function getActiveOrderReadyToken(prisma: PrismaClient, orderReadyI
     orderBy: { issuedAt: "desc" },
   });
 }
+
+export async function rotateOrderReadyToken(prisma: PrismaClient, orderReadyId: string) {
+  await prisma.orderReadyAccessToken.updateMany({
+    where: { orderReadyId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return createOrderReadyToken(prisma, orderReadyId);
+}
