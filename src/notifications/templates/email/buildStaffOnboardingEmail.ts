@@ -1,6 +1,7 @@
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
-const ACCENT_COLOR = "#0f766e";
+const ACCENT_COLOR = "#dbaa3c";
+const OUTER_BG = "#f8f2e9";
 
 function renderStaffOnboardingTemplate({
   title,
@@ -8,12 +9,14 @@ function renderStaffOnboardingTemplate({
   name,
   loginUrl,
   tempPassword,
+  logoUrl,
 }: {
   title: string;
   preheader: string;
   name: string;
   loginUrl: string;
   tempPassword: string;
+  logoUrl: string;
 }) {
   return `<!doctype html>
 <html>
@@ -22,14 +25,17 @@ function renderStaffOnboardingTemplate({
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${title}</title>
   </head>
-  <body style="margin:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <body style="margin:0;background:${OUTER_BG};font-family:Arial,Helvetica,sans-serif;color:#111827;">
     <span style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</span>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
       <tr>
         <td align="center" style="padding:24px;">
           <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 25px rgba(17,24,39,0.08);">
             <tr>
-              <td style="padding:24px 28px;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+              <td style="padding:24px 28px;background:#f9fafb;border-bottom:1px solid #e5e7eb;text-align:center;">
+                <div style="margin-bottom:8px;">
+                  <img src="${logoUrl}" alt="MLD" style="height:32px;display:block;margin:0 auto;" />
+                </div>
                 <div style="font-size:18px;font-weight:700;color:${BRAND_COLOR};">${BRAND_NAME}</div>
                 <div style="font-size:12px;color:#6b7280;margin-top:4px;">Staff access</div>
               </td>
@@ -71,6 +77,8 @@ function renderStaffOnboardingTemplate({
 }
 
 export function buildStaffOnboardingEmail(name: string, loginUrl: string, tempPassword: string) {
+  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   const safeName = name?.trim() || "there";
   return {
     subject: "Your MLD Will Call staff access",
@@ -80,6 +88,7 @@ export function buildStaffOnboardingEmail(name: string, loginUrl: string, tempPa
       name: safeName,
       loginUrl,
       tempPassword,
+      logoUrl,
     }),
   };
 }

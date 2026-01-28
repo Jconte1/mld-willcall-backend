@@ -3,6 +3,7 @@ import { formatDenverDateTime, formatOrderList } from "../format";
 import { sendEmail } from "../providers/email/sendEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { cancelPendingJobs } from "../scheduler/cancelJobs";
+import { buildNoShowEmail } from "../templates/email/buildNoShowEmail";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
@@ -71,20 +72,10 @@ async function sendNoShowNotifications(appointment: {
 
   if (appointment.emailOptIn) {
     const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-    const subject = "We missed you at pickup";
-    const body = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-        <h2 style="margin: 0 0 12px;">We missed you</h2>
-        <p style="margin: 0 0 12px;">
-          We didn't see you at your pickup scheduled for ${when}.
-        </p>
-        <p style="margin: 0 0 12px;">${orderList}</p>
-        <p style="margin: 0;">
-          Please visit our site to reschedule your pickup.
-        </p>
-      </div>
-    `;
-    await sendEmail(recipient, subject, body);
+    const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+    const link = frontendUrl ? `${frontendUrl}/` : "https://mld-willcall.vercel.app";
+    const message = buildNoShowEmail(when, orderList, link);
+    await sendEmail(recipient, message.subject, message.body);
   }
 
   if (appointment.smsOptIn) {

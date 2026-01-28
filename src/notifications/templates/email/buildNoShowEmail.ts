@@ -3,18 +3,20 @@ const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
 const OUTER_BG = "#f8f2e9";
 
-function renderOrderReadyTemplate({
+function renderNoShowTemplate({
   title,
   preheader,
   message,
-  orderNbr,
+  when,
+  orders,
   link,
   logoUrl,
 }: {
   title: string;
   preheader: string;
   message: string;
-  orderNbr: string;
+  when: string;
+  orders: string;
   link: string;
   logoUrl: string;
 }) {
@@ -37,7 +39,7 @@ function renderOrderReadyTemplate({
                   <img src="${logoUrl}" alt="MLD" style="height:32px;display:block;margin:0 auto;" />
                 </div>
                 <div style="font-size:18px;font-weight:700;color:${BRAND_COLOR};">${BRAND_NAME}</div>
-                <div style="font-size:12px;color:#6b7280;margin-top:4px;">Order ready for pickup</div>
+                <div style="font-size:12px;color:#6b7280;margin-top:4px;">Pickup appointment update</div>
               </td>
             </tr>
             <tr>
@@ -47,17 +49,23 @@ function renderOrderReadyTemplate({
 
                 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:20px;">
                   <tr>
-                    <td style="font-size:13px;color:#6b7280;padding-bottom:6px;">Order</td>
+                    <td style="font-size:13px;color:#6b7280;padding-bottom:6px;">Appointment</td>
                   </tr>
                   <tr>
-                    <td style="font-size:16px;font-weight:600;color:${BRAND_COLOR};">${orderNbr}</td>
+                    <td style="font-size:16px;font-weight:600;color:${BRAND_COLOR};padding-bottom:8px;">${when}</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:13px;color:#6b7280;">Orders</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:14px;color:#374151;">${orders}</td>
                   </tr>
                 </table>
 
-                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Schedule pickup</a>
+                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Reschedule pickup</a>
 
                 <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#6b7280;">
-                  This link is secure and can be used to schedule your pickup.
+                  This link is secure and can be used to reschedule your pickup.
                 </p>
               </td>
             </tr>
@@ -74,16 +82,17 @@ function renderOrderReadyTemplate({
 </html>`;
 }
 
-export function buildOrderReadyEmail(orderNbr: string, link: string) {
+export function buildNoShowEmail(when: string, orders: string, link: string) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   return {
-    subject: `Order ${orderNbr} is ready for pickup`,
-    body: renderOrderReadyTemplate({
-      title: "Your order is ready for pickup",
-      preheader: `Order ${orderNbr} is ready for pickup.`,
-      message: `Your order ${orderNbr} is ready for pickup. Schedule a pickup time when it works best for you.`,
-      orderNbr,
+    subject: "We missed you at pickup",
+    body: renderNoShowTemplate({
+      title: "We missed you",
+      preheader: `We missed you at your pickup on ${when}.`,
+      message: `We didn't see you at your pickup scheduled for ${when}.`,
+      when,
+      orders,
       link,
       logoUrl,
     }),

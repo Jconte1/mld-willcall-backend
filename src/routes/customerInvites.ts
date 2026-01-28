@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
+import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
 
 const prisma = new PrismaClient();
 export const customerInvitesRouter = Router();
@@ -200,31 +201,10 @@ async function sendInviteEmail(opts: {
   roleLabel: string;
   allowTestOverride?: boolean;
 }) {
-  const appName = process.env.APP_NAME ?? "MLD WillCall";
-  const frontendUrl = process.env.FRONTEND_URL ?? "https://mld-willcall.vercel.app";
-  const subject = `${appName} Invite Code`;
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-      <h2 style="margin: 0 0 12px;">You're invited to Will Call</h2>
-      <p style="margin: 0 0 12px;">
-        Use the invite code below to create your ${appName} account.
-      </p>
-      <p style="margin: 0 0 12px;"><b>Invite code:</b> ${opts.code}</p>
-      <p style="margin: 0 0 12px;"><b>BAID:</b> ${opts.baid}</p>
-      <p style="margin: 0 0 12px;"><b>Role:</b> ${opts.roleLabel}</p>
-      <p style="margin: 0 0 12px;">This code expires in 48 hours.</p>
-      <p style="margin: 0 0 18px;">
-        <a href="${frontendUrl}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#111;color:#fff;text-decoration:none;">
-          Open Will Call
-        </a>
-      </p>
-      <p style="margin: 0; color: #555;">
-        Can't find your code? You can request a new one from the registration page.
-      </p>
-    </div>
-  `;
+  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const message = buildInviteEmail(opts.code, opts.baid, opts.roleLabel, frontendUrl);
 
-  await sendEmail(opts.recipient, subject, html, {
+  await sendEmail(opts.recipient, message.subject, message.body, {
     allowTestOverride: opts.allowTestOverride,
     allowNonProdSend: opts.allowTestOverride === false,
   });
