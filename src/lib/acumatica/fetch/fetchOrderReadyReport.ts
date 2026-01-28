@@ -33,7 +33,7 @@ function parseNumber(value: string) {
 export async function fetchOrderReadyReport() {
   const url =
     process.env.ACUMATICA_ORDER_READY_ODATA_URL ||
-    "https://acumatica.mld.com/OData/MLD/Order%20Ready%20Report";
+    "https://acumatica.mld.com/OData/MLD/willcall%20100pct";
   const username = process.env.ACUMATICA_USERNAME;
   const password = process.env.ACUMATICA_PASSWORD;
 
