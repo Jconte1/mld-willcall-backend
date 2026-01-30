@@ -186,26 +186,29 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   const readyInventoryIds = new Set(
     readyLineRows.map((row) => String(row.inventoryId || "").trim()).filter(Boolean)
   );
+  const readyItemsAvailable = readyInventoryIds.size > 0;
 
-  const lines = await prisma.erpOrderLine.findMany({
-    where: {
-      orderNbr,
-      ...(readyInventoryIds.size ? { inventoryId: { in: Array.from(readyInventoryIds) } } : {}),
-    },
-    select: {
-      id: true,
-      inventoryId: true,
-      lineDescription: true,
-      warehouse: true,
-      openQty: true,
-      orderQty: true,
-      allocatedQty: true,
-      isAllocated: true,
-      amount: true,
-      taxRate: true,
-    },
-    orderBy: { inventoryId: "asc" },
-  });
+  const lines = readyItemsAvailable
+    ? await prisma.erpOrderLine.findMany({
+        where: {
+          orderNbr,
+          inventoryId: { in: Array.from(readyInventoryIds) },
+        },
+        select: {
+          id: true,
+          inventoryId: true,
+          lineDescription: true,
+          warehouse: true,
+          openQty: true,
+          orderQty: true,
+          allocatedQty: true,
+          isAllocated: true,
+          amount: true,
+          taxRate: true,
+        },
+        orderBy: { inventoryId: "asc" },
+      })
+    : [];
 
   const orderLines = lines.map((line) => ({
     id: line.id,
@@ -249,6 +252,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       locationId: notice.locationId,
       smsOptIn: notice.smsOptIn,
     },
+    readyItemsAvailable,
     appointment,
     payment: payment
       ? {
