@@ -51,6 +51,10 @@ const STALE_MS = 60 * 60 * 1000;
 const READY_LINES_STALE_MS = 60 * 60 * 1000;
 const LOCKOUT_MAX_ATTEMPTS = 5;
 const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
+const FORCE_REFRESH_COOLDOWN_MS = Number(process.env.ORDER_READY_FORCE_COOLDOWN_MS || 2 * 60 * 1000);
+
+const orderReadyInFlight = new Map<string, Promise<void>>();
+const orderReadyForceCooldown = new Map<string, number>();
 
 function normalizePhone(value: string | null | undefined) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -117,6 +121,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   }
 
   const orderNbr = req.params.orderNbr;
+  const forceRefresh = ["1", "true", "yes"].includes(String(req.query.refresh || "").toLowerCase());
   const notice = await prisma.orderReadyNotice.findUnique({
     where: { orderNbr },
   });
@@ -151,6 +156,17 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     }
   }
 
+  let refreshStatus: "forced" | "cooldown" | "in-progress" | "stale" | "none" = "none";
+  const lastForceAt = orderReadyForceCooldown.get(orderNbr) ?? 0;
+  const forceAllowed = forceRefresh && Date.now() - lastForceAt >= FORCE_REFRESH_COOLDOWN_MS;
+
+  if (forceRefresh && !forceAllowed) {
+    refreshStatus = "cooldown";
+  }
+
+  const readyLinesStale =
+    !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
+  let shouldRefreshDetails = false;
   if (notice.baid) {
     const summary = await prisma.erpOrderSummary.findUnique({
       where: { baid_orderNbr: { baid: notice.baid, orderNbr } },
@@ -158,25 +174,45 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     });
     const updatedAt = summary?.updatedAt ? new Date(summary.updatedAt).getTime() : 0;
     const isStale = !updatedAt || Date.now() - updatedAt > STALE_MS;
-    if (isStale) {
-      try {
-        await refreshOrderReadyDetails({
-          baid: notice.baid,
-          orderNbr,
-          status: notice.status,
-          locationId: notice.locationId,
-          shipVia: notice.shipVia,
-        });
-      } catch (err) {
-        console.error("[order-ready] refresh failed", err);
-      }
-    }
+    shouldRefreshDetails = forceAllowed || isStale;
   }
 
-  const readyLinesStale =
-    !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
-  if (readyLinesStale) {
-    await refreshReadyLines(notice.id, notice.orderNbr);
+  const shouldRefreshLines = forceAllowed || readyLinesStale;
+  if (shouldRefreshDetails || shouldRefreshLines) {
+    const existingRefresh = orderReadyInFlight.get(orderNbr);
+    if (existingRefresh) {
+      refreshStatus = forceRefresh ? "in-progress" : refreshStatus;
+      await existingRefresh;
+    } else {
+      const refreshPromise = (async () => {
+        if (notice.baid && shouldRefreshDetails) {
+          try {
+            await refreshOrderReadyDetails({
+              baid: notice.baid,
+              orderNbr,
+              status: notice.status,
+              locationId: notice.locationId,
+              shipVia: notice.shipVia,
+            });
+          } catch (err) {
+            console.error("[order-ready] refresh failed", err);
+          }
+        }
+
+        if (shouldRefreshLines) {
+          await refreshReadyLines(notice.id, notice.orderNbr);
+        }
+      })();
+
+      orderReadyInFlight.set(orderNbr, refreshPromise);
+      await refreshPromise.finally(() => orderReadyInFlight.delete(orderNbr));
+      if (forceAllowed) {
+        orderReadyForceCooldown.set(orderNbr, Date.now());
+        refreshStatus = "forced";
+      } else if (shouldRefreshDetails || shouldRefreshLines) {
+        refreshStatus = "stale";
+      }
+    }
   }
 
   const readyLineRows = await prisma.orderReadyLine.findMany({
@@ -253,6 +289,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       smsOptIn: notice.smsOptIn,
     },
     readyItemsAvailable,
+    refreshStatus,
     appointment,
     payment: payment
       ? {

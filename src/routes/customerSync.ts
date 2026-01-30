@@ -3,6 +3,7 @@ import { z } from "zod";
 import { PrismaClient } from "@prisma/client";
 import { resolveSingleBaid } from "../lib/acumatica/resolveBaid";
 import { runCustomerDeltaSync } from "../lib/acumatica/sync/syncCustomerAccount";
+import { ingestPaymentInfo } from "../lib/acumatica/ingest/ingestPaymentInfo";
 import { toDenverDateTimeOffsetLiteralAt } from "../lib/time/denver";
 
 const prisma = new PrismaClient();
@@ -13,11 +14,46 @@ const SYNC_BODY = z.object({
   userId: z.string().optional(),
   email: z.string().email().optional(),
   baid: z.string().optional(),
+  force: z.boolean().optional(),
 });
 
 const STALE_MS = 60 * 60 * 1000;
+const PAYMENT_STALE_MS = Number(process.env.PAYMENT_STALE_MS || 10 * 60 * 1000);
 const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 const IN_PROGRESS_GRACE_MS = 20 * 60 * 1000;
+const FORCE_COOLDOWN_MS = Number(process.env.CUSTOMER_SYNC_FORCE_COOLDOWN_MS || 2 * 60 * 1000);
+
+const paymentInFlight = new Map<string, Promise<{ ok: boolean; error?: string }>>();
+
+async function refreshPaymentsIfStale(baid: string) {
+  const latest = await prisma.erpOrderPayment.findFirst({
+    where: { baid },
+    orderBy: { updatedAt: "desc" },
+    select: { updatedAt: true },
+  });
+  const lastPaymentAt = latest?.updatedAt ?? null;
+  const age = lastPaymentAt ? Date.now() - new Date(lastPaymentAt).getTime() : Infinity;
+  if (age < PAYMENT_STALE_MS) {
+    return { status: "payment-fresh", lastPaymentAt };
+  }
+
+  if (paymentInFlight.has(baid)) {
+    await paymentInFlight.get(baid);
+    return { status: "payment-in-progress", lastPaymentAt };
+  }
+
+  const promise = ingestPaymentInfo(baid)
+    .then(() => ({ ok: true }))
+    .catch((err: any) => ({ ok: false, error: String(err?.message || err) }));
+  paymentInFlight.set(baid, promise);
+  const result = await promise;
+  paymentInFlight.delete(baid);
+
+  if (!result.ok) {
+    return { status: "payment-failed", lastPaymentAt, error: result.error };
+  }
+  return { status: "payment-refreshed", lastPaymentAt: new Date() };
+}
 
 customerSyncRouter.post("/", async (req, res) => {
   const parsed = SYNC_BODY.safeParse(req.body);
@@ -32,6 +68,7 @@ customerSyncRouter.post("/", async (req, res) => {
 
   const now = new Date();
   const existing = await prisma.baidSyncState.findUnique({ where: { baid } });
+  const force = Boolean(parsed.data.force);
   console.log("[customer-sync] request", {
     baid,
     hasState: Boolean(existing),
@@ -39,6 +76,7 @@ customerSyncRouter.post("/", async (req, res) => {
     lastAttemptAt: existing?.lastAttemptAt ?? null,
     lastErrorAt: existing?.lastErrorAt ?? null,
     inProgress: Boolean(existing?.inProgress),
+    force,
   });
 
   if (existing?.inProgress && existing.inProgressSince) {
@@ -53,17 +91,34 @@ customerSyncRouter.post("/", async (req, res) => {
     }
   }
 
+  if (force && existing?.lastAttemptAt) {
+    const age = now.getTime() - new Date(existing.lastAttemptAt).getTime();
+    if (age < FORCE_COOLDOWN_MS) {
+      console.log("[customer-sync] skip (force cooldown)", { baid, ageMs: age });
+      return res.json({
+        status: "cooldown",
+        lastSyncAt: existing.lastSyncAt,
+        lastAttemptAt: existing.lastAttemptAt,
+      });
+    }
+  }
+
   if (existing?.lastSyncAt) {
     const age = now.getTime() - new Date(existing.lastSyncAt).getTime();
-    if (age < STALE_MS) {
+    if (age < STALE_MS && !force) {
       console.log("[customer-sync] skip (fresh)", { baid, ageMs: age });
-      return res.json({ status: "fresh", lastSyncAt: existing.lastSyncAt });
+      const paymentRefresh = await refreshPaymentsIfStale(baid);
+      return res.json({
+        status: "fresh",
+        lastSyncAt: existing.lastSyncAt,
+        paymentRefresh,
+      });
     }
   }
 
   if (existing?.lastErrorAt) {
     const age = now.getTime() - new Date(existing.lastErrorAt).getTime();
-    if (age < FAILURE_BACKOFF_MS) {
+    if (age < FAILURE_BACKOFF_MS && !force) {
       console.log("[customer-sync] skip (backoff)", { baid, ageMs: age });
       return res.json({
         status: "backoff",
