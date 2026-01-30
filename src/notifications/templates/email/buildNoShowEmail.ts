@@ -90,7 +90,7 @@ export function buildNoShowEmail(when: string, orders: string, link: string) {
     body: renderNoShowTemplate({
       title: "We missed you",
       preheader: `We missed you at your pickup on ${when}.`,
-      message: `We didn't see you at your pickup scheduled for ${when}.`,
+      message: `We didn't see you at your pickup scheduled for ${when}. Your product is being returned to stock, so please reschedule as soon as possible.`,
       when,
       orders,
       link,

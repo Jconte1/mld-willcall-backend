@@ -11,6 +11,7 @@ import { sendSms } from "../providers/sms/sendSms";
 import { sendEmail } from "../providers/email/sendEmail";
 import { AppointmentWithContact, NotificationPayload } from "../types";
 import { buildUnsubscribeLink } from "../links/buildLink";
+import { getPickupLocation } from "../../lib/pickupLocations";
 
 function buildPayload(
   appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
@@ -20,10 +21,15 @@ function buildPayload(
   const snapshot = (job.payloadSnapshot || {}) as Record<string, any>;
   const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
   const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
+  const location = getPickupLocation(appointment.locationId);
+  const locationName = location?.name ?? appointment.locationId;
 
   return {
     appointmentId: appointment.id,
     locationId: appointment.locationId,
+    locationName,
+    locationAddress: location?.address,
+    locationInstructions: location?.instructions,
     startAt: appointment.startAt,
     endAt: appointment.endAt,
     orderNbrs,

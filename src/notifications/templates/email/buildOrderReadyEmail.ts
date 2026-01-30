@@ -78,7 +78,7 @@ export function buildOrderReadyEmail(orderNbr: string, link: string) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   return {
-    subject: `Order ${orderNbr} is ready for pickup`,
+    subject: `Order ${orderNbr} is ready to schedule pickup`,
     body: renderOrderReadyTemplate({
       title: "Your order is ready for pickup",
       preheader: `Order ${orderNbr} is ready for pickup.`,

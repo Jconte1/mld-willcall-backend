@@ -81,7 +81,7 @@ async function sendNoShowNotifications(appointment: {
   if (appointment.smsOptIn) {
     const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
     if (smsTo) {
-      const smsBody = `We missed you at your pickup on ${when}. ${orderList} Please reschedule when ready.`;
+      const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP.`;
       await sendSms(smsTo, smsBody);
     }
   }

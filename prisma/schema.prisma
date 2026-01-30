@@ -586,8 +586,6 @@ model OrderReadyNotice {
   shipVia              String?                  @db.VarChar(128)
   qtyUnallocated       Decimal?                 @db.Decimal(18, 4)
   qtyAllocated         Decimal?                 @db.Decimal(18, 4)
-  unpaidBalance        Decimal?                 @db.Decimal(18, 2)
-  termsId              String?                  @db.VarChar(128)
   customerId           String?                  @db.VarChar(128)
   customerLocationId   String?                  @db.VarChar(128)
   attributeBuyerGroup  String?                  @db.VarChar(256)
@@ -605,10 +603,25 @@ model OrderReadyNotice {
   scheduledAppointmentId String?
   scheduledAppointment PickupAppointment?       @relation(fields: [scheduledAppointmentId], references: [id], onDelete: SetNull)
   accessTokens         OrderReadyAccessToken[]
+  readyLines           OrderReadyLine[]
 
   @@index([locationId])
   @@index([status])
   @@index([nextEligibleNotifyAt])
+}
+
+model OrderReadyLine {
+  id           String           @id @default(cuid())
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  orderReadyId String
+  orderNbr     String           @db.VarChar(64)
+  inventoryId  String           @db.VarChar(128)
+  orderReady   OrderReadyNotice @relation(fields: [orderReadyId], references: [id], onDelete: Cascade)
+
+  @@index([orderNbr])
+  @@index([orderReadyId])
+  @@unique([orderReadyId, inventoryId])
 }
 
 model BaidSyncState {

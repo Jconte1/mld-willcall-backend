@@ -3,6 +3,7 @@ import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
+import { fetchOrderReadyReport } from "../lib/acumatica/fetch/fetchOrderReadyReport";
 import { buildOrderReadyLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
@@ -47,6 +48,7 @@ const SCHEDULED_STATUSES: PickupAppointmentStatus[] = [
 ];
 
 const STALE_MS = 60 * 60 * 1000;
+const READY_LINES_STALE_MS = 60 * 60 * 1000;
 const LOCKOUT_MAX_ATTEMPTS = 5;
 const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
 
@@ -171,8 +173,25 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     }
   }
 
+  const readyLinesStale =
+    !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
+  if (readyLinesStale) {
+    await refreshReadyLines(notice.id, notice.orderNbr);
+  }
+
+  const readyLineRows = await prisma.orderReadyLine.findMany({
+    where: { orderReadyId: notice.id },
+    select: { inventoryId: true },
+  });
+  const readyInventoryIds = new Set(
+    readyLineRows.map((row) => String(row.inventoryId || "").trim()).filter(Boolean)
+  );
+
   const lines = await prisma.erpOrderLine.findMany({
-    where: { orderNbr },
+    where: {
+      orderNbr,
+      ...(readyInventoryIds.size ? { inventoryId: { in: Array.from(readyInventoryIds) } } : {}),
+    },
     select: {
       id: true,
       inventoryId: true,
@@ -222,8 +241,6 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       shipVia: notice.shipVia,
       qtyUnallocated: toNumber(notice.qtyUnallocated),
       qtyAllocated: toNumber(notice.qtyAllocated),
-      unpaidBalance: toNumber(notice.unpaidBalance),
-      termsId: notice.termsId,
       customerId: notice.customerId,
       customerLocationId: notice.customerLocationId,
       contactName: notice.contactName,
@@ -244,6 +261,34 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     orderLines,
   });
 });
+
+async function refreshReadyLines(orderReadyId: string, orderNbr: string) {
+  const rows = await fetchOrderReadyReport();
+  const inventoryIds = new Set<string>();
+  for (const row of rows) {
+    const rowOrderNbr = String(row.orderNbr || "").trim();
+    if (!rowOrderNbr || rowOrderNbr !== orderNbr) continue;
+    const inv = row.inventoryId ? String(row.inventoryId).trim() : "";
+    if (inv) inventoryIds.add(inv);
+  }
+
+  await prisma.orderReadyLine.deleteMany({ where: { orderReadyId } });
+  if (inventoryIds.size) {
+    await prisma.orderReadyLine.createMany({
+      data: Array.from(inventoryIds).map((inventoryId) => ({
+        orderReadyId,
+        orderNbr,
+        inventoryId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  await prisma.orderReadyNotice.update({
+    where: { id: orderReadyId },
+    data: { lastReadyAt: new Date() },
+  });
+}
 
 /**
  * POST /api/public/order-ready/resend

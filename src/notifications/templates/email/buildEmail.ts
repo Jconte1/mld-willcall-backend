@@ -18,6 +18,7 @@ function renderTemplate({
   message,
   when,
   orders,
+  location,
   link,
   unsubscribeLink,
   staffNote,
@@ -28,11 +29,21 @@ function renderTemplate({
   message: string;
   when: string;
   orders: string;
+  location?: string;
   link: string;
   unsubscribeLink?: string;
   staffNote?: string;
   logoUrl: string;
 }) {
+  const locationBlock = location
+    ? `<tr>
+                    <td style="font-size:13px;color:#6b7280;padding-top:10px;">Pickup location</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:14px;color:#374151;">${location}</td>
+                  </tr>`
+    : "";
+
   return `<!doctype html>
 <html>
   <head>
@@ -74,6 +85,7 @@ function renderTemplate({
                   <tr>
                     <td style="font-size:14px;color:#374151;">${orders}</td>
                   </tr>
+                  ${locationBlock}
                 </table>
 
                 <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Manage appointment</a>
@@ -103,6 +115,10 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
   const staffNote = payload.staffInitiated
     ? "This update was made by our staff to keep your pickup on track."
     : undefined;
+  const locationLine =
+    payload.locationAddress && payload.locationName
+      ? `${payload.locationName} - ${payload.locationAddress}`
+      : payload.locationAddress || payload.locationName;
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
 
@@ -116,6 +132,7 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           message: `Your pickup appointment is confirmed for ${when}.`,
           when,
           orders,
+          location: locationLine,
           link: payload.link,
           unsubscribeLink: payload.unsubscribeLink,
           staffNote,
@@ -131,6 +148,7 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           message: `Reminder: your pickup is scheduled for tomorrow at ${when}.`,
           when,
           orders,
+          location: locationLine,
           link: payload.link,
           unsubscribeLink: payload.unsubscribeLink,
           staffNote,
@@ -146,6 +164,7 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           message: `Reminder: your pickup is in one hour at ${when}.`,
           when,
           orders,
+          location: locationLine,
           link: payload.link,
           unsubscribeLink: payload.unsubscribeLink,
           staffNote,
@@ -162,6 +181,7 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           message: `Your pickup was rescheduled from ${oldWhen} to ${when}.`,
           when,
           orders,
+          location: locationLine,
           link: payload.link,
           unsubscribeLink: payload.unsubscribeLink,
           staffNote,

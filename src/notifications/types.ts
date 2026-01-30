@@ -33,6 +33,9 @@ export type AppointmentWithContact = Pick<
 export type NotificationPayload = {
   appointmentId: string;
   locationId: string;
+  locationName?: string;
+  locationAddress?: string;
+  locationInstructions?: string;
   startAt: Date;
   endAt: Date;
   orderNbrs?: string[];

@@ -1,4 +1,4 @@
-type OrderReadyRow = {
+export type OrderReadyRow = {
   orderType: string | null;
   orderNbr: string | null;
   qtyUnallocated: number | null;
@@ -7,13 +7,12 @@ type OrderReadyRow = {
   status: string | null;
   customerId: string | null;
   attributeBuyerGroup: string | null;
-  unpaidBalance: number | null;
-  termsId: string | null;
   customerLocationId: string | null;
   attributeOsContact: string | null;
   attributeSiteNumber: string | null;
   attributeDelEmail: string | null;
   warehouse: string | null;
+  inventoryId: string | null;
 };
 
 let loggedKeys = false;
@@ -92,12 +91,6 @@ export async function fetchOrderReadyReport() {
       "SOOrder_AttributeBUYERGROUP",
       "SOOrder.AttributeBUYERGROUP",
     ]),
-    unpaidBalance: parseNumber(
-      String(
-        pickField(row, ["SOOrder_unpaidBalance", "UnpaidBalance", "SOOrder_UnpaidBalance"]) ?? ""
-      )
-    ),
-    termsId: pickField(row, ["Terms", "TermsID", "SOOrder_TermsID", "SOOrder.TermsID"]),
     customerLocationId: pickField(row, [
       "Location",
       "CustomerLocationID",
@@ -116,5 +109,13 @@ export async function fetchOrderReadyReport() {
       "SOOrder_AttributeDELEMAIL",
     ]),
     warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
+    inventoryId: pickField(row, [
+      "InventoryID",
+      "InventoryCD",
+      "SOLine_InventoryID",
+      "SOLine.InventoryID",
+      "InventoryItem_InventoryID",
+      "INItem_InventoryID",
+    ]),
   }));
 }
