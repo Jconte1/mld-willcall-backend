@@ -4,9 +4,13 @@ import { sendEmail } from "../providers/email/sendEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { cancelPendingJobs } from "../scheduler/cancelJobs";
 import { buildNoShowEmail } from "../templates/email/buildNoShowEmail";
+import { startOfDayDenver } from "../../lib/time/denver";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
+const RUN_HOUR = 17;
+const RUN_MINUTE = 15;
+const RUN_WINDOW_MINUTES = 30;
 
 const ACTIVE_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
@@ -37,7 +41,9 @@ function getDenverParts(date: Date) {
 
 async function shouldRun(prisma: PrismaClient, now: Date) {
   const parts = getDenverParts(now);
-  if (parts.hour < 17 || (parts.hour === 17 && parts.minute < 15)) return false;
+  if (parts.hour < RUN_HOUR || (parts.hour === RUN_HOUR && parts.minute < RUN_MINUTE)) return false;
+  const minutesSinceStart = (parts.hour * 60 + parts.minute) - (RUN_HOUR * 60 + RUN_MINUTE);
+  if (minutesSinceStart > RUN_WINDOW_MINUTES) return false;
 
   const existing = await prisma.orderReadyJobState.findUnique({
     where: { name: JOB_NAME },
@@ -91,10 +97,13 @@ export async function runNoShowSweep(prisma: PrismaClient) {
   const now = new Date();
   if (!(await shouldRun(prisma, now))) return;
 
+  const startOfToday = startOfDayDenver(now);
+  const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+
   const appointments = await prisma.pickupAppointment.findMany({
     where: {
       status: { in: ACTIVE_STATUSES },
-      endAt: { lt: now },
+      endAt: { lt: now, gte: startOfToday, lt: startOfTomorrow },
     },
     include: { orders: true },
   });

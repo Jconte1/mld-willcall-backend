@@ -18,6 +18,20 @@ const slotSchema = z.object({
   endTime: z.string().regex(TIME_RE),
 });
 
+const selectedItemSchema = z.object({
+  lineId: z.string().optional(),
+  inventoryId: z.string().min(1),
+  qty: z.number().positive(),
+  description: z.string().optional().nullable(),
+  warehouse: z.string().optional().nullable(),
+  maxQty: z.number().optional(),
+});
+
+const selectedItemsSchema = z.object({
+  orderNbr: z.string().min(1),
+  items: z.array(selectedItemSchema),
+});
+
 const groupSchema = z.object({
   locationId: z.string().min(1),
   orderNbrs: z.array(z.string().min(1)).min(1),
@@ -38,6 +52,7 @@ const createSchema = z
   vehicleInfo: z.string().optional(),
   notes: z.string().optional(),
   groups: z.array(groupSchema).min(1),
+  selectedItems: z.array(selectedItemsSchema).optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.userId && !data.orderReadyToken) {
@@ -513,6 +528,26 @@ customerPickupsRouter.post("/", async (req, res) => {
       }));
       if (orderNbrs.length) {
         await tx.pickupAppointmentOrder.createMany({ data: orderNbrs, skipDuplicates: true });
+      }
+
+      const selectionsByOrder = new Map(
+        (payload.selectedItems ?? []).map((selection) => [selection.orderNbr, selection.items])
+      );
+      const lineRows = appointment.orderNbrs.flatMap((orderNbr) => {
+        const items = selectionsByOrder.get(orderNbr) ?? [];
+        return items
+          .filter((item) => item.inventoryId && item.qty > 0)
+          .map((item) => ({
+            appointmentId: createdAppointment.id,
+            orderNbr,
+            lineId: item.lineId ?? null,
+            inventoryId: item.inventoryId,
+            qtySelected: item.qty,
+            lineDescription: item.description ?? null,
+          }));
+      });
+      if (lineRows.length) {
+        await tx.pickupAppointmentLine.createMany({ data: lineRows });
       }
 
       createdAppointments.push(createdAppointment);

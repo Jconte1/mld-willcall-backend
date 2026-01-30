@@ -30,6 +30,20 @@ const STATUS = z.enum([
   "NoShow",
 ]);
 
+const selectedItemSchema = z.object({
+  lineId: z.string().optional(),
+  inventoryId: z.string().min(1),
+  qty: z.number().positive(),
+  description: z.string().optional().nullable(),
+  warehouse: z.string().optional().nullable(),
+  maxQty: z.number().optional(),
+});
+
+const selectedItemsSchema = z.object({
+  orderNbr: z.string().min(1),
+  items: z.array(selectedItemSchema),
+});
+
 function canAccessLocation(req: any, locationId: string): boolean {
   if (req.auth.role === "ADMIN") return true;
   return expandLocationIds(req.auth.locationAccess ?? []).includes(locationId);
@@ -37,6 +51,92 @@ function canAccessLocation(req: any, locationId: string): boolean {
 
 function canWritePickups(req: any): boolean {
   return req.auth?.role !== "VIEWER";
+}
+
+function normalizeSelections(
+  selectedItems: z.infer<typeof selectedItemsSchema>[] | undefined,
+  allowedOrders: string[]
+) {
+  if (!selectedItems?.length) return [];
+  const allowed = new Set(allowedOrders);
+  return selectedItems
+    .filter((selection) => allowed.has(selection.orderNbr))
+    .map((selection) => ({
+      orderNbr: selection.orderNbr,
+      items: selection.items.filter((item) => item.inventoryId && item.qty > 0),
+    }))
+    .filter((selection) => selection.items.length > 0);
+}
+
+async function validateSelectedItemQty(
+  selectedItems: z.infer<typeof selectedItemsSchema>[] | undefined
+) {
+  if (!selectedItems?.length) return null;
+  const lineIds = Array.from(
+    new Set(
+      selectedItems.flatMap((selection) =>
+        selection.items.map((item) => item.lineId).filter(Boolean)
+      )
+    )
+  ) as string[];
+  if (!lineIds.length) return null;
+
+  const lines = await prisma.erpOrderLine.findMany({
+    where: { id: { in: lineIds } },
+    select: { id: true, openQty: true, orderNbr: true },
+  });
+  const lineMap = new Map(lines.map((line) => [line.id, line]));
+
+  for (const selection of selectedItems) {
+    for (const item of selection.items) {
+      if (!item.lineId) continue;
+      const line = lineMap.get(item.lineId);
+      if (!line) continue;
+      const openQty = line.openQty == null ? null : Number(line.openQty);
+      if (openQty != null && item.qty > openQty) {
+        return {
+          orderNbr: selection.orderNbr,
+          lineId: item.lineId,
+          maxQty: openQty,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function areSelectedItemsEqual(
+  a: { orderNbr: string; items: { inventoryId: string; lineId?: string | null; qty: number }[] }[],
+  b: { orderNbr: string; items: { inventoryId: string; lineId?: string | null; qty: number }[] }[]
+) {
+  const normalize = (items: typeof a) =>
+    items
+      .flatMap((selection) =>
+        selection.items.map((item) => ({
+          orderNbr: selection.orderNbr,
+          lineId: item.lineId ?? "",
+          inventoryId: item.inventoryId,
+          qty: Number(item.qty),
+        }))
+      )
+      .sort((x, y) =>
+        `${x.orderNbr}-${x.lineId}-${x.inventoryId}`.localeCompare(
+          `${y.orderNbr}-${y.lineId}-${y.inventoryId}`
+        )
+      );
+
+  const left = normalize(a);
+  const right = normalize(b);
+  if (left.length !== right.length) return false;
+
+  return left.every(
+    (item, idx) =>
+      item.orderNbr === right[idx].orderNbr &&
+      item.lineId === right[idx].lineId &&
+      item.inventoryId === right[idx].inventoryId &&
+      item.qty === right[idx].qty
+  );
 }
 
 /**
@@ -128,6 +228,7 @@ pickupsRouter.post("/", async (req, res) => {
     endAt: z.string().datetime(),
     status: STATUS.optional(),
     orderNbrs: z.array(z.string()).optional(),
+    selectedItems: z.array(selectedItemsSchema).optional(),
     notifyCustomer: z.boolean().optional(),
   }).safeParse(req.body);
 
@@ -143,12 +244,24 @@ pickupsRouter.post("/", async (req, res) => {
     return res.status(404).json({ message: "Customer not found" });
   }
 
+  const orderNbrs = body.data.orderNbrs ?? [];
+  const normalizedSelections = normalizeSelections(body.data.selectedItems, orderNbrs);
+  const invalidQty = await validateSelectedItemQty(normalizedSelections);
+  if (invalidQty) {
+    return res.status(400).json({
+      message: "Selected quantity exceeds open quantity.",
+      orderNbr: invalidQty.orderNbr,
+      lineId: invalidQty.lineId,
+      maxQty: invalidQty.maxQty,
+    });
+  }
+
   const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const appointment = await tx.pickupAppointment.create({
       data: {
         userId: user.id,
         email: customerEmail,
-        pickupReference: body.data.orderNbrs?.join(", ") ?? "",
+        pickupReference: orderNbrs.join(", "),
         locationId: body.data.locationId,
         startAt: new Date(body.data.startAt),
         endAt: new Date(body.data.endAt),
@@ -162,14 +275,28 @@ pickupsRouter.post("/", async (req, res) => {
       },
     });
 
-    if (body.data.orderNbrs?.length) {
+    if (orderNbrs.length) {
       await tx.pickupAppointmentOrder.createMany({
-        data: body.data.orderNbrs.map((orderNbr) => ({
+        data: orderNbrs.map((orderNbr) => ({
           appointmentId: appointment.id,
           orderNbr,
         })),
         skipDuplicates: true,
       });
+    }
+
+    const lineRows = normalizedSelections.flatMap((selection) =>
+      selection.items.map((item) => ({
+        appointmentId: appointment.id,
+        orderNbr: selection.orderNbr,
+        lineId: item.lineId ?? null,
+        inventoryId: item.inventoryId,
+        qtySelected: item.qty,
+        lineDescription: item.description ?? null,
+      }))
+    );
+    if (lineRows.length) {
+      await tx.pickupAppointmentLine.createMany({ data: lineRows });
     }
 
     return appointment;
@@ -207,6 +334,41 @@ pickupsRouter.get("/:id", async (req, res) => {
 });
 
 /**
+ * GET /api/staff/pickups/:id/items
+ */
+pickupsRouter.get("/:id/items", async (req, res) => {
+  const pickup = await prisma.pickupAppointment.findUnique({
+    where: { id: req.params.id },
+    include: { orders: true, lines: true },
+  });
+  if (!pickup) return res.status(404).json({ message: "Not found" });
+
+  if (!canAccessLocation(req, pickup.locationId)) return res.status(403).json({ message: "Forbidden" });
+
+  const orderNbrs = pickup.orders.map((order) => order.orderNbr);
+  const orderLines = await prisma.erpOrderLine.findMany({
+    where: { orderNbr: { in: orderNbrs } },
+    select: {
+      id: true,
+      orderNbr: true,
+      inventoryId: true,
+      lineDescription: true,
+      openQty: true,
+      orderQty: true,
+      warehouse: true,
+    },
+    orderBy: [{ orderNbr: "asc" }],
+  });
+
+  return res.json({
+    pickupId: pickup.id,
+    orderNbrs,
+    lines: pickup.lines,
+    orderLines,
+  });
+});
+
+/**
  * PATCH /api/staff/pickups/:id
  * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
@@ -227,6 +389,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
     vehicleInfo: z.string().nullable().optional(),
     customerNotes: z.string().nullable().optional(),
     orderNbrs: z.array(z.string()).optional(),
+    selectedItems: z.array(selectedItemsSchema).optional(),
     notifyCustomer: z.boolean().optional(),
     cancelReason: z.string().optional(),
   }).safeParse(req.body);
@@ -237,7 +400,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
 
   const existing = await prisma.pickupAppointment.findUnique({
     where: { id: req.params.id },
-    include: { orders: true },
+    include: { orders: true, lines: true },
   });
   if (!existing) return res.status(404).json({ message: "Not found" });
 
@@ -249,6 +412,18 @@ pickupsRouter.patch("/:id", async (req, res) => {
     return res.status(403).json({ message: "Forbidden" });
   }
 
+  const nextOrderNbrs = body.data.orderNbrs ?? existing.orders.map((o) => o.orderNbr);
+  const normalizedSelections = normalizeSelections(body.data.selectedItems, nextOrderNbrs);
+  const invalidQty = await validateSelectedItemQty(normalizedSelections);
+  if (invalidQty) {
+    return res.status(400).json({
+      message: "Selected quantity exceeds open quantity.",
+      orderNbr: invalidQty.orderNbr,
+      lineId: invalidQty.lineId,
+      maxQty: invalidQty.maxQty,
+    });
+  }
+
   const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     if (body.data.orderNbrs) {
       await tx.pickupAppointmentOrder.deleteMany({ where: { appointmentId: existing.id } });
@@ -258,6 +433,29 @@ pickupsRouter.patch("/:id", async (req, res) => {
       }));
       if (orderRows.length) {
         await tx.pickupAppointmentOrder.createMany({ data: orderRows, skipDuplicates: true });
+      }
+      await tx.pickupAppointmentLine.deleteMany({
+        where: {
+          appointmentId: existing.id,
+          orderNbr: { notIn: body.data.orderNbrs },
+        },
+      });
+    }
+
+    if (body.data.selectedItems) {
+      await tx.pickupAppointmentLine.deleteMany({ where: { appointmentId: existing.id } });
+      const lineRows = normalizedSelections.flatMap((selection) =>
+        selection.items.map((item) => ({
+          appointmentId: existing.id,
+          orderNbr: selection.orderNbr,
+          lineId: item.lineId ?? null,
+          inventoryId: item.inventoryId,
+          qtySelected: item.qty,
+          lineDescription: item.description ?? null,
+        }))
+      );
+      if (lineRows.length) {
+        await tx.pickupAppointmentLine.createMany({ data: lineRows });
       }
     }
 
@@ -282,8 +480,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
 
   const notifyCustomer = body.data.notifyCustomer ?? false;
   const cancelReason = body.data.cancelReason ?? null;
-  const nextOrderNbrs =
-    body.data.orderNbrs ?? existing.orders.map((o: { orderNbr: string }) => o.orderNbr);
+  const effectiveOrderNbrs = nextOrderNbrs;
 
   const timeChanged =
     (body.data.startAt && new Date(body.data.startAt).getTime() !== existing.startAt.getTime()) ||
@@ -308,13 +505,29 @@ pickupsRouter.patch("/:id", async (req, res) => {
           !existing.orders.some((o: { orderNbr: string }) => o.orderNbr === orderNbr)
       ));
 
+  const existingSelections = Array.from(
+    existing.lines.reduce((map, line) => {
+      const entry = map.get(line.orderNbr) ?? [];
+      entry.push({
+        lineId: line.lineId ?? undefined,
+        inventoryId: line.inventoryId,
+        qty: Number(line.qtySelected),
+      });
+      map.set(line.orderNbr, entry);
+      return map;
+    }, new Map<string, { lineId?: string; inventoryId: string; qty: number }[]>())
+  ).map(([orderNbr, items]) => ({ orderNbr, items }));
+  const itemsChanged = Array.isArray(body.data.selectedItems)
+    ? !areSelectedItemsEqual(existingSelections, normalizedSelections)
+    : false;
+
   try {
     if (!terminalStatusChange && (timeChanged || locationChanged)) {
       if (notifyCustomer) {
         await notifyAppointmentRescheduled(
           prisma,
           updated,
-          nextOrderNbrs,
+          effectiveOrderNbrs,
           existing.startAt,
           existing.endAt,
           notifyCustomer,
@@ -327,19 +540,19 @@ pickupsRouter.patch("/:id", async (req, res) => {
     }
 
     if (statusChanged && body.data.status === "Completed") {
-      await notifyAppointmentCompleted(prisma, updated, nextOrderNbrs, notifyCustomer, true, true);
+      await notifyAppointmentCompleted(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
     }
 
     if (statusChanged && body.data.status === "Cancelled") {
-      await notifyStaffCancelled(prisma, updated, nextOrderNbrs, cancelReason, notifyCustomer);
+      await notifyStaffCancelled(prisma, updated, effectiveOrderNbrs, cancelReason, notifyCustomer);
     }
 
     if (statusChanged && body.data.status === "NoShow") {
       await cancelAppointmentNotifications(prisma, updated.id);
     }
 
-    if (orderListChanged) {
-      await notifyOrderListChanged(prisma, updated, nextOrderNbrs, notifyCustomer, true, true);
+    if (orderListChanged || itemsChanged) {
+      await notifyOrderListChanged(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
     }
   } catch (err) {
     console.error("[notifications] staff update failed", err);

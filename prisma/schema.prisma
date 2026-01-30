@@ -438,6 +438,7 @@ model PickupAppointment {
   customerNotes     String?
   users             users?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
   orders            PickupAppointmentOrder[]
+  lines             PickupAppointmentLine[]
   notificationJobs  AppointmentNotificationJob[]
   accessTokens      AppointmentAccessToken[]
   orderReadyNotices OrderReadyNotice[]
@@ -446,6 +447,22 @@ model PickupAppointment {
   @@index([status])
   @@index([email])
   @@index([userId])
+}
+
+model PickupAppointmentLine {
+  id            String            @id @default(cuid())
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  appointmentId String
+  orderNbr      String            @db.VarChar(64)
+  lineId        String?           @db.VarChar(64)
+  inventoryId   String            @db.VarChar(128)
+  qtySelected   Decimal           @db.Decimal(18, 4)
+  lineDescription String?         @db.VarChar(512)
+  appointment   PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, orderNbr])
+  @@index([appointmentId, inventoryId])
 }
 
 model PickupAppointmentOrder {
