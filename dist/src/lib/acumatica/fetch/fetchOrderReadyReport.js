@@ -15,7 +15,7 @@ function parseNumber(value) {
 }
 async function fetchOrderReadyReport() {
     const url = process.env.ACUMATICA_ORDER_READY_ODATA_URL ||
-        "https://acumatica.mld.com/OData/MLD/Order%20Ready%20Report";
+        "https://acumatica.mld.com/OData/MLD/willcall%20100pct";
     const username = process.env.ACUMATICA_USERNAME;
     const password = process.env.ACUMATICA_PASSWORD;
     if (!username || !password) {
@@ -60,8 +60,6 @@ async function fetchOrderReadyReport() {
             "SOOrder_AttributeBUYERGROUP",
             "SOOrder.AttributeBUYERGROUP",
         ]),
-        unpaidBalance: parseNumber(String(pickField(row, ["SOOrder_unpaidBalance", "UnpaidBalance", "SOOrder_UnpaidBalance"]) ?? "")),
-        termsId: pickField(row, ["Terms", "TermsID", "SOOrder_TermsID", "SOOrder.TermsID"]),
         customerLocationId: pickField(row, [
             "Location",
             "CustomerLocationID",
@@ -80,5 +78,13 @@ async function fetchOrderReadyReport() {
             "SOOrder_AttributeDELEMAIL",
         ]),
         warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
+        inventoryId: pickField(row, [
+            "InventoryID",
+            "InventoryCD",
+            "SOLine_InventoryID",
+            "SOLine.InventoryID",
+            "InventoryItem_InventoryID",
+            "INItem_InventoryID",
+        ]),
     }));
 }

@@ -6,8 +6,13 @@ const format_1 = require("../format");
 const sendEmail_1 = require("../providers/email/sendEmail");
 const sendSms_1 = require("../providers/sms/sendSms");
 const cancelJobs_1 = require("../scheduler/cancelJobs");
+const buildNoShowEmail_1 = require("../templates/email/buildNoShowEmail");
+const denver_1 = require("../../lib/time/denver");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
+const RUN_HOUR = 17;
+const RUN_MINUTE = 15;
+const RUN_WINDOW_MINUTES = 30;
 const ACTIVE_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
@@ -34,7 +39,10 @@ function getDenverParts(date) {
 }
 async function shouldRun(prisma, now) {
     const parts = getDenverParts(now);
-    if (parts.hour < 17 || (parts.hour === 17 && parts.minute < 15))
+    if (parts.hour < RUN_HOUR || (parts.hour === RUN_HOUR && parts.minute < RUN_MINUTE))
+        return false;
+    const minutesSinceStart = (parts.hour * 60 + parts.minute) - (RUN_HOUR * 60 + RUN_MINUTE);
+    if (minutesSinceStart > RUN_WINDOW_MINUTES)
         return false;
     const existing = await prisma.orderReadyJobState.findUnique({
         where: { name: JOB_NAME },
@@ -56,25 +64,15 @@ async function sendNoShowNotifications(appointment) {
     const orderList = (0, format_1.formatOrderList)(appointment.orders.map((o) => o.orderNbr));
     if (appointment.emailOptIn) {
         const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-        const subject = "We missed you at pickup";
-        const body = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-        <h2 style="margin: 0 0 12px;">We missed you</h2>
-        <p style="margin: 0 0 12px;">
-          We didn't see you at your pickup scheduled for ${when}.
-        </p>
-        <p style="margin: 0 0 12px;">${orderList}</p>
-        <p style="margin: 0;">
-          Please visit our site to reschedule your pickup.
-        </p>
-      </div>
-    `;
-        await (0, sendEmail_1.sendEmail)(recipient, subject, body);
+        const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+        const link = frontendUrl ? `${frontendUrl}/` : "https://mld-willcall.vercel.app";
+        const message = (0, buildNoShowEmail_1.buildNoShowEmail)(when, orderList, link);
+        await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body);
     }
     if (appointment.smsOptIn) {
         const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
         if (smsTo) {
-            const smsBody = `We missed you at your pickup on ${when}. ${orderList} Please reschedule when ready.`;
+            const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP.`;
             await (0, sendSms_1.sendSms)(smsTo, smsBody);
         }
     }
@@ -83,10 +81,11 @@ async function runNoShowSweep(prisma) {
     const now = new Date();
     if (!(await shouldRun(prisma, now)))
         return;
+    const startOfToday = (0, denver_1.startOfDayDenver)(now);
     const appointments = await prisma.pickupAppointment.findMany({
         where: {
             status: { in: ACTIVE_STATUSES },
-            endAt: { lt: now },
+            endAt: { gte: startOfToday, lt: now },
         },
         include: { orders: true },
     });

@@ -9,7 +9,7 @@ const sendEmail_1 = require("../providers/email/sendEmail");
 const buildOrderReadyEmail_1 = require("../templates/email/buildOrderReadyEmail");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
-const RESEND_DAYS = 5;
+const RESEND_DAYS = 1;
 const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
@@ -63,13 +63,11 @@ async function runOrderReadySync(prisma) {
     console.log("[order-ready] running daily sync");
     const rows = await (0, fetchOrderReadyReport_1.fetchOrderReadyReport)();
     console.log("[order-ready] rows fetched", { count: rows.length });
-    const seenOrderNbrs = new Set();
+    const grouped = groupOrderReadyRows(rows);
+    const seenOrderNbrs = new Set(Array.from(grouped.keys()));
     let sentCount = 0;
-    for (const row of rows) {
-        if (!row.orderNbr)
-            continue;
-        const orderNbr = row.orderNbr.trim();
-        seenOrderNbrs.add(orderNbr);
+    for (const [orderNbr, bucket] of grouped.entries()) {
+        const row = bucket.row;
         const contactEmail = (row.attributeDelEmail || "").trim() || null;
         const mappedLocationId = (0, locationIds_1.normalizeWarehouseToLocationId)(row.warehouse);
         const locationId = mappedLocationId ?? "slc-hq";
@@ -82,8 +80,6 @@ async function runOrderReadySync(prisma) {
                 shipVia: row.shipVia ?? null,
                 qtyUnallocated: row.qtyUnallocated ?? null,
                 qtyAllocated: row.qtyAllocated ?? null,
-                unpaidBalance: row.unpaidBalance ?? null,
-                termsId: row.termsId ?? null,
                 customerId: row.customerId ?? null,
                 customerLocationId: row.customerLocationId ?? null,
                 attributeBuyerGroup: row.attributeBuyerGroup ?? null,
@@ -105,8 +101,6 @@ async function runOrderReadySync(prisma) {
                 shipVia: row.shipVia ?? null,
                 qtyUnallocated: row.qtyUnallocated ?? null,
                 qtyAllocated: row.qtyAllocated ?? null,
-                unpaidBalance: row.unpaidBalance ?? null,
-                termsId: row.termsId ?? null,
                 customerId: row.customerId ?? null,
                 customerLocationId: row.customerLocationId ?? null,
                 attributeBuyerGroup: row.attributeBuyerGroup ?? null,
@@ -121,6 +115,17 @@ async function runOrderReadySync(prisma) {
                 lastReadyAt: now,
             },
         });
+        await prisma.orderReadyLine.deleteMany({ where: { orderReadyId: notice.id } });
+        if (bucket.inventoryIds.size) {
+            await prisma.orderReadyLine.createMany({
+                data: Array.from(bucket.inventoryIds).map((inventoryId) => ({
+                    orderReadyId: notice.id,
+                    orderNbr,
+                    inventoryId,
+                })),
+                skipDuplicates: true,
+            });
+        }
         const normalizedStatus = (notice.status || "").toLowerCase();
         if (normalizedStatus === "scheduled" || normalizedStatus === "completed") {
             continue;
@@ -166,6 +171,7 @@ async function runOrderReadySync(prisma) {
         }
         await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body);
         sentCount += 1;
+        // TODO: After 5 consecutive daily sends, escalate to the salesperson for follow-up.
         await prisma.orderReadyNotice.update({
             where: { id: notice.id },
             data: {
@@ -187,6 +193,9 @@ async function runOrderReadySync(prisma) {
                 nextEligibleNotifyAt: null,
             },
         });
+        await prisma.orderReadyLine.deleteMany({
+            where: { orderReadyId: { in: staleNotices.map((notice) => notice.id) } },
+        });
         await prisma.orderReadyAccessToken.updateMany({
             where: { orderReadyId: { in: staleNotices.map((notice) => notice.id) }, revokedAt: null },
             data: { revokedAt: now },
@@ -194,4 +203,27 @@ async function runOrderReadySync(prisma) {
         console.log("[order-ready] marked not-ready", { count: staleNotices.length });
     }
     await markRun(prisma, now);
+}
+function groupOrderReadyRows(rows) {
+    const grouped = new Map();
+    for (const row of rows) {
+        if (!row.orderNbr)
+            continue;
+        const orderNbr = row.orderNbr.trim();
+        if (!orderNbr)
+            continue;
+        const existing = grouped.get(orderNbr);
+        const inventoryId = row.inventoryId ? String(row.inventoryId).trim() : "";
+        if (existing) {
+            if (inventoryId)
+                existing.inventoryIds.add(inventoryId);
+        }
+        else {
+            grouped.set(orderNbr, {
+                row,
+                inventoryIds: inventoryId ? new Set([inventoryId]) : new Set(),
+            });
+        }
+    }
+    return grouped;
 }

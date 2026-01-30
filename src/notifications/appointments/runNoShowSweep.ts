@@ -98,12 +98,11 @@ export async function runNoShowSweep(prisma: PrismaClient) {
   if (!(await shouldRun(prisma, now))) return;
 
   const startOfToday = startOfDayDenver(now);
-  const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
 
   const appointments = await prisma.pickupAppointment.findMany({
     where: {
       status: { in: ACTIVE_STATUSES },
-      endAt: { lt: now, gte: startOfToday, lt: startOfTomorrow },
+      endAt: { gte: startOfToday, lt: now },
     },
     include: { orders: true },
   });

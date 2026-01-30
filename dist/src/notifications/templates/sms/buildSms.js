@@ -6,16 +6,20 @@ const format_1 = require("../../format");
 function buildSmsMessage(type, payload) {
     const when = (0, format_1.formatDenverDateTime)(payload.startAt);
     const orderLine = (0, format_1.formatOrderList)(payload.orderNbrs);
+    const locationLine = payload.locationAddress && payload.locationName
+        ? `${payload.locationName} - ${payload.locationAddress}`
+        : payload.locationAddress || payload.locationName;
+    const locationText = locationLine ? ` Pickup location: ${locationLine}.` : "";
     switch (type) {
         case client_1.AppointmentNotificationType.ScheduledConfirm:
-            return `Your pickup is scheduled for ${when}. ${orderLine}. Manage: ${payload.link}`;
+            return `Your pickup is scheduled for ${when}.${locationText} ${orderLine}. Manage: ${payload.link}`;
         case client_1.AppointmentNotificationType.Reminder1Day:
-            return `Reminder: your pickup is tomorrow at ${when}. ${orderLine}. Manage: ${payload.link}`;
+            return `Reminder: your pickup is tomorrow at ${when}.${locationText} ${orderLine}. Manage: ${payload.link}`;
         case client_1.AppointmentNotificationType.Reminder1Hour:
-            return `Reminder: your pickup is in 1 hour at ${when}. ${orderLine}. Manage: ${payload.link}`;
+            return `Reminder: your pickup is in 1 hour at ${when}.${locationText} ${orderLine}. Manage: ${payload.link}`;
         case client_1.AppointmentNotificationType.Rescheduled: {
             const oldWhen = payload.oldStartAt ? (0, format_1.formatDenverDateTime)(payload.oldStartAt) : "previous time";
-            return `Your pickup was rescheduled from ${oldWhen} to ${when}. ${orderLine}. Manage: ${payload.link}`;
+            return `Your pickup was rescheduled from ${oldWhen} to ${when}.${locationText} ${orderLine}. Manage: ${payload.link}`;
         }
         case client_1.AppointmentNotificationType.Cancelled: {
             const reason = payload.cancelReason ? ` Reason: ${payload.cancelReason}` : "";

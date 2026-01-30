@@ -6,6 +6,7 @@ const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderReadyDetails");
+const fetchOrderReadyReport_1 = require("../lib/acumatica/fetch/fetchOrderReadyReport");
 const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
@@ -45,6 +46,7 @@ const SCHEDULED_STATUSES = [
     client_1.PickupAppointmentStatus.Completed,
 ];
 const STALE_MS = 60 * 60 * 1000;
+const READY_LINES_STALE_MS = 60 * 60 * 1000;
 const LOCKOUT_MAX_ATTEMPTS = 5;
 const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
 function normalizePhone(value) {
@@ -162,8 +164,20 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             }
         }
     }
+    const readyLinesStale = !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
+    if (readyLinesStale) {
+        await refreshReadyLines(notice.id, notice.orderNbr);
+    }
+    const readyLineRows = await prisma.orderReadyLine.findMany({
+        where: { orderReadyId: notice.id },
+        select: { inventoryId: true },
+    });
+    const readyInventoryIds = new Set(readyLineRows.map((row) => String(row.inventoryId || "").trim()).filter(Boolean));
     const lines = await prisma.erpOrderLine.findMany({
-        where: { orderNbr },
+        where: {
+            orderNbr,
+            ...(readyInventoryIds.size ? { inventoryId: { in: Array.from(readyInventoryIds) } } : {}),
+        },
         select: {
             id: true,
             inventoryId: true,
@@ -210,8 +224,6 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             shipVia: notice.shipVia,
             qtyUnallocated: (0, orderHelpers_1.toNumber)(notice.qtyUnallocated),
             qtyAllocated: (0, orderHelpers_1.toNumber)(notice.qtyAllocated),
-            unpaidBalance: (0, orderHelpers_1.toNumber)(notice.unpaidBalance),
-            termsId: notice.termsId,
             customerId: notice.customerId,
             customerLocationId: notice.customerLocationId,
             contactName: notice.contactName,
@@ -232,6 +244,33 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         orderLines,
     });
 });
+async function refreshReadyLines(orderReadyId, orderNbr) {
+    const rows = await (0, fetchOrderReadyReport_1.fetchOrderReadyReport)();
+    const inventoryIds = new Set();
+    for (const row of rows) {
+        const rowOrderNbr = String(row.orderNbr || "").trim();
+        if (!rowOrderNbr || rowOrderNbr !== orderNbr)
+            continue;
+        const inv = row.inventoryId ? String(row.inventoryId).trim() : "";
+        if (inv)
+            inventoryIds.add(inv);
+    }
+    await prisma.orderReadyLine.deleteMany({ where: { orderReadyId } });
+    if (inventoryIds.size) {
+        await prisma.orderReadyLine.createMany({
+            data: Array.from(inventoryIds).map((inventoryId) => ({
+                orderReadyId,
+                orderNbr,
+                inventoryId,
+            })),
+            skipDuplicates: true,
+        });
+    }
+    await prisma.orderReadyNotice.update({
+        where: { id: orderReadyId },
+        data: { lastReadyAt: new Date() },
+    });
+}
 /**
  * POST /api/public/order-ready/resend
  * Body: { orderNbr, email? } OR { orderNbr, phone? }

@@ -5,13 +5,22 @@ const client_1 = require("@prisma/client");
 const format_1 = require("../../format");
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
-const ACCENT_COLOR = "#0f766e";
+const ACCENT_COLOR = "#dbaa3c";
+const OUTER_BG = "#f8f2e9";
 function formatOrderList(orderNbrs = []) {
     if (!orderNbrs.length)
         return "(none)";
     return orderNbrs.join(", ");
 }
-function renderTemplate({ title, preheader, message, when, orders, link, unsubscribeLink, staffNote, }) {
+function renderTemplate({ title, preheader, message, when, orders, location, link, unsubscribeLink, staffNote, logoUrl, }) {
+    const locationBlock = location
+        ? `<tr>
+                    <td style="font-size:13px;color:#6b7280;padding-top:10px;">Pickup location</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:14px;color:#374151;">${location}</td>
+                  </tr>`
+        : "";
     return `<!doctype html>
 <html>
   <head>
@@ -19,14 +28,17 @@ function renderTemplate({ title, preheader, message, when, orders, link, unsubsc
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${title}</title>
   </head>
-  <body style="margin:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <body style="margin:0;background:${OUTER_BG};font-family:Arial,Helvetica,sans-serif;color:#111827;">
     <span style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</span>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
       <tr>
         <td align="center" style="padding:24px;">
           <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 25px rgba(17,24,39,0.08);">
             <tr>
-              <td style="padding:24px 28px;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+              <td style="padding:24px 28px;background:#f9fafb;border-bottom:1px solid #e5e7eb;text-align:center;">
+                <div style="margin-bottom:8px;">
+                  <img src="${logoUrl}" alt="MLD" style="height:32px;display:block;margin:0 auto;" />
+                </div>
                 <div style="font-size:18px;font-weight:700;color:${BRAND_COLOR};">${BRAND_NAME}</div>
                 <div style="font-size:12px;color:#6b7280;margin-top:4px;">Pickup appointment update</div>
               </td>
@@ -50,6 +62,7 @@ function renderTemplate({ title, preheader, message, when, orders, link, unsubsc
                   <tr>
                     <td style="font-size:14px;color:#374151;">${orders}</td>
                   </tr>
+                  ${locationBlock}
                 </table>
 
                 <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Manage appointment</a>
@@ -78,6 +91,11 @@ function buildEmailMessage(type, payload) {
     const staffNote = payload.staffInitiated
         ? "This update was made by our staff to keep your pickup on track."
         : undefined;
+    const locationLine = payload.locationAddress && payload.locationName
+        ? `${payload.locationName} - ${payload.locationAddress}`
+        : payload.locationAddress || payload.locationName;
+    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
     switch (type) {
         case client_1.AppointmentNotificationType.ScheduledConfirm:
             return {
@@ -88,9 +106,11 @@ function buildEmailMessage(type, payload) {
                     message: `Your pickup appointment is confirmed for ${when}.`,
                     when,
                     orders,
+                    location: locationLine,
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         case client_1.AppointmentNotificationType.Reminder1Day:
@@ -102,9 +122,11 @@ function buildEmailMessage(type, payload) {
                     message: `Reminder: your pickup is scheduled for tomorrow at ${when}.`,
                     when,
                     orders,
+                    location: locationLine,
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         case client_1.AppointmentNotificationType.Reminder1Hour:
@@ -116,9 +138,11 @@ function buildEmailMessage(type, payload) {
                     message: `Reminder: your pickup is in one hour at ${when}.`,
                     when,
                     orders,
+                    location: locationLine,
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         case client_1.AppointmentNotificationType.Rescheduled: {
@@ -131,9 +155,11 @@ function buildEmailMessage(type, payload) {
                     message: `Your pickup was rescheduled from ${oldWhen} to ${when}.`,
                     when,
                     orders,
+                    location: locationLine,
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         }
@@ -150,6 +176,7 @@ function buildEmailMessage(type, payload) {
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         }
@@ -165,6 +192,7 @@ function buildEmailMessage(type, payload) {
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         case client_1.AppointmentNotificationType.OrderListChanged:
@@ -179,6 +207,7 @@ function buildEmailMessage(type, payload) {
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
         default:
@@ -193,6 +222,7 @@ function buildEmailMessage(type, payload) {
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
+                    logoUrl,
                 }),
             };
     }

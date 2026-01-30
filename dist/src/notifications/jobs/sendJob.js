@@ -7,13 +7,19 @@ const buildEmail_1 = require("../templates/email/buildEmail");
 const sendSms_1 = require("../providers/sms/sendSms");
 const sendEmail_1 = require("../providers/email/sendEmail");
 const buildLink_1 = require("../links/buildLink");
+const pickupLocations_1 = require("../../lib/pickupLocations");
 function buildPayload(appointment, job, link) {
     const snapshot = (job.payloadSnapshot || {});
     const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
     const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
+    const location = (0, pickupLocations_1.getPickupLocation)(appointment.locationId);
+    const locationName = location?.name ?? appointment.locationId;
     return {
         appointmentId: appointment.id,
         locationId: appointment.locationId,
+        locationName,
+        locationAddress: location?.address,
+        locationInstructions: location?.instructions,
         startAt: appointment.startAt,
         endAt: appointment.endAt,
         orderNbrs,

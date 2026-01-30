@@ -10,6 +10,7 @@ const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
+const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
 const prisma = new client_1.PrismaClient();
 exports.customerInvitesRouter = (0, express_1.Router)();
 const BAID_REGEX = /^BA\d{7}$/;
@@ -176,30 +177,9 @@ async function recordAttempt(key, ok) {
     });
 }
 async function sendInviteEmail(opts) {
-    const appName = process.env.APP_NAME ?? "MLD WillCall";
-    const frontendUrl = process.env.FRONTEND_URL ?? "https://mld-willcall.vercel.app";
-    const subject = `${appName} Invite Code`;
-    const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-      <h2 style="margin: 0 0 12px;">You're invited to Will Call</h2>
-      <p style="margin: 0 0 12px;">
-        Use the invite code below to create your ${appName} account.
-      </p>
-      <p style="margin: 0 0 12px;"><b>Invite code:</b> ${opts.code}</p>
-      <p style="margin: 0 0 12px;"><b>BAID:</b> ${opts.baid}</p>
-      <p style="margin: 0 0 12px;"><b>Role:</b> ${opts.roleLabel}</p>
-      <p style="margin: 0 0 12px;">This code expires in 48 hours.</p>
-      <p style="margin: 0 0 18px;">
-        <a href="${frontendUrl}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#111;color:#fff;text-decoration:none;">
-          Open Will Call
-        </a>
-      </p>
-      <p style="margin: 0; color: #555;">
-        Can't find your code? You can request a new one from the registration page.
-      </p>
-    </div>
-  `;
-    await (0, sendEmail_1.sendEmail)(opts.recipient, subject, html, {
+    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const message = (0, buildInviteEmail_1.buildInviteEmail)(opts.code, opts.baid, opts.roleLabel, frontendUrl);
+    await (0, sendEmail_1.sendEmail)(opts.recipient, message.subject, message.body, {
         allowTestOverride: opts.allowTestOverride,
         allowNonProdSend: opts.allowTestOverride === false,
     });

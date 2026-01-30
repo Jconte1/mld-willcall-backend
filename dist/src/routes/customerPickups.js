@@ -13,6 +13,18 @@ const slotSchema = zod_1.z.object({
     startTime: zod_1.z.string().regex(TIME_RE),
     endTime: zod_1.z.string().regex(TIME_RE),
 });
+const selectedItemSchema = zod_1.z.object({
+    lineId: zod_1.z.string().optional(),
+    inventoryId: zod_1.z.string().min(1),
+    qty: zod_1.z.number().positive(),
+    description: zod_1.z.string().optional().nullable(),
+    warehouse: zod_1.z.string().optional().nullable(),
+    maxQty: zod_1.z.number().optional(),
+});
+const selectedItemsSchema = zod_1.z.object({
+    orderNbr: zod_1.z.string().min(1),
+    items: zod_1.z.array(selectedItemSchema),
+});
 const groupSchema = zod_1.z.object({
     locationId: zod_1.z.string().min(1),
     orderNbrs: zod_1.z.array(zod_1.z.string().min(1)).min(1),
@@ -32,6 +44,7 @@ const createSchema = zod_1.z
     vehicleInfo: zod_1.z.string().optional(),
     notes: zod_1.z.string().optional(),
     groups: zod_1.z.array(groupSchema).min(1),
+    selectedItems: zod_1.z.array(selectedItemsSchema).optional(),
 })
     .superRefine((data, ctx) => {
     if (!data.userId && !data.orderReadyToken) {
@@ -63,9 +76,11 @@ const BLOCKING_STATUSES = [
     client_1.PickupAppointmentStatus.Ready,
 ];
 const DENVER_TZ = "America/Denver";
-const OPEN_HOUR = 8;
+const OPEN_HOUR = 7;
 const CLOSE_HOUR = 17;
 const SLOT_MINUTES = 15;
+const MIN_ADVANCE_MINUTES = 4 * 60;
+const NEXT_DAY_EARLIEST_MINUTES = 10 * 60;
 async function hasAccountAccess(userId, appointmentId) {
     const user = await prisma.users.findUnique({
         where: { id: userId },
@@ -104,7 +119,8 @@ function minutesToTime(totalMinutes) {
     return `${pad(hh)}:${pad(mm)}`;
 }
 function parseDateOnly(dateStr) {
-    return new Date(`${dateStr}T00:00:00Z`);
+    // Anchor in Denver midday to avoid UTC date shifts.
+    return new Date(`${dateStr}T12:00:00-07:00`);
 }
 function formatDateInDenver(date) {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -117,6 +133,17 @@ function formatDateInDenver(date) {
     const m = parts.find((p) => p.type === "month")?.value ?? "01";
     const d = parts.find((p) => p.type === "day")?.value ?? "01";
     return `${y}-${m}-${d}`;
+}
+function getDenverParts(date) {
+    const dateStr = formatDateInDenver(date);
+    const timeStr = formatTimeInDenver(date);
+    const [hour, minute] = timeStr.split(":").map((part) => Number(part));
+    return {
+        dateStr,
+        hour,
+        minute,
+        weekday: new Intl.DateTimeFormat("en-US", { timeZone: DENVER_TZ, weekday: "short" }).format(date),
+    };
 }
 function formatTimeInDenver(date) {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -133,24 +160,37 @@ function addMinutes(date, minutes) {
     return new Date(date.getTime() + minutes * 60000);
 }
 function isWeekend(dateStr) {
-    const date = new Date(`${dateStr}T12:00:00Z`);
+    const date = parseDateOnly(dateStr);
     const weekday = new Intl.DateTimeFormat("en-US", {
         timeZone: DENVER_TZ,
         weekday: "short",
     }).format(date);
     return weekday === "Sat" || weekday === "Sun";
 }
+function nextBusinessDateStr(dateStr) {
+    let cursor = parseDateOnly(dateStr);
+    while (true) {
+        cursor = addMinutes(cursor, 24 * 60);
+        const next = formatDateInDenver(cursor);
+        if (!isWeekend(next))
+            return next;
+    }
+}
+function ceilToSlot(minutes) {
+    return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+}
 function makeDateTime(dateStr, time) {
     return new Date(`${dateStr}T${time}:00-07:00`);
 }
-function buildSlotsForDate(dateStr, blocked) {
+function buildSlotsForDate(dateStr, blocked, minStartMinutes) {
     const slots = [];
     const startMinutes = OPEN_HOUR * 60;
     const lastStartMinutes = (CLOSE_HOUR * 60) - SLOT_MINUTES;
     for (let minutes = startMinutes; minutes <= lastStartMinutes; minutes += SLOT_MINUTES) {
         const startTime = minutesToTime(minutes);
         const endTime = minutesToTime(minutes + SLOT_MINUTES);
-        const available = !blocked.has(startTime);
+        const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
+        const available = !tooEarly && !blocked.has(startTime);
         slots.push({
             id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
             startTime,
@@ -177,6 +217,31 @@ function areSlotsContiguous(slots) {
     const ordered = [...slots].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
     return timeToMinutes(ordered[1].startTime) - timeToMinutes(ordered[0].startTime) === SLOT_MINUTES;
 }
+function getMinAllowedSlot(now) {
+    const parts = getDenverParts(now);
+    const closeMinutes = CLOSE_HOUR * 60;
+    const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+    const todayStr = parts.dateStr;
+    if (isWeekend(todayStr)) {
+        return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+    }
+    const nowMinutes = parts.hour * 60 + parts.minute;
+    let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
+    let minDateStr = todayStr;
+    if (minMinutes > closeMinutes) {
+        const remaining = minMinutes - closeMinutes;
+        minDateStr = nextBusinessDateStr(todayStr);
+        minMinutes = OPEN_HOUR * 60 + remaining;
+    }
+    if (minMinutes < OPEN_HOUR * 60)
+        minMinutes = OPEN_HOUR * 60;
+    if (minMinutes > lastStartMinutes) {
+        minDateStr = nextBusinessDateStr(minDateStr);
+        minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+    }
+    minMinutes = ceilToSlot(minMinutes);
+    return { dateStr: minDateStr, minutes: minMinutes };
+}
 /**
  * GET /api/customer/pickups/availability?locationId=...&from=YYYY-MM-DD&to=YYYY-MM-DD
  */
@@ -186,6 +251,19 @@ exports.customerPickupsRouter.get("/availability", async (req, res) => {
         return res.status(400).json({ message: "Invalid query parameters" });
     }
     const { locationId, from, to } = parsed.data;
+    const now = new Date();
+    const minAllowed = getMinAllowedSlot(now);
+    console.log("[availability][min-advance]", {
+        now: now.toISOString(),
+        denverDate: formatDateInDenver(now),
+        denverTime: formatTimeInDenver(now),
+        from,
+        to,
+        locationId,
+        minAllowedDate: minAllowed.dateStr,
+        minAllowedMinutes: minAllowed.minutes,
+        minAllowedTime: minutesToTime(minAllowed.minutes),
+    });
     const rangeStart = parseDateOnly(from);
     const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
     const appointments = await prisma.pickupAppointment.findMany({
@@ -215,9 +293,16 @@ exports.customerPickupsRouter.get("/availability", async (req, res) => {
         const dateStr = formatDateInDenver(cursor);
         const isBlackedOut = isWeekend(dateStr);
         const blocked = blockedByDate.get(dateStr) ?? new Set();
+        let minStartMinutes = null;
+        if (dateStr < minAllowed.dateStr) {
+            minStartMinutes = Infinity;
+        }
+        else if (dateStr === minAllowed.dateStr) {
+            minStartMinutes = minAllowed.minutes;
+        }
         availability.push({
             date: dateStr,
-            slots: isBlackedOut ? [] : buildSlotsForDate(dateStr, blocked),
+            slots: isBlackedOut ? [] : buildSlotsForDate(dateStr, blocked, minStartMinutes),
             isBlackedOut,
         });
     }
@@ -252,6 +337,14 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
     for (const group of payload.groups) {
         if (!ensureWithinBusinessHours(group.selectedDate, group.selectedSlots)) {
             return res.status(400).json({ message: "Selected time is outside business hours." });
+        }
+        const minAllowed = getMinAllowedSlot(new Date());
+        const selectedStartMinutes = timeToMinutes(group.selectedSlots[0].startTime);
+        if (group.selectedDate < minAllowed.dateStr) {
+            return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
+        }
+        if (group.selectedDate === minAllowed.dateStr && selectedStartMinutes < minAllowed.minutes) {
+            return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
         }
         if (group.orderNbrs.length > 6 && group.selectedSlots.length !== 2) {
             return res.status(400).json({ message: "Two slots required for orders over 6." });
@@ -341,6 +434,23 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             }));
             if (orderNbrs.length) {
                 await tx.pickupAppointmentOrder.createMany({ data: orderNbrs, skipDuplicates: true });
+            }
+            const selectionsByOrder = new Map((payload.selectedItems ?? []).map((selection) => [selection.orderNbr, selection.items]));
+            const lineRows = appointment.orderNbrs.flatMap((orderNbr) => {
+                const items = selectionsByOrder.get(orderNbr) ?? [];
+                return items
+                    .filter((item) => item.inventoryId && item.qty > 0)
+                    .map((item) => ({
+                    appointmentId: createdAppointment.id,
+                    orderNbr,
+                    lineId: item.lineId ?? null,
+                    inventoryId: item.inventoryId,
+                    qtySelected: item.qty,
+                    lineDescription: item.description ?? null,
+                }));
+            });
+            if (lineRows.length) {
+                await tx.pickupAppointmentLine.createMany({ data: lineRows });
             }
             createdAppointments.push(createdAppointment);
         }
