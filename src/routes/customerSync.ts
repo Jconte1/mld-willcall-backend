@@ -42,7 +42,7 @@ async function refreshPaymentsIfStale(baid: string) {
     return { status: "payment-in-progress", lastPaymentAt };
   }
 
-  const promise = ingestPaymentInfo(baid)
+  const promise: Promise<{ ok: boolean; error?: string }> = ingestPaymentInfo(baid)
     .then(() => ({ ok: true }))
     .catch((err: any) => ({ ok: false, error: String(err?.message || err) }));
   paymentInFlight.set(baid, promise);
