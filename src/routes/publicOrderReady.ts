@@ -4,6 +4,7 @@ import { z } from "zod";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { fetchOrderReadyReport } from "../lib/acumatica/fetch/fetchOrderReadyReport";
+import { fetchOrderLastModified } from "../lib/acumatica/fetch/fetchOrderLastModified";
 import { buildOrderReadyLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
@@ -151,32 +152,87 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     }
   }
 
+  let lastPullAt: Date | null = null;
+  let shouldRefreshDetails = false;
   if (notice.baid) {
     const summary = await prisma.erpOrderSummary.findUnique({
       where: { baid_orderNbr: { baid: notice.baid, orderNbr } },
-      select: { updatedAt: true },
+      select: { updatedAt: true, lastAcumaticaPullAt: true },
     });
-    const updatedAt = summary?.updatedAt ? new Date(summary.updatedAt).getTime() : 0;
-    const isStale = !updatedAt || Date.now() - updatedAt > STALE_MS;
-    if (isStale) {
-      try {
-        await refreshOrderReadyDetails({
-          baid: notice.baid,
-          orderNbr,
-          status: notice.status,
-          locationId: notice.locationId,
-          shipVia: notice.shipVia,
-        });
-      } catch (err) {
-        console.error("[order-ready] refresh failed", err);
-      }
-    }
+    lastPullAt = summary?.lastAcumaticaPullAt ?? summary?.updatedAt ?? null;
+    const updatedAtMs = lastPullAt ? new Date(lastPullAt).getTime() : 0;
+    const isStale = !updatedAtMs || Date.now() - updatedAtMs > STALE_MS;
+    shouldRefreshDetails = isStale;
   }
 
   const readyLinesStale =
     !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
-  if (readyLinesStale) {
-    await refreshReadyLines(notice.id, notice.orderNbr);
+  let shouldRefreshLines = readyLinesStale;
+
+  if (shouldRefreshDetails || shouldRefreshLines) {
+    let acuLastModified: Date | null = null;
+    let lastModifiedCheckFailed = false;
+
+    if (notice.baid) {
+      try {
+        const result = await fetchOrderLastModified(notice.baid, orderNbr);
+        acuLastModified = result.lastModified;
+      } catch (err) {
+        lastModifiedCheckFailed = true;
+        console.warn("[order-ready] last-modified check failed", err);
+      }
+    } else {
+      lastModifiedCheckFailed = true;
+    }
+
+    console.log("[order-ready] last-modified check", {
+      orderNbr,
+      baid: notice.baid ?? null,
+      lastAcumaticaPullAt: lastPullAt,
+      acumaticaLastModified: acuLastModified,
+      lastModifiedCheckFailed,
+      willRefreshDetails: shouldRefreshDetails,
+      willRefreshLines: shouldRefreshLines,
+    });
+
+    if (!lastModifiedCheckFailed && acuLastModified && lastPullAt && acuLastModified <= lastPullAt) {
+      shouldRefreshDetails = false;
+      shouldRefreshLines = false;
+      console.log("[order-ready] refresh skipped (no changes)", {
+        orderNbr,
+        lastAcumaticaPullAt: lastPullAt,
+        acumaticaLastModified: acuLastModified,
+      });
+    }
+
+    if (shouldRefreshDetails || lastModifiedCheckFailed || !acuLastModified) {
+      if (notice.baid) {
+        try {
+          console.log("[order-ready] refresh details", {
+            orderNbr,
+            reason: lastModifiedCheckFailed ? "last-modified-failed" : !acuLastModified ? "missing-last-modified" : "stale",
+          });
+          await refreshOrderReadyDetails({
+            baid: notice.baid,
+            orderNbr,
+            status: notice.status,
+            locationId: notice.locationId,
+            shipVia: notice.shipVia,
+            lastModified: acuLastModified,
+          });
+        } catch (err) {
+          console.error("[order-ready] refresh failed", err);
+        }
+      }
+    }
+
+    if (shouldRefreshLines || lastModifiedCheckFailed || !acuLastModified) {
+      console.log("[order-ready] refresh ready lines", {
+        orderNbr,
+        reason: lastModifiedCheckFailed ? "last-modified-failed" : !acuLastModified ? "missing-last-modified" : "stale",
+      });
+      await refreshReadyLines(notice.id, notice.orderNbr);
+    }
   }
 
   const readyLineRows = await prisma.orderReadyLine.findMany({
@@ -186,6 +242,13 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   const readyInventoryIds = new Set(
     readyLineRows.map((row) => String(row.inventoryId || "").trim()).filter(Boolean)
   );
+  console.log("[order-ready] item source", {
+    orderNbr,
+    readyLinesCount: readyLineRows.length,
+    readyInventoryIdsCount: readyInventoryIds.size,
+    usingOrderReadyLine: readyInventoryIds.size > 0,
+    sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "ErpOrderLine (no filter)",
+  });
 
   const lines = await prisma.erpOrderLine.findMany({
     where: {

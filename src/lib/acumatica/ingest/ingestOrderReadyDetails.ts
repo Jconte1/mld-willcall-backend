@@ -16,14 +16,28 @@ type RefreshInput = {
   status?: string | null;
   locationId?: string | null;
   shipVia?: string | null;
+  lastModified?: Date | null;
 };
 
 export async function refreshOrderReadyDetails(input: RefreshInput) {
-  const { baid, orderNbr, status, locationId, shipVia } = input;
+  const { baid, orderNbr, status, locationId, shipVia, lastModified } = input;
   const restService = createAcumaticaService();
   await restService.getToken();
 
   const now = new Date();
+  const summaryUpdate: Record<string, any> = {
+    status: status ?? "Ready",
+    locationId: locationId ?? null,
+    shipVia: shipVia ?? null,
+    lastSeenAt: now,
+    isActive: true,
+    updatedAt: now,
+    lastAcumaticaPullAt: now,
+  };
+  if (lastModified !== undefined) {
+    summaryUpdate.lastAcumaticaModifiedAt = lastModified;
+  }
+
   await prisma.erpOrderSummary.upsert({
     where: { baid_orderNbr: { baid, orderNbr } },
     create: {
@@ -41,15 +55,10 @@ export async function refreshOrderReadyDetails(input: RefreshInput) {
       lastSeenAt: now,
       isActive: true,
       updatedAt: now,
+      lastAcumaticaPullAt: now,
+      lastAcumaticaModifiedAt: lastModified ?? null,
     },
-    update: {
-      status: status ?? "Ready",
-      locationId: locationId ?? null,
-      shipVia: shipVia ?? null,
-      lastSeenAt: now,
-      isActive: true,
-      updatedAt: now,
-    },
+    update: summaryUpdate,
   });
 
   const orderNbrs = [orderNbr];

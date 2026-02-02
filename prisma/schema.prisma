@@ -189,6 +189,8 @@ model ErpOrderSummary {
   customerName    String            @default("") @db.VarChar(64)
   buyerGroup      String?           @default("") @db.VarChar(64)
   noteId          String?           @default("") @db.VarChar(64)
+  lastAcumaticaPullAt     DateTime?
+  lastAcumaticaModifiedAt DateTime?
   ErpOrderAddress ErpOrderAddress?
   ErpOrderContact ErpOrderContact?
   ErpOrderLine    ErpOrderLine[]

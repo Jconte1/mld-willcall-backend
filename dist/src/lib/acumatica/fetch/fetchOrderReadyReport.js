@@ -15,7 +15,7 @@ function parseNumber(value) {
 }
 async function fetchOrderReadyReport() {
     const url = process.env.ACUMATICA_ORDER_READY_ODATA_URL ||
-        "https://acumatica.mld.com/OData/MLD/willcall%20100pct";
+        "https://acumatica.mld.com/OData/MLD/Ready%20for%20Willcall";
     const username = process.env.ACUMATICA_USERNAME;
     const password = process.env.ACUMATICA_PASSWORD;
     if (!username || !password) {
