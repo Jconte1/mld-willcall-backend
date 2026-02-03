@@ -30,6 +30,8 @@ export function buildSmsMessage(type: AppointmentNotificationType, payload: Noti
       return `Your pickup for ${when} is marked complete. ${orderLine}. Manage: ${payload.link}`;
     case AppointmentNotificationType.OrderListChanged:
       return `Your pickup order list was updated. ${orderLine}. Manage: ${payload.link}`;
+    case AppointmentNotificationType.ReadyForPickup:
+      return `Your pickup is prepared. Our team has pulled your items for your scheduled pickup. ${orderLine}. Manage: ${payload.link}`;
     default:
       return `Pickup update: ${when}. ${orderLine}. Manage: ${payload.link}`;
   }

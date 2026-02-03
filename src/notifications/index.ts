@@ -4,6 +4,7 @@ import { handleAppointmentCancelled } from "./scheduler/appointmentCancelled";
 import { handleAppointmentRescheduled } from "./scheduler/appointmentRescheduled";
 import { handleAppointmentCompleted } from "./scheduler/appointmentCompleted";
 import { handleAppointmentOrderListChanged } from "./scheduler/appointmentOrderListChanged";
+import { handleAppointmentReady } from "./scheduler/appointmentReady";
 import { cancelPendingJobs } from "./scheduler/cancelJobs";
 import { AppointmentWithContact } from "./types";
 
@@ -113,6 +114,23 @@ export async function notifyOrderListChanged(
 ) {
   if (!notifyCustomer) return;
   return handleAppointmentOrderListChanged(prisma, {
+    appointment,
+    orderNbrs,
+    ignoreCap,
+    staffInitiated,
+  });
+}
+
+export async function notifyAppointmentReady(
+  prisma: PrismaClient,
+  appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
+  orderNbrs: string[],
+  notifyCustomer: boolean,
+  ignoreCap = false,
+  staffInitiated = false
+) {
+  if (!notifyCustomer) return;
+  return handleAppointmentReady(prisma, {
     appointment,
     orderNbrs,
     ignoreCap,

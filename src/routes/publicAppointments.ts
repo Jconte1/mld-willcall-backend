@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   notifyAppointmentRescheduled,
   notifyCustomerCancelled,
+  cancelAppointmentNotifications,
 } from "../notifications";
 import { buildAppointmentLink } from "../notifications/links/buildLink";
 import { getActiveToken, createAppointmentToken } from "../notifications/links/tokens";
@@ -202,33 +203,25 @@ publicAppointmentsRouter.get("/:id", async (req, res) => {
   if (!appointment) return res.status(404).json({ message: "Not found" });
 
   const orderNbrs = appointment.orders.map((order) => order.orderNbr);
-  const lines = orderNbrs.length
-    ? await prisma.erpOrderLine.findMany({
-        where: { orderNbr: { in: orderNbrs } },
-        select: {
-          orderNbr: true,
-          inventoryId: true,
-          lineDescription: true,
-          openQty: true,
-          orderQty: true,
-          allocatedQty: true,
-          isAllocated: true,
-        },
-        orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
-      })
-    : [];
+  const selectedLines = await prisma.pickupAppointmentLine.findMany({
+    where: { appointmentId: appointment.id },
+    select: {
+      orderNbr: true,
+      inventoryId: true,
+      lineDescription: true,
+      qtySelected: true,
+    },
+    orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
+  });
 
   const orderLines = orderNbrs.map((orderNbr) => ({
     orderNbr,
-    items: lines
+    items: selectedLines
       .filter((line) => line.orderNbr === orderNbr)
       .map((line) => ({
         inventoryId: line.inventoryId,
         lineDescription: line.lineDescription,
-        openQty: toNumber(line.openQty),
-        orderQty: toNumber(line.orderQty),
-        allocatedQty: toNumber(line.allocatedQty),
-        isAllocated: line.isAllocated,
+        qty: toNumber(line.qtySelected),
       })),
   }));
 
@@ -301,6 +294,7 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
       data: { status: PickupAppointmentStatus.Cancelled },
     });
 
+    await cancelAppointmentNotifications(prisma, updated.id);
     await notifyCustomerCancelled(
       prisma,
       updated,

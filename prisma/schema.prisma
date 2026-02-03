@@ -439,11 +439,12 @@ model PickupAppointment {
   vehicleInfo       String?
   customerNotes     String?
   users             users?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  orders            PickupAppointmentOrder[]
-  lines             PickupAppointmentLine[]
-  notificationJobs  AppointmentNotificationJob[]
-  accessTokens      AppointmentAccessToken[]
-  orderReadyNotices OrderReadyNotice[]
+    orders            PickupAppointmentOrder[]
+    lines             PickupAppointmentLine[]
+    shipments         PickupAppointmentShipment[]
+    notificationJobs  AppointmentNotificationJob[]
+    accessTokens      AppointmentAccessToken[]
+    orderReadyNotices OrderReadyNotice[]
 
   @@index([locationId, startAt])
   @@index([status])
@@ -467,17 +468,31 @@ model PickupAppointmentLine {
   @@index([appointmentId, inventoryId])
 }
 
-model PickupAppointmentOrder {
-  id            String            @id @default(cuid())
-  appointmentId String
-  orderNbr      String            @db.VarChar(64)
-  baid          String?           @db.VarChar(64)
-  appointment   PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  model PickupAppointmentOrder {
+    id            String            @id @default(cuid())
+    appointmentId String
+    orderNbr      String            @db.VarChar(64)
+    baid          String?           @db.VarChar(64)
+    appointment   PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  
+    @@unique([appointmentId, orderNbr])
+    @@index([orderNbr])
+    @@index([appointmentId])
+  }
 
-  @@unique([appointmentId, orderNbr])
-  @@index([orderNbr])
-  @@index([appointmentId])
-}
+  model PickupAppointmentShipment {
+    id            String            @id @default(cuid())
+    createdAt     DateTime          @default(now())
+    updatedAt     DateTime          @updatedAt
+    appointmentId String
+    orderNbr      String            @db.VarChar(64)
+    shipmentNbr   String            @db.VarChar(64)
+    createdByUserId String?         @db.VarChar(64)
+    appointment   PickupAppointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+    @@index([appointmentId, orderNbr])
+    @@index([shipmentNbr])
+  }
 
 model Pickup {
   /// Legacy pickup table; staff scheduling uses PickupAppointment.
@@ -545,6 +560,7 @@ enum AppointmentNotificationType {
   Cancelled
   Completed
   OrderListChanged
+  ReadyForPickup
 }
 
 enum NotificationChannel {

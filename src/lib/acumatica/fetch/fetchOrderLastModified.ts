@@ -7,11 +7,15 @@ function normalizeRowArray(text: string) {
   return Array.isArray(arr) ? arr : Array.isArray((arr as any)?.value) ? (arr as any).value : [];
 }
 
-export async function fetchOrderLastModified(baid: string, orderNbr: string) {
-  const restService = createAcumaticaService();
-  await restService.getToken();
+export async function fetchOrderLastModified(
+  baid: string,
+  orderNbr: string,
+  restService?: { baseUrl: string; getToken: () => Promise<string> }
+) {
+  const service = restService ?? createAcumaticaService();
+  const token = await service.getToken();
 
-  const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
+  const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
   const params = new URLSearchParams();
   const safeOrderNbr = String(orderNbr).replace(/'/g, "''");
   const safeBaid = String(baid).replace(/'/g, "''");
@@ -28,7 +32,7 @@ export async function fetchOrderLastModified(baid: string, orderNbr: string) {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      Authorization: `Bearer ${await restService.getToken()}`,
+      Authorization: `Bearer ${token}`,
     },
   });
   const text = await resp.text();

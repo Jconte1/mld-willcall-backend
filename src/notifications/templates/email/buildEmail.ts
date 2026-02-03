@@ -236,6 +236,22 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           logoUrl,
         }),
       };
+    case AppointmentNotificationType.ReadyForPickup:
+      return {
+        subject: "Your pickup is prepared",
+        body: renderTemplate({
+          title: "Your pickup is prepared",
+          preheader: "Our team has pulled your items for pickup.",
+          message: "Our team has pulled your items for your scheduled pickup.",
+          when,
+          orders,
+          location: locationLine,
+          link: payload.link,
+          unsubscribeLink: payload.unsubscribeLink,
+          staffNote,
+          logoUrl,
+        }),
+      };
     default:
       return {
         subject: "Pickup update",

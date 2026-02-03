@@ -3,8 +3,8 @@ import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
-import { fetchOrderReadyReport } from "../lib/acumatica/fetch/fetchOrderReadyReport";
 import { fetchOrderLastModified } from "../lib/acumatica/fetch/fetchOrderLastModified";
+import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
 import { buildOrderReadyLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
@@ -49,7 +49,6 @@ const SCHEDULED_STATUSES: PickupAppointmentStatus[] = [
 ];
 
 const STALE_MS = 60 * 60 * 1000;
-const READY_LINES_STALE_MS = 60 * 60 * 1000;
 const LOCKOUT_MAX_ATTEMPTS = 5;
 const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
 
@@ -112,6 +111,15 @@ function addDays(date: Date, days: number) {
  * GET /api/public/order-ready/:orderNbr?token=...
  */
 publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const mark = (label: string) => {
+    timings[label] = Date.now() - t0;
+  };
+  const finalizeTiming = () => {
+    console.log("[order-ready] timings", { orderNbr: req.params.orderNbr, ms: timings });
+  };
+
   const parsed = tokenSchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid token" });
@@ -121,11 +129,13 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   const notice = await prisma.orderReadyNotice.findUnique({
     where: { orderNbr },
   });
+  mark("notice");
   if (!notice) return res.status(404).json({ message: "Not found" });
 
   const token = await prisma.orderReadyAccessToken.findFirst({
     where: { orderReadyId: notice.id, token: parsed.data.token, revokedAt: null },
   });
+  mark("token");
   if (!token) return res.status(403).json({ message: "Invalid token" });
 
   let appointment = null;
@@ -151,6 +161,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       });
     }
   }
+  mark("appointment");
 
   let lastPullAt: Date | null = null;
   let shouldRefreshDetails = false;
@@ -164,18 +175,16 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     const isStale = !updatedAtMs || Date.now() - updatedAtMs > STALE_MS;
     shouldRefreshDetails = isStale;
   }
+  mark("summary");
 
-  const readyLinesStale =
-    !notice.lastReadyAt || Date.now() - new Date(notice.lastReadyAt).getTime() > READY_LINES_STALE_MS;
-  let shouldRefreshLines = readyLinesStale;
-
-  if (shouldRefreshDetails || shouldRefreshLines) {
+  if (shouldRefreshDetails) {
     let acuLastModified: Date | null = null;
     let lastModifiedCheckFailed = false;
 
     if (notice.baid) {
       try {
-        const result = await fetchOrderLastModified(notice.baid, orderNbr);
+        const restService = createAcumaticaService();
+        const result = await fetchOrderLastModified(notice.baid, orderNbr, restService);
         acuLastModified = result.lastModified;
       } catch (err) {
         lastModifiedCheckFailed = true;
@@ -192,12 +201,12 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       acumaticaLastModified: acuLastModified,
       lastModifiedCheckFailed,
       willRefreshDetails: shouldRefreshDetails,
-      willRefreshLines: shouldRefreshLines,
+      willRefreshLines: false,
     });
+    mark("lastModified");
 
     if (!lastModifiedCheckFailed && acuLastModified && lastPullAt && acuLastModified <= lastPullAt) {
       shouldRefreshDetails = false;
-      shouldRefreshLines = false;
       console.log("[order-ready] refresh skipped (no changes)", {
         orderNbr,
         lastAcumaticaPullAt: lastPullAt,
@@ -220,18 +229,11 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             shipVia: notice.shipVia,
             lastModified: acuLastModified,
           });
+          mark("refreshDetails");
         } catch (err) {
           console.error("[order-ready] refresh failed", err);
         }
       }
-    }
-
-    if (shouldRefreshLines || lastModifiedCheckFailed || !acuLastModified) {
-      console.log("[order-ready] refresh ready lines", {
-        orderNbr,
-        reason: lastModifiedCheckFailed ? "last-modified-failed" : !acuLastModified ? "missing-last-modified" : "stale",
-      });
-      await refreshReadyLines(notice.id, notice.orderNbr);
     }
   }
 
@@ -239,6 +241,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     where: { orderReadyId: notice.id },
     select: { inventoryId: true },
   });
+  mark("readyLinesDb");
   const readyInventoryIds = new Set(
     readyLineRows.map((row) => String(row.inventoryId || "").trim()).filter(Boolean)
   );
@@ -247,28 +250,32 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     readyLinesCount: readyLineRows.length,
     readyInventoryIdsCount: readyInventoryIds.size,
     usingOrderReadyLine: readyInventoryIds.size > 0,
-    sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "ErpOrderLine (no filter)",
+    sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "OrderReadyLine (empty)",
   });
 
-  const lines = await prisma.erpOrderLine.findMany({
-    where: {
-      orderNbr,
-      ...(readyInventoryIds.size ? { inventoryId: { in: Array.from(readyInventoryIds) } } : {}),
-    },
-    select: {
-      id: true,
-      inventoryId: true,
-      lineDescription: true,
-      warehouse: true,
-      openQty: true,
-      orderQty: true,
-      allocatedQty: true,
-      isAllocated: true,
-      amount: true,
-      taxRate: true,
-    },
-    orderBy: { inventoryId: "asc" },
-  });
+  const lines =
+    readyInventoryIds.size === 0
+      ? []
+      : await prisma.erpOrderLine.findMany({
+          where: {
+            orderNbr,
+            inventoryId: { in: Array.from(readyInventoryIds) },
+          },
+          select: {
+            id: true,
+            inventoryId: true,
+            lineDescription: true,
+            warehouse: true,
+            openQty: true,
+            orderQty: true,
+            allocatedQty: true,
+            isAllocated: true,
+            amount: true,
+            taxRate: true,
+          },
+          orderBy: { inventoryId: "asc" },
+        });
+  mark("orderLinesDb");
 
   const orderLines = lines.map((line) => ({
     id: line.id,
@@ -295,11 +302,13 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       status: true,
     },
   });
+  mark("paymentDb");
+  finalizeTiming();
 
   return res.json({
     orderReady: {
       orderNbr: notice.orderNbr,
-      status: notice.status,
+      status: payment?.status ?? notice.status,
       orderType: notice.orderType,
       shipVia: notice.shipVia,
       qtyUnallocated: toNumber(notice.qtyUnallocated),
@@ -324,34 +333,6 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     orderLines,
   });
 });
-
-async function refreshReadyLines(orderReadyId: string, orderNbr: string) {
-  const rows = await fetchOrderReadyReport();
-  const inventoryIds = new Set<string>();
-  for (const row of rows) {
-    const rowOrderNbr = String(row.orderNbr || "").trim();
-    if (!rowOrderNbr || rowOrderNbr !== orderNbr) continue;
-    const inv = row.inventoryId ? String(row.inventoryId).trim() : "";
-    if (inv) inventoryIds.add(inv);
-  }
-
-  await prisma.orderReadyLine.deleteMany({ where: { orderReadyId } });
-  if (inventoryIds.size) {
-    await prisma.orderReadyLine.createMany({
-      data: Array.from(inventoryIds).map((inventoryId) => ({
-        orderReadyId,
-        orderNbr,
-        inventoryId,
-      })),
-      skipDuplicates: true,
-    });
-  }
-
-  await prisma.orderReadyNotice.update({
-    where: { id: orderReadyId },
-    data: { lastReadyAt: new Date() },
-  });
-}
 
 /**
  * POST /api/public/order-ready/resend
