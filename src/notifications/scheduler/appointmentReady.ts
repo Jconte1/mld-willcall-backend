@@ -2,6 +2,7 @@ import { PrismaClient, AppointmentNotificationType } from "@prisma/client";
 import { buildAppointmentLink } from "../links/buildLink";
 import { createAppointmentToken, getActiveToken } from "../links/tokens";
 import { hasReachedNotificationCap } from "../rules/eligibility";
+import { nextAllowedTime } from "../rules/quietHours";
 import { enqueueJob } from "../jobs/enqueueJob";
 import { AppointmentWithContact } from "../types";
 
@@ -29,7 +30,8 @@ export async function handleAppointmentReady(
   const link = buildAppointmentLink(appointment.id, token.token);
 
   const readyAt = new Date(appointment.startAt.getTime() - READY_WINDOW_MS);
-  const scheduledAt = readyAt.getTime() <= now.getTime() ? now : readyAt;
+  let scheduledAt = readyAt.getTime() <= now.getTime() ? now : readyAt;
+  scheduledAt = nextAllowedTime(scheduledAt);
 
   await enqueueJob(prisma, {
     appointmentId: appointment.id,

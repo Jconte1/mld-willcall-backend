@@ -5,6 +5,7 @@ import { buildOrderReadyLink } from "../links/buildLink";
 import { createOrderReadyToken, getActiveOrderReadyToken } from "../links/tokens";
 import { sendEmail } from "../providers/email/sendEmail";
 import { buildOrderReadyEmail } from "../templates/email/buildOrderReadyEmail";
+import { nextAllowedTime } from "../rules/quietHours";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
@@ -182,6 +183,12 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     if (sentCount >= MAX_SEND_PER_RUN) {
       console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
+      continue;
+    }
+
+    const sendAt = nextAllowedTime(now);
+    if (sendAt.getTime() > now.getTime()) {
+      console.log("[order-ready] deferred (quiet hours)", { orderNbr, sendAt: sendAt.toISOString() });
       continue;
     }
 

@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 import { sendJob } from "./sendJob";
 import { shouldSkipForQuietHours, hasReachedNotificationCap } from "../rules/eligibility";
+import { nextAllowedTime } from "../rules/quietHours";
 
 const REMINDER_TYPES = new Set<AppointmentNotificationType>([
   AppointmentNotificationType.Reminder1Day,
@@ -42,10 +43,18 @@ export async function runPendingJobs(prisma: PrismaClient) {
       scheduledAt: job.scheduledAt.toISOString(),
     });
     if (shouldSkipForQuietHours(job.scheduledAt)) {
-      console.log("[notifications][worker] skipped (quiet hours)", { id: job.id });
+      const nextAt = nextAllowedTime(new Date());
+      console.log("[notifications][worker] deferred (quiet hours)", {
+        id: job.id,
+        nextAt: nextAt.toISOString(),
+      });
       await prisma.appointmentNotificationJob.update({
         where: { id: job.id },
-        data: { status: NotificationJobStatus.Skipped, lastAttemptAt: new Date() },
+        data: {
+          status: NotificationJobStatus.Pending,
+          scheduledAt: nextAt,
+          lastAttemptAt: new Date(),
+        },
       });
       continue;
     }
