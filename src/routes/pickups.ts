@@ -167,6 +167,15 @@ function validateShipmentNbrs(input: string[]) {
  */
 pickupsRouter.get("/", async (req, res) => {
   if (!req.auth) return res.status(401).json({ message: "Unauthenticated" });
+  console.info("[staff-pickups] request", {
+    id: req.auth.id,
+    email: req.auth.email,
+    role: req.auth.role,
+    mustChangePassword: req.auth.mustChangePassword,
+    mustCompleteProfile: req.auth.mustCompleteProfile,
+    locationAccess: req.auth.locationAccess ?? [],
+    query: req.query,
+  });
   const auth = req.auth;
   const locationId = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
   const status = typeof req.query.status === "string" ? req.query.status : undefined;
@@ -174,6 +183,12 @@ pickupsRouter.get("/", async (req, res) => {
   const to = typeof req.query.to === "string" ? req.query.to : undefined;
 
   if (locationId && !canAccessLocation(req, locationId)) {
+    console.warn("[staff-pickups] forbidden location", {
+      id: auth.id,
+      role: auth.role,
+      locationId,
+      locationAccess: auth.locationAccess ?? [],
+    });
     return res.status(403).json({ message: "Forbidden" });
   }
 
