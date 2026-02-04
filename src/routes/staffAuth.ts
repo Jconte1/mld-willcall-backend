@@ -31,6 +31,15 @@ const LOGIN_BODY = z.object({
   password: z.string().min(1)
 });
 
+function isSalespersonProfileComplete(user: {
+  role: string;
+  salespersonNumber?: string | null;
+  salespersonName?: string | null;
+}) {
+  if (user.role !== "SALESPERSON") return true;
+  return Boolean(user.salespersonNumber && user.salespersonName);
+}
+
 /**
  * POST /api/staff/login
  * Body: { email, password }
@@ -62,7 +71,8 @@ staffAuthRouter.post("/login", async (req, res) => {
       email: user.email,
       role: user.role,
       locationAccess: normalizedLocationAccess,
-      mustChangePassword: user.mustChangePassword
+      mustChangePassword: user.mustChangePassword,
+      mustCompleteProfile: !isSalespersonProfileComplete(user)
     },
     secret,
     {
@@ -80,6 +90,7 @@ staffAuthRouter.post("/login", async (req, res) => {
       role: user.role,
       locationAccess: normalizedLocationAccess,
       mustChangePassword: user.mustChangePassword,
+      mustCompleteProfile: !isSalespersonProfileComplete(user),
       isActive: user.isActive
     }
   });

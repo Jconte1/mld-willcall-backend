@@ -189,6 +189,7 @@ model ErpOrderSummary {
   customerName    String            @default("") @db.VarChar(64)
   buyerGroup      String?           @default("") @db.VarChar(64)
   noteId          String?           @default("") @db.VarChar(64)
+  salesPersonNumber      String?           @db.VarChar(16)
   lastAcumaticaPullAt     DateTime?
   lastAcumaticaModifiedAt DateTime?
   ErpOrderAddress ErpOrderAddress?
@@ -390,6 +391,10 @@ model StaffUser {
   name               String
   passwordHash       String
   role               StaffRole            @default(STAFF)
+  salespersonNumber  String?              @unique @db.VarChar(16)
+  salespersonName    String?              @db.VarChar(128)
+  salespersonPhone   String?              @db.VarChar(32)
+  salespersonEmail   String?              @db.VarChar(256)
   /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
   locationAccess     String[]
   isActive           Boolean              @default(true)
@@ -532,6 +537,7 @@ enum StaffRole {
   ADMIN
   STAFF
   VIEWER
+  SALESPERSON
 }
 
 enum PickupStatus {

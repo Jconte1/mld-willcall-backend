@@ -5,6 +5,7 @@ import helmet from "helmet";
 
 import { authRouter } from "./routes/auth";
 import { staffAuthRouter } from "./routes/staffAuth";
+import { staffProfileRouter } from "./routes/staffProfile";
 import { customerAuthRouter } from "./routes/customerAuth";
 import { customerOrdersRouter } from "./routes/customerOrders";
 import { customerSyncRouter } from "./routes/customerSync";
@@ -34,6 +35,8 @@ app.use("/api/auth", authRouter);
 
 // Staff auth
 app.use("/api/staff", staffAuthRouter);
+// Staff profile
+app.use("/api/staff/profile", staffProfileRouter);
 
 // Customer auth
 app.use("/api/customer", customerAuthRouter);

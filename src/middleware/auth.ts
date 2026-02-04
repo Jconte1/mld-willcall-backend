@@ -4,9 +4,10 @@ import jwt from "jsonwebtoken";
 export type AuthUser = {
   id: string;
   email: string;
-  role: "ADMIN" | "STAFF" | "VIEWER";
+  role: "ADMIN" | "STAFF" | "VIEWER" | "SALESPERSON";
   locationAccess: string[];
   mustChangePassword: boolean;
+  mustCompleteProfile?: boolean;
 };
 
 declare global {
@@ -36,7 +37,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
       email: decoded.email,
       role: decoded.role,
       locationAccess: decoded.locationAccess ?? [],
-      mustChangePassword: Boolean(decoded.mustChangePassword)
+      mustChangePassword: Boolean(decoded.mustChangePassword),
+      mustCompleteProfile: Boolean(decoded.mustCompleteProfile)
     };
 
     return next();
@@ -55,7 +57,14 @@ export function blockIfMustChangePassword(req: Request, res: Response, next: Nex
   return next();
 }
 
-export function requireRole(role: "ADMIN" | "STAFF" | "VIEWER") {
+export function blockIfMustCompleteProfile(req: Request, res: Response, next: NextFunction) {
+  if (req.auth?.mustCompleteProfile) {
+    return res.status(403).json({ code: "MUST_COMPLETE_PROFILE", message: "Profile completion required" });
+  }
+  return next();
+}
+
+export function requireRole(role: "ADMIN" | "STAFF" | "VIEWER" | "SALESPERSON") {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.auth) return res.status(401).json({ message: "Unauthenticated" });
     if (req.auth.role !== role) return res.status(403).json({ message: "Forbidden" });

@@ -14,6 +14,16 @@ staffUsersRouter.use(requireAuth);
 staffUsersRouter.use(requireRole("ADMIN"));
 
 const LOCS = z.array(z.enum(["slc-hq", "slc-outlet", "boise-willcall"]));
+const SALES_NUMBER = z
+  .string()
+  .min(3)
+  .max(5)
+  .regex(/^\d+$/, "Salesperson number must be digits only");
+
+function normalizeSalespersonNumber(value: string | undefined | null) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits ? digits : null;
+}
 
 /**
  * GET /api/staff/users
@@ -29,6 +39,10 @@ staffUsersRouter.get("/", async (_req, res) => {
       locationAccess: true,
       isActive: true,
       mustChangePassword: true,
+      salespersonNumber: true,
+      salespersonName: true,
+      salespersonPhone: true,
+      salespersonEmail: true,
       createdAt: true,
       updatedAt: true
     }
@@ -51,8 +65,12 @@ staffUsersRouter.post("/", async (req, res) => {
   const body = z.object({
     email: z.string().email(),
     name: z.string().min(1),
-    role: z.enum(["ADMIN", "STAFF", "VIEWER"]).default("STAFF"),
-      locationAccess: LOCS.default(["slc-hq"])
+    role: z.enum(["ADMIN", "STAFF", "VIEWER", "SALESPERSON"]).default("STAFF"),
+    salespersonNumber: SALES_NUMBER.optional(),
+    salespersonName: z.string().min(1).optional(),
+    salespersonPhone: z.string().optional(),
+    salespersonEmail: z.string().email().optional(),
+    locationAccess: LOCS.default(["slc-hq"])
   }).safeParse(req.body);
 
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
@@ -66,6 +84,17 @@ staffUsersRouter.post("/", async (req, res) => {
   const email = body.data.email.toLowerCase();
   if (!email.endsWith("@mld.com")) return res.status(400).json({ message: "Email must end with @mld.com" });
 
+  const salespersonNumber = normalizeSalespersonNumber(body.data.salespersonNumber);
+  if (salespersonNumber) {
+    const existingSalesperson = await prisma.staffUser.findFirst({
+      where: { salespersonNumber },
+      select: { id: true },
+    });
+    if (existingSalesperson) {
+      return res.status(400).json({ message: "Salesperson number already exists" });
+    }
+  }
+
   const tempPassword = generateTempPassword();
   const passwordHash = await hashPassword(tempPassword);
 
@@ -78,11 +107,19 @@ staffUsersRouter.post("/", async (req, res) => {
           ? StaffRole.ADMIN
           : body.data.role === "VIEWER"
             ? StaffRole.VIEWER
-            : StaffRole.STAFF,
+            : body.data.role === "SALESPERSON"
+              ? StaffRole.SALESPERSON
+              : StaffRole.STAFF,
       locationAccess:
         body.data.role === "ADMIN"
           ? ["slc-hq", "slc-outlet", "boise-willcall"]
           : body.data.locationAccess,
+      salespersonNumber,
+      salespersonName: body.data.salespersonName ?? null,
+      salespersonPhone: body.data.salespersonPhone
+        ? body.data.salespersonPhone.replace(/\D/g, "")
+        : null,
+      salespersonEmail: body.data.salespersonEmail?.toLowerCase() ?? null,
       passwordHash,
       isActive: true,
       mustChangePassword: true
@@ -95,6 +132,10 @@ staffUsersRouter.post("/", async (req, res) => {
       locationAccess: true,
       isActive: true,
       mustChangePassword: true,
+      salespersonNumber: true,
+      salespersonName: true,
+      salespersonPhone: true,
+      salespersonEmail: true,
       createdAt: true,
       updatedAt: true
     }
@@ -155,6 +196,10 @@ staffUsersRouter.get("/:id", async (req, res) => {
       locationAccess: true,
       isActive: true,
       mustChangePassword: true,
+      salespersonNumber: true,
+      salespersonName: true,
+      salespersonPhone: true,
+      salespersonEmail: true,
       createdAt: true,
       updatedAt: true
     }
@@ -177,10 +222,14 @@ staffUsersRouter.patch("/:id", async (req, res) => {
   const body = z.object({
     email: z.string().email().optional(),
     name: z.string().min(1).optional(),
-    role: z.enum(["ADMIN", "STAFF", "VIEWER"]).optional(),
+    role: z.enum(["ADMIN", "STAFF", "VIEWER", "SALESPERSON"]).optional(),
     locationAccess: LOCS.optional(),
     isActive: z.boolean().optional(),
-    mustChangePassword: z.boolean().optional()
+    mustChangePassword: z.boolean().optional(),
+    salespersonNumber: SALES_NUMBER.optional(),
+    salespersonName: z.string().min(1).optional(),
+    salespersonPhone: z.string().optional(),
+    salespersonEmail: z.string().email().optional(),
   }).safeParse(req.body);
 
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
@@ -196,10 +245,24 @@ staffUsersRouter.patch("/:id", async (req, res) => {
   if (!existing) return res.status(404).json({ message: "Not found" });
 
   const nextRole = body.data.role ?? existing.role;
+  const nextSalespersonNumber =
+    body.data.salespersonNumber != null
+      ? normalizeSalespersonNumber(body.data.salespersonNumber)
+      : existing.salespersonNumber;
 
   const nextEmail = body.data.email ? body.data.email.toLowerCase() : undefined;
   if (nextEmail && !nextEmail.endsWith("@mld.com")) {
     return res.status(400).json({ message: "Email must end with @mld.com" });
+  }
+
+  if (nextSalespersonNumber && nextSalespersonNumber !== existing.salespersonNumber) {
+    const existingSalesperson = await prisma.staffUser.findFirst({
+      where: { salespersonNumber: nextSalespersonNumber, id: { not: existing.id } },
+      select: { id: true },
+    });
+    if (existingSalesperson) {
+      return res.status(400).json({ message: "Salesperson number already exists" });
+    }
   }
 
   const updated = await prisma.staffUser.update({
@@ -212,13 +275,23 @@ staffUsersRouter.patch("/:id", async (req, res) => {
           ? StaffRole.ADMIN
           : nextRole === "VIEWER"
             ? StaffRole.VIEWER
-            : StaffRole.STAFF,
+            : nextRole === "SALESPERSON"
+              ? StaffRole.SALESPERSON
+              : StaffRole.STAFF,
       locationAccess:
         nextRole === "ADMIN"
           ? ["slc-hq", "slc-outlet", "boise-willcall"]
           : (body.data.locationAccess ?? existing.locationAccess),
       isActive: body.data.isActive,
-      mustChangePassword: body.data.mustChangePassword
+      mustChangePassword: body.data.mustChangePassword,
+      salespersonNumber: nextSalespersonNumber ?? null,
+      salespersonName: body.data.salespersonName ?? existing.salespersonName ?? null,
+      salespersonPhone: body.data.salespersonPhone
+        ? body.data.salespersonPhone.replace(/\D/g, "")
+        : existing.salespersonPhone ?? null,
+      salespersonEmail: body.data.salespersonEmail
+        ? body.data.salespersonEmail.toLowerCase()
+        : existing.salespersonEmail ?? null,
     },
     select: {
       id: true,
@@ -228,6 +301,10 @@ staffUsersRouter.patch("/:id", async (req, res) => {
       locationAccess: true,
       isActive: true,
       mustChangePassword: true,
+      salespersonNumber: true,
+      salespersonName: true,
+      salespersonPhone: true,
+      salespersonEmail: true,
       createdAt: true,
       updatedAt: true
     }

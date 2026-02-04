@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { PrismaClient, PickupAppointmentStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { requireAuth, blockIfMustChangePassword } from "../middleware/auth";
+import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } from "../middleware/auth";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
 import {
   cancelAppointmentNotifications,
@@ -20,6 +20,7 @@ const LOCATION_IDS = ["slc-hq", "slc-outlet", "boise-willcall"] as const;
 
 pickupsRouter.use(requireAuth);
 pickupsRouter.use(blockIfMustChangePassword);
+pickupsRouter.use(blockIfMustCompleteProfile);
 
 const STATUS = z.enum([
   "Scheduled",
@@ -58,7 +59,7 @@ function canAccessLocation(req: any, locationId: string): boolean {
 }
 
 function canWritePickups(req: any): boolean {
-  return req.auth?.role !== "VIEWER";
+  return req.auth?.role !== "VIEWER" && req.auth?.role !== "SALESPERSON";
 }
 
 function normalizeSelections(

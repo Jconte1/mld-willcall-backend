@@ -165,12 +165,14 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
 
   let lastPullAt: Date | null = null;
   let shouldRefreshDetails = false;
+  let salesPersonNumber: string | null = null;
   if (notice.baid) {
     const summary = await prisma.erpOrderSummary.findUnique({
       where: { baid_orderNbr: { baid: notice.baid, orderNbr } },
-      select: { updatedAt: true, lastAcumaticaPullAt: true },
+      select: { updatedAt: true, lastAcumaticaPullAt: true, salesPersonNumber: true },
     });
     lastPullAt = summary?.lastAcumaticaPullAt ?? summary?.updatedAt ?? null;
+    salesPersonNumber = summary?.salesPersonNumber ?? null;
     const updatedAtMs = lastPullAt ? new Date(lastPullAt).getTime() : 0;
     const isStale = !updatedAtMs || Date.now() - updatedAtMs > STALE_MS;
     shouldRefreshDetails = isStale;
@@ -302,6 +304,17 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       status: true,
     },
   });
+  const salesPerson = salesPersonNumber
+    ? await prisma.staffUser.findFirst({
+        where: { salespersonNumber: salesPersonNumber },
+        select: {
+          salespersonNumber: true,
+          salespersonName: true,
+          salespersonPhone: true,
+          salespersonEmail: true,
+        },
+      })
+    : null;
   mark("paymentDb");
   finalizeTiming();
 
@@ -320,6 +333,15 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       contactEmail: notice.contactEmail,
       locationId: notice.locationId,
       smsOptIn: notice.smsOptIn,
+      salesPersonNumber,
+      salesPerson: salesPerson
+        ? {
+            number: salesPerson.salespersonNumber ?? "",
+            name: salesPerson.salespersonName ?? null,
+            phone: salesPerson.salespersonPhone ?? null,
+            email: salesPerson.salespersonEmail ?? null,
+          }
+        : null,
     },
     appointment,
     payment: payment

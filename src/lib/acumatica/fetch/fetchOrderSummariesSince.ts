@@ -58,6 +58,7 @@ export default async function fetchOrderSummariesSince(
     "ShipVia",
     "JobName",
     "CustomerName",
+    "DefaultSalesperson",
     "NoteID",
     "LastModified",
   ].join(",");

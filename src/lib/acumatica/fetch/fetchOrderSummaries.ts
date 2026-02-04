@@ -37,6 +37,7 @@ export default async function fetchOrderSummaries(
     "ShipVia",
     "JobName",
     "CustomerName",
+    "DefaultSalesperson",
     "NoteID",
   ].join(",");
   const custom = "Document.AttributeBUYERGROUP";

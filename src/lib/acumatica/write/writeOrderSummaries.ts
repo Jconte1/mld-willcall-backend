@@ -37,6 +37,7 @@ function mapOrderSummaryRows(rawRows: AnyRow[]) {
     const shipVia = firstVal(row, ["ShipVia", "shipVia"]);
     const jobName = firstVal(row, ["JobName", "jobName"]);
     const customerName = firstVal(row, ["CustomerName", "customerName"]);
+    const salesPersonNumber = firstVal(row, ["DefaultSalesperson", "defaultSalesperson"]);
     const buyerGroup = firstVal(row, [
       "custom.Document.AttributeBUYERGROUP",
       "Document.AttributeBUYERGROUP",
@@ -57,6 +58,7 @@ function mapOrderSummaryRows(rawRows: AnyRow[]) {
       customerName: optStr(customerName),
       buyerGroup: optStr(buyerGroup),
       noteId: optStr(noteId),
+      salesPersonNumber: optStr(salesPersonNumber),
     });
   }
   return incoming;
@@ -85,6 +87,7 @@ export async function upsertOrderSummariesForBAID(
       customerName: true,
       buyerGroup: true,
       noteId: true,
+      salesPersonNumber: true,
     },
   });
 
@@ -105,7 +108,8 @@ export async function upsertOrderSummariesForBAID(
         (r.jobName || null) !== (prev.jobName || null) ||
         (r.customerName || null) !== (prev.customerName || null) ||
         (r.buyerGroup || null) !== (prev.buyerGroup || null) ||
-        (r.noteId || null) !== (prev.noteId || null);
+        (r.noteId || null) !== (prev.noteId || null) ||
+        (r.salesPersonNumber || null) !== (prev.salesPersonNumber || null);
       if (changed) toUpdate.push(r);
     }
   }
@@ -127,6 +131,7 @@ export async function upsertOrderSummariesForBAID(
         isActive: true,
         buyerGroup: r.buyerGroup ?? "",
         noteId: r.noteId ?? "",
+        salesPersonNumber: r.salesPersonNumber ?? null,
         updatedAt: now,
       })),
       skipDuplicates: true,
@@ -149,6 +154,7 @@ export async function upsertOrderSummariesForBAID(
           deliveryDate: r.deliveryDate,
           buyerGroup: r.buyerGroup ?? "",
           noteId: r.noteId ?? "",
+          salesPersonNumber: r.salesPersonNumber ?? null,
           lastSeenAt: now,
           isActive: true,
         },
@@ -194,6 +200,7 @@ export async function upsertOrderSummariesDelta(
       customerName: true,
       buyerGroup: true,
       noteId: true,
+      salesPersonNumber: true,
       isActive: true,
     },
   });
@@ -217,6 +224,7 @@ export async function upsertOrderSummariesDelta(
         (r.customerName || null) !== (prev.customerName || null) ||
         (r.buyerGroup || null) !== (prev.buyerGroup || null) ||
         (r.noteId || null) !== (prev.noteId || null) ||
+        (r.salesPersonNumber || null) !== (prev.salesPersonNumber || null) ||
         nextActive !== Boolean(prev.isActive);
       if (changed) toUpdate.push(r);
     }
@@ -239,6 +247,7 @@ export async function upsertOrderSummariesDelta(
         isActive: shouldBeActive(r.status),
         buyerGroup: r.buyerGroup ?? "",
         noteId: r.noteId ?? "",
+        salesPersonNumber: r.salesPersonNumber ?? null,
         updatedAt: now,
       })),
       skipDuplicates: true,
@@ -261,6 +270,7 @@ export async function upsertOrderSummariesDelta(
           deliveryDate: r.deliveryDate,
           buyerGroup: r.buyerGroup ?? "",
           noteId: r.noteId ?? "",
+          salesPersonNumber: r.salesPersonNumber ?? null,
           lastSeenAt: now,
           isActive: shouldBeActive(r.status),
         },

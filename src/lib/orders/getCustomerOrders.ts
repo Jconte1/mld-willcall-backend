@@ -25,6 +25,13 @@ type OrderSummaryView = {
   buyerGroup: string | null;
   shipVia: string | null;
   locationId: string | null;
+  salesPersonNumber: string | null;
+  salesPerson: {
+    number: string;
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+  } | null;
   orderType: string;
   fulfillmentStatus: string;
   paymentStatus: string | null;
@@ -63,6 +70,7 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       buyerGroup: true,
       shipVia: true,
       locationId: true,
+      salesPersonNumber: true,
       ErpOrderPayment: {
         select: {
           unpaidBalance: true,
@@ -75,6 +83,35 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
   });
 
   const orderNbrs = summaries.map((summary) => summary.orderNbr);
+  const salesNumbers = Array.from(
+    new Set(
+      summaries
+        .map((summary) => summary.salesPersonNumber)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  const salesPeople = salesNumbers.length
+    ? await prisma.staffUser.findMany({
+        where: { salespersonNumber: { in: salesNumbers } },
+        select: {
+          salespersonNumber: true,
+          salespersonName: true,
+          salespersonPhone: true,
+          salespersonEmail: true,
+        },
+      })
+    : [];
+  const salesByNumber = new Map(
+    salesPeople.map((person) => [
+      person.salespersonNumber!,
+      {
+        number: person.salespersonNumber!,
+        name: person.salespersonName ?? null,
+        phone: person.salespersonPhone ?? null,
+        email: person.salespersonEmail ?? null,
+      },
+    ])
+  );
   const appointmentOrders = orderNbrs.length
     ? await prisma.pickupAppointmentOrder.findMany({
         where: {
@@ -209,6 +246,10 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       buyerGroup: summary.buyerGroup,
       shipVia: summary.shipVia,
       locationId: summary.locationId,
+      salesPersonNumber: summary.salesPersonNumber ?? null,
+      salesPerson: summary.salesPersonNumber
+        ? salesByNumber.get(summary.salesPersonNumber) ?? null
+        : null,
       orderType: orderType,
       fulfillmentStatus,
       paymentStatus,
