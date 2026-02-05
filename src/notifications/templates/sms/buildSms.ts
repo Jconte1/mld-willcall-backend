@@ -7,7 +7,7 @@ const BRAND_PREFIX = "MLD Will Call:";
 export function buildSmsMessage(type: AppointmentNotificationType, payload: NotificationPayload) {
   const when = formatDenverDateTime(payload.startAt);
   const orderLine = formatOrderList(payload.orderNbrs);
-  const manageLink = payload.smsLink || payload.link;
+  const manageLink = payload.link;
   const locationLine =
     payload.locationAddress && payload.locationName
       ? `${payload.locationName} - ${payload.locationAddress}`

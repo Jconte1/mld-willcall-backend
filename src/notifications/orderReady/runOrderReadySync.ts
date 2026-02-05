@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { fetchOrderReadyReport, OrderReadyRow } from "../../lib/acumatica/fetch/fetchOrderReadyReport";
 import { normalizeWarehouseToLocationId } from "../../lib/locationIds";
-import { buildOrderReadyLink, buildOrderReadySmsLink } from "../links/buildLink";
+import { buildOrderReadyLink } from "../links/buildLink";
 import { createOrderReadyToken, getActiveOrderReadyToken } from "../links/tokens";
 import { sendEmail } from "../providers/email/sendEmail";
 import { sendSms } from "../providers/sms/sendSms";
@@ -203,8 +203,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
       // TODO: switch to real opt-in + phone source when available in production.
-      const smsLink = buildOrderReadySmsLink(tokenRow.token) || link;
-      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${smsLink}`;
+      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(notice.contactPhone, smsBody);

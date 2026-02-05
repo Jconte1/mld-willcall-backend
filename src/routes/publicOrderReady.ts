@@ -5,7 +5,7 @@ import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { fetchOrderLastModified } from "../lib/acumatica/fetch/fetchOrderLastModified";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
-import { buildOrderReadyLink, buildOrderReadySmsLink } from "../notifications/links/buildLink";
+import { buildOrderReadyLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { sendSms } from "../notifications/providers/sms/sendSms";
@@ -431,8 +431,7 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
       const message = buildOrderReadyEmail(orderNbr, link);
       await sendEmail(email, message.subject, message.body);
     } else if (phone) {
-      const smsLink = buildOrderReadySmsLink(tokenRow.token) || link;
-      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${smsLink}`;
+      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(phone, smsBody);
