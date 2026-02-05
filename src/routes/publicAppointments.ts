@@ -304,11 +304,10 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   });
   if (!appointment) return res.status(404).json({ message: "Not found" });
 
-  if (appointment.status === PickupAppointmentStatus.Cancelled) {
-    return res.json({ appointment });
-  }
-
   if (action === "cancel") {
+    if (appointment.status === PickupAppointmentStatus.Cancelled) {
+      return res.json({ appointment });
+    }
     const parsed = cancelSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid request body" });
 
@@ -336,7 +335,6 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   const disallowedStatuses: PickupAppointmentStatus[] = [
     PickupAppointmentStatus.Completed,
     PickupAppointmentStatus.NoShow,
-    PickupAppointmentStatus.Cancelled,
   ];
   if (disallowedStatuses.includes(appointment.status as PickupAppointmentStatus)) {
     return res.status(409).json({ message: "Appointment cannot be rescheduled." });

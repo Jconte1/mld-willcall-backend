@@ -30,7 +30,7 @@ export function buildSmsMessage(type: AppointmentNotificationType, payload: Noti
       return `${BRAND_PREFIX} Your pickup on ${when} was cancelled.${reason} Manage: ${manageLink}`;
     }
     case AppointmentNotificationType.Completed:
-      return `${BRAND_PREFIX} Your pickup for ${when} is marked complete. ${orderLine}. Manage: ${manageLink}`;
+      return `${BRAND_PREFIX} Your appointment is complete! Thank you for picking up with us. ${orderLine}. Manage: ${manageLink}`;
     case AppointmentNotificationType.OrderListChanged:
       return `${BRAND_PREFIX} Your pickup order list was updated. ${orderLine}. Manage: ${manageLink}`;
     case AppointmentNotificationType.ReadyForPickup:

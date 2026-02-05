@@ -3,6 +3,7 @@ import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import {
   cancelAppointmentSilently,
+  cancelAppointmentNotifications,
   notifyCustomerCancelled,
   notifyCustomerScheduled,
 } from "../notifications";
@@ -638,6 +639,12 @@ customerPickupsRouter.patch("/:id/orders", async (req, res) => {
     if (!allowed) return res.status(403).json({ message: "Forbidden" });
   }
 
+  const existingOrders = await prisma.pickupAppointmentOrder.findMany({
+    where: { appointmentId: appointment.id },
+    select: { orderNbr: true },
+  });
+  const existingOrderNbrs = existingOrders.map((order) => order.orderNbr);
+
   const nextOrderNbrs = Array.from(new Set(parsed.data.orderNbrs));
   const remaining = nextOrderNbrs.length;
 
@@ -670,6 +677,15 @@ customerPickupsRouter.patch("/:id/orders", async (req, res) => {
       include: { orders: true },
     });
   });
+
+  if (nextStatus === PickupAppointmentStatus.Cancelled) {
+    try {
+      await cancelAppointmentNotifications(prisma, updated.id);
+      await notifyCustomerCancelled(prisma, updated, existingOrderNbrs);
+    } catch (err) {
+      console.error("[notifications] cancel failed", err);
+    }
+  }
 
   return res.json({ appointment: updated });
 });

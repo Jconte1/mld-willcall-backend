@@ -208,11 +208,11 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
     }
     case AppointmentNotificationType.Completed:
       return {
-        subject: "Pickup completed",
+        subject: `[${orders}] Complete`,
         body: renderTemplate({
-          title: "Pickup completed",
-          preheader: `Your pickup for ${when} is marked complete.`,
-          message: `Your pickup appointment for ${when} is marked complete.`,
+          title: "Thank you! Your appointment is complete.",
+          preheader: `MLD Will Call: Your appointment is complete. Thank you for picking up with us.`,
+          message: "MLD Will Call: Your appointment is complete! Thank you for picking up with us.",
           when,
           orders,
           link: payload.link,
