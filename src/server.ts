@@ -16,6 +16,7 @@ import { pickupsRouter } from "./routes/pickups";
 import { acumaticaRouter } from "./routes/acumatica";
 import { publicAppointmentsRouter } from "./routes/publicAppointments";
 import { publicOrderReadyRouter } from "./routes/publicOrderReady";
+import { twilioInboundRouter } from "./routes/twilioInbound";
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -58,6 +60,9 @@ app.use("/api/public/appointments", publicAppointmentsRouter);
 
 // Public order-ready (secure link)
 app.use("/api/public/order-ready", publicOrderReadyRouter);
+
+// Twilio inbound SMS webhook
+app.use("/api/twilio", twilioInboundRouter);
 
 // Admin user management
 app.use("/api/staff/users", staffUsersRouter);

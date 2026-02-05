@@ -24,6 +24,9 @@ export type AppointmentWithContact = Pick<
   | "smsOptInAt"
   | "smsOptInSource"
   | "smsOptInPhone"
+  | "smsOptOutAt"
+  | "smsOptOutReason"
+  | "smsFirstSentAt"
   | "emailOptIn"
   | "emailOptInAt"
   | "emailOptInSource"
@@ -40,6 +43,7 @@ export type NotificationPayload = {
   endAt: Date;
   orderNbrs?: string[];
   link: string;
+  smsLink?: string;
   unsubscribeLink?: string;
   customerName?: string;
   oldStartAt?: Date;

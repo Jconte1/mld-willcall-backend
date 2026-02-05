@@ -5,12 +5,12 @@ import {
   NotificationJobStatus,
   PrismaClient,
 } from "@prisma/client";
-import { buildSmsMessage } from "../templates/sms/buildSms";
+import { applySmsCompliance, buildSmsMessage } from "../templates/sms/buildSms";
 import { buildEmailMessage } from "../templates/email/buildEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { sendEmail } from "../providers/email/sendEmail";
 import { AppointmentWithContact, NotificationPayload } from "../types";
-import { buildUnsubscribeLink } from "../links/buildLink";
+import { buildAppointmentSmsLink, buildUnsubscribeLink } from "../links/buildLink";
 import { getPickupLocation } from "../../lib/pickupLocations";
 
 function buildPayload(
@@ -21,6 +21,7 @@ function buildPayload(
   const snapshot = (job.payloadSnapshot || {}) as Record<string, any>;
   const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
   const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
+  const smsLink = snapshot.smsLink || buildSmsLinkFromLink(link);
   const location = getPickupLocation(appointment.locationId);
   const locationName = location?.name ?? appointment.locationId;
 
@@ -34,6 +35,7 @@ function buildPayload(
     endAt: appointment.endAt,
     orderNbrs,
     link,
+    smsLink,
     unsubscribeLink: unsubscribeLink || undefined,
     oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
     oldEndAt: snapshot.oldEndAt ? new Date(snapshot.oldEndAt) : undefined,
@@ -49,6 +51,18 @@ function buildUnsubscribeFromLink(link: string, appointmentId: string) {
     const token = url.searchParams.get("token");
     if (!token) return "";
     return buildUnsubscribeLink(appointmentId, token);
+  } catch {
+    return "";
+  }
+}
+
+function buildSmsLinkFromLink(link: string) {
+  try {
+    const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "") || "http://localhost";
+    const url = new URL(link, base);
+    const token = url.searchParams.get("token");
+    if (!token) return "";
+    return buildAppointmentSmsLink(token);
   } catch {
     return "";
   }
@@ -74,10 +88,22 @@ export async function sendJob(
       appointmentId: appointment.id,
     });
     if (job.channel === NotificationChannel.SMS || job.channel === NotificationChannel.Both) {
-      if (appointment.smsOptIn && (appointment.smsOptInPhone || appointment.customerPhone)) {
+      if (
+        appointment.smsOptIn &&
+        !appointment.smsOptOutAt &&
+        (appointment.smsOptInPhone || appointment.customerPhone)
+      ) {
         const sms = buildSmsMessage(job.type as AppointmentNotificationType, payload);
+        const includeStopLine = !appointment.smsFirstSentAt;
+        const smsBody = applySmsCompliance(sms, includeStopLine);
         const smsTo = appointment.smsOptInPhone || appointment.customerPhone;
-        await sendSms(smsTo as string, sms);
+        await sendSms(smsTo as string, smsBody);
+        if (!appointment.smsFirstSentAt) {
+          await prisma.pickupAppointment.update({
+            where: { id: appointment.id },
+            data: { smsFirstSentAt: new Date() },
+          });
+        }
       }
     }
 

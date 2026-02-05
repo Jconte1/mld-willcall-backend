@@ -185,6 +185,29 @@ async function getLatestLink(appointmentId: string) {
 }
 
 /**
+ * GET /api/public/appointments/short/:token
+ */
+publicAppointmentsRouter.get("/short/:token", async (req, res) => {
+  const tokenValue = req.params.token;
+  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+
+  const token = await prisma.appointmentAccessToken.findFirst({
+    where: {
+      token: tokenValue,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
+
+  if (!token) {
+    return res.redirect(`${frontend}/appointments/invalid`);
+  }
+
+  const longLink = buildAppointmentLink(token.appointmentId, tokenValue);
+  return res.redirect(longLink);
+});
+
+/**
  * GET /api/public/appointments/:id?token=...
  */
 publicAppointmentsRouter.get("/:id", async (req, res) => {

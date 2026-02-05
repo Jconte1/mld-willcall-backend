@@ -66,6 +66,13 @@ staffAuthRouter.post("/login", async (req, res) => {
 
   const normalizedLocationAccess = normalizeLocationIds(user.locationAccess ?? []);
 
+  console.info("[staffAuth/login] user resolved", {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    mustChangePassword: user.mustChangePassword,
+  });
+
   const token = jwt.sign(
     {
       email: user.email,
@@ -80,6 +87,13 @@ staffAuthRouter.post("/login", async (req, res) => {
       expiresIn: "7d"
     }
   );
+
+  console.info("[staffAuth/login] token issued", {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    mustCompleteProfile: !isSalespersonProfileComplete(user),
+  });
 
   return res.json({
     token,

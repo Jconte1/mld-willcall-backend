@@ -1,8 +1,10 @@
 type SmsResult = { ok: boolean; skipped?: boolean };
 
 function resolveRecipient(phone: string) {
-  if (process.env.NODE_ENV !== "production") {
-    return process.env.NOTIFICATIONS_TEST_PHONE || "";
+  const testPhone = process.env.NOTIFICATIONS_TEST_PHONE || "";
+  if (testPhone) {
+    // TODO: remove test-phone override to use real db phone numbers in production.
+    return testPhone;
   }
   return phone;
 }

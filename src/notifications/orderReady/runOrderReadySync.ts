@@ -1,11 +1,13 @@
 import { PrismaClient } from "@prisma/client";
 import { fetchOrderReadyReport, OrderReadyRow } from "../../lib/acumatica/fetch/fetchOrderReadyReport";
 import { normalizeWarehouseToLocationId } from "../../lib/locationIds";
-import { buildOrderReadyLink } from "../links/buildLink";
+import { buildOrderReadyLink, buildOrderReadySmsLink } from "../links/buildLink";
 import { createOrderReadyToken, getActiveOrderReadyToken } from "../links/tokens";
 import { sendEmail } from "../providers/email/sendEmail";
+import { sendSms } from "../providers/sms/sendSms";
 import { buildOrderReadyEmail } from "../templates/email/buildOrderReadyEmail";
 import { nextAllowedTime } from "../rules/quietHours";
+import { applySmsCompliance } from "../templates/sms/buildSms";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
@@ -13,6 +15,11 @@ const RESEND_DAYS = 1;
 const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
+
+function normalizePhone(value: string | null | undefined) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits || null;
+}
 
 function getDenverParts(date: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -76,6 +83,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
   for (const [orderNbr, bucket] of grouped.entries()) {
     const row = bucket.row;
     const contactEmail = (row.attributeDelEmail || "").trim() || null;
+    const contactPhone = normalizePhone(row.attributeSiteNumber);
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
 
@@ -95,10 +103,9 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeSiteNumber: row.attributeSiteNumber ?? null,
         attributeDelEmail: row.attributeDelEmail ?? null,
         contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
-        contactPhone: row.attributeSiteNumber ?? null, // TODO: replace with actual contact phone field
+        contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
         locationId,
-        smsOptIn: false, // TODO: replace with actual opt-in field
         lastReadyAt: now,
       },
       create: {
@@ -116,10 +123,9 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeSiteNumber: row.attributeSiteNumber ?? null,
         attributeDelEmail: row.attributeDelEmail ?? null,
         contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
-        contactPhone: row.attributeSiteNumber ?? null, // TODO: replace with actual contact phone field
+        contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
         locationId,
-        smsOptIn: false, // TODO: replace with actual opt-in field
         lastReadyAt: now,
       },
     });
@@ -194,6 +200,21 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     await sendEmail(recipient, message.subject, message.body);
     sentCount += 1;
+
+    if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
+      // TODO: switch to real opt-in + phone source when available in production.
+      const smsLink = buildOrderReadySmsLink(tokenRow.token) || link;
+      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${smsLink}`;
+      const includeStopLine = !notice.smsFirstSentAt;
+      const smsBody = applySmsCompliance(smsBase, includeStopLine);
+      await sendSms(notice.contactPhone, smsBody);
+      if (!notice.smsFirstSentAt) {
+        await prisma.orderReadyNotice.update({
+          where: { id: notice.id },
+          data: { smsFirstSentAt: new Date() },
+        });
+      }
+    }
 
     // TODO: After 5 consecutive daily sends, escalate to the salesperson for follow-up.
     await prisma.orderReadyNotice.update({

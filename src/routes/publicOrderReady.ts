@@ -5,11 +5,12 @@ import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { fetchOrderLastModified } from "../lib/acumatica/fetch/fetchOrderLastModified";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
-import { buildOrderReadyLink } from "../notifications/links/buildLink";
+import { buildOrderReadyLink, buildOrderReadySmsLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { sendSms } from "../notifications/providers/sms/sendSms";
 import { buildOrderReadyEmail } from "../notifications/templates/email/buildOrderReadyEmail";
+import { applySmsCompliance } from "../notifications/templates/sms/buildSms";
 
 const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
@@ -357,6 +358,26 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
 });
 
 /**
+ * GET /api/public/order-ready/short/:token
+ */
+publicOrderReadyRouter.get("/short/:token", async (req, res) => {
+  const tokenValue = req.params.token;
+  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+
+  const token = await prisma.orderReadyAccessToken.findFirst({
+    where: { token: tokenValue, revokedAt: null },
+    include: { orderReady: true },
+  });
+
+  if (!token?.orderReady?.orderNbr) {
+    return res.redirect(`${frontend}/orders/ready/invalid`);
+  }
+
+  const longLink = buildOrderReadyLink(token.orderReady.orderNbr, tokenValue);
+  return res.redirect(longLink);
+});
+
+/**
  * POST /api/public/order-ready/resend
  * Body: { orderNbr, email? } OR { orderNbr, phone? }
  */
@@ -410,8 +431,17 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
       const message = buildOrderReadyEmail(orderNbr, link);
       await sendEmail(email, message.subject, message.body);
     } else if (phone) {
-      const smsBody = `Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+      const smsLink = buildOrderReadySmsLink(tokenRow.token) || link;
+      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${smsLink}`;
+      const includeStopLine = !notice.smsFirstSentAt;
+      const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(phone, smsBody);
+      if (!notice.smsFirstSentAt) {
+        await prisma.orderReadyNotice.update({
+          where: { id: notice.id },
+          data: { smsFirstSentAt: new Date() },
+        });
+      }
     }
 
     await prisma.orderReadyNotice.update({

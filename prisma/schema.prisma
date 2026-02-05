@@ -437,6 +437,9 @@ model PickupAppointment {
   smsOptInAt        DateTime?
   smsOptInSource    String?                  @db.VarChar(128)
   smsOptInPhone     String?                  @db.VarChar(32)
+  smsOptOutAt       DateTime?
+  smsOptOutReason   String?                  @db.VarChar(64)
+  smsFirstSentAt    DateTime?
   emailOptIn        Boolean                  @default(false)
   emailOptInAt      DateTime?
   emailOptInSource  String?                  @db.VarChar(128)
@@ -638,6 +641,9 @@ model OrderReadyNotice {
   contactEmail         String?                  @db.VarChar(256)
   locationId           String?                  @db.VarChar(64)
   smsOptIn             Boolean                  @default(false)
+  smsOptOutAt          DateTime?
+  smsOptOutReason      String?                  @db.VarChar(64)
+  smsFirstSentAt       DateTime?
   lastNotifiedAt       DateTime?
   nextEligibleNotifyAt DateTime?
   lastReadyAt          DateTime?
