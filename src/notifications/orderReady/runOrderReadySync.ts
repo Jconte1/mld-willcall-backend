@@ -87,6 +87,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
 
+    const smsOptIn = Boolean(contactPhone);
     const notice = await prisma.orderReadyNotice.upsert({
       where: { orderNbr },
       update: {
@@ -108,6 +109,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
         locationId,
+        smsOptIn,
         lastReadyAt: now,
       },
       create: {
@@ -130,6 +132,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
         locationId,
+        smsOptIn,
         lastReadyAt: now,
       },
     });
