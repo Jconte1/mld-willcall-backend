@@ -111,11 +111,13 @@ export async function fetchOrderReadyReport() {
       "SOOrder_AttributeDELEMAIL",
     ]),
     attributeSmsTxt: pickField(row, [
+      "TextNotification",
       "AttributeSMSTXT",
       "SOOrder_AttributeSMSTXT",
       "SOOrder.AttributeSMSTXT",
     ]),
     attributeEmailNoty: pickField(row, [
+      "EmailNotification",
       "AttributeEMAILNOTY",
       "SOOrder_AttributeEMAILNOTY",
       "SOOrder.AttributeEMAILNOTY",
