@@ -82,8 +82,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
   let sentCount = 0;
   for (const [orderNbr, bucket] of grouped.entries()) {
     const row = bucket.row;
-    const contactEmail = (row.attributeDelEmail || "").trim() || null;
-    const contactPhone = normalizePhone(row.attributeSiteNumber);
+    const contactEmail = (row.attributeEmailNoty || "").trim() || null;
+    const contactPhone = normalizePhone(row.attributeSmsTxt);
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
 
@@ -102,6 +102,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeOsContact: row.attributeOsContact ?? null,
         attributeSiteNumber: row.attributeSiteNumber ?? null,
         attributeDelEmail: row.attributeDelEmail ?? null,
+        attributeSmsTxt: row.attributeSmsTxt ?? null,
+        attributeEmailNoty: row.attributeEmailNoty ?? null,
         contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
         contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
@@ -122,6 +124,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeOsContact: row.attributeOsContact ?? null,
         attributeSiteNumber: row.attributeSiteNumber ?? null,
         attributeDelEmail: row.attributeDelEmail ?? null,
+        attributeSmsTxt: row.attributeSmsTxt ?? null,
+        attributeEmailNoty: row.attributeEmailNoty ?? null,
         contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
         contactPhone, // TODO: replace with actual contact phone field
         contactEmail,
@@ -198,7 +202,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       continue;
     }
 
-    await sendEmail(recipient, message.subject, message.body);
+    await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
     sentCount += 1;
 
     if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
@@ -206,7 +210,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
-      await sendSms(notice.contactPhone, smsBody);
+      await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });
       if (!notice.smsFirstSentAt) {
         await prisma.orderReadyNotice.update({
           where: { id: notice.id },

@@ -1,19 +1,23 @@
 type SmsResult = { ok: boolean; skipped?: boolean };
+type SendSmsOptions = { allowTestOverride?: boolean };
 
-function resolveRecipient(phone: string) {
+function resolveRecipient(phone: string, { allowTestOverride = true }: SendSmsOptions = {}) {
   const testPhone = process.env.NOTIFICATIONS_TEST_PHONE || "";
-  if (testPhone) {
-    // TODO: remove test-phone override to use real db phone numbers in production.
+  if (allowTestOverride && testPhone) {
     return testPhone;
   }
   return phone;
 }
 
-export async function sendSms(to: string, body: string): Promise<SmsResult> {
+export async function sendSms(
+  to: string,
+  body: string,
+  options: SendSmsOptions = {}
+): Promise<SmsResult> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
   const authToken = process.env.TWILIO_AUTH_TOKEN || "";
   const from = process.env.TWILIO_FROM_NUMBER || "";
-  const recipient = resolveRecipient(to);
+  const recipient = resolveRecipient(to, options);
 
   if (!recipient) {
     console.log("[notifications][sms] skipped (no recipient)", { to });

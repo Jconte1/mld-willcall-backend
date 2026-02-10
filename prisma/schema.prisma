@@ -636,6 +636,8 @@ model OrderReadyNotice {
   attributeOsContact   String?                  @db.VarChar(256)
   attributeSiteNumber  String?                  @db.VarChar(256)
   attributeDelEmail    String?                  @db.VarChar(256)
+  attributeSmsTxt      String?                  @db.VarChar(256)
+  attributeEmailNoty   String?                  @db.VarChar(256)
   contactName          String?                  @db.VarChar(256)
   contactPhone         String?                  @db.VarChar(64)
   contactEmail         String?                  @db.VarChar(256)

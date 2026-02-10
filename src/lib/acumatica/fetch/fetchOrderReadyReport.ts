@@ -11,6 +11,8 @@ export type OrderReadyRow = {
   attributeOsContact: string | null;
   attributeSiteNumber: string | null;
   attributeDelEmail: string | null;
+  attributeSmsTxt: string | null;
+  attributeEmailNoty: string | null;
   warehouse: string | null;
   inventoryId: string | null;
 };
@@ -107,6 +109,16 @@ export async function fetchOrderReadyReport() {
       "DeliveryEmail",
       "AttributeDELEMAIL",
       "SOOrder_AttributeDELEMAIL",
+    ]),
+    attributeSmsTxt: pickField(row, [
+      "AttributeSMSTXT",
+      "SOOrder_AttributeSMSTXT",
+      "SOOrder.AttributeSMSTXT",
+    ]),
+    attributeEmailNoty: pickField(row, [
+      "AttributeEMAILNOTY",
+      "SOOrder_AttributeEMAILNOTY",
+      "SOOrder.AttributeEMAILNOTY",
     ]),
     warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
     inventoryId: pickField(row, [
