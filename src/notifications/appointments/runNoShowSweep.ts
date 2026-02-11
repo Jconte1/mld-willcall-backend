@@ -122,6 +122,12 @@ export async function runNoShowSweep(prisma: PrismaClient) {
           });
 
     await cancelPendingJobs(prisma, updated.id);
+    if (appointment.orders.length) {
+      await prisma.orderReadyNotice.updateMany({
+        where: { orderNbr: { in: appointment.orders.map((order) => order.orderNbr) } },
+        data: { scheduledAppointmentId: null },
+      });
+    }
     await sendNoShowNotifications({
       id: updated.id,
       startAt: updated.startAt,

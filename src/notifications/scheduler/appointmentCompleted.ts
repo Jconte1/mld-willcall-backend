@@ -27,6 +27,12 @@ export async function handleAppointmentCompleted(
   });
 
   await cancelPendingJobs(prisma, appointment.id);
+  if (orderNbrs.length) {
+    await prisma.orderReadyNotice.updateMany({
+      where: { orderNbr: { in: orderNbrs } },
+      data: { scheduledAppointmentId: null },
+    });
+  }
   if (!ignoreCap && (await hasReachedNotificationCap(prisma, appointment.id))) return;
   if (shouldSkipForQuietHours(now)) return;
 

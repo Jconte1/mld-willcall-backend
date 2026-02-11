@@ -16,6 +16,7 @@ const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
 const RUN_WINDOW_MINUTES = 12 * 60;
+const ACTIVE_APPOINTMENT_STATUSES = ["Scheduled", "Confirmed", "InProgress", "Ready"] as const;
 
 function normalizePhone(value: string | null | undefined) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -102,53 +103,77 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     const locationId = mappedLocationId ?? "slc-hq";
 
     const smsOptIn = Boolean(contactPhone);
+    const existingNotice = await prisma.orderReadyNotice.findUnique({
+      where: { orderNbr },
+      select: {
+        id: true,
+        attributeSmsTxt: true,
+        attributeEmailNoty: true,
+        lastNotifiedAt: true,
+        nextEligibleNotifyAt: true,
+        scheduledAppointmentId: true,
+      },
+    });
+
+    const prevEmail = (existingNotice?.attributeEmailNoty || "").trim() || null;
+    const prevPhone = normalizePhone(existingNotice?.attributeSmsTxt);
+    const contactChanged =
+      Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
+    const nextEligibleOverride =
+      contactChanged && existingNotice?.lastNotifiedAt ? now : undefined;
+
+    const updateData = {
+      baid: row.customerId ?? null,
+      status: row.status ?? null,
+      orderType: row.orderType ?? null,
+      shipVia: row.shipVia ?? null,
+      qtyUnallocated: row.qtyUnallocated ?? null,
+      qtyAllocated: row.qtyAllocated ?? null,
+      customerId: row.customerId ?? null,
+      customerLocationId: row.customerLocationId ?? null,
+      attributeBuyerGroup: row.attributeBuyerGroup ?? null,
+      attributeOsContact: row.attributeOsContact ?? null,
+      attributeSiteNumber: row.attributeSiteNumber ?? null,
+      attributeDelEmail: row.attributeDelEmail ?? null,
+      attributeSmsTxt: row.attributeSmsTxt ?? null,
+      attributeEmailNoty: row.attributeEmailNoty ?? null,
+      contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+      contactPhone, // TODO: replace with actual contact phone field
+      contactEmail,
+      locationId,
+      smsOptIn,
+      lastReadyAt: now,
+      ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
+    };
+
+    const createData = {
+      orderNbr,
+      baid: row.customerId ?? null,
+      status: row.status ?? null,
+      orderType: row.orderType ?? null,
+      shipVia: row.shipVia ?? null,
+      qtyUnallocated: row.qtyUnallocated ?? null,
+      qtyAllocated: row.qtyAllocated ?? null,
+      customerId: row.customerId ?? null,
+      customerLocationId: row.customerLocationId ?? null,
+      attributeBuyerGroup: row.attributeBuyerGroup ?? null,
+      attributeOsContact: row.attributeOsContact ?? null,
+      attributeSiteNumber: row.attributeSiteNumber ?? null,
+      attributeDelEmail: row.attributeDelEmail ?? null,
+      attributeSmsTxt: row.attributeSmsTxt ?? null,
+      attributeEmailNoty: row.attributeEmailNoty ?? null,
+      contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+      contactPhone, // TODO: replace with actual contact phone field
+      contactEmail,
+      locationId,
+      smsOptIn,
+      lastReadyAt: now,
+    };
+
     const notice = await prisma.orderReadyNotice.upsert({
       where: { orderNbr },
-      update: {
-        baid: row.customerId ?? null,
-        status: row.status ?? null,
-        orderType: row.orderType ?? null,
-        shipVia: row.shipVia ?? null,
-        qtyUnallocated: row.qtyUnallocated ?? null,
-        qtyAllocated: row.qtyAllocated ?? null,
-        customerId: row.customerId ?? null,
-        customerLocationId: row.customerLocationId ?? null,
-        attributeBuyerGroup: row.attributeBuyerGroup ?? null,
-        attributeOsContact: row.attributeOsContact ?? null,
-        attributeSiteNumber: row.attributeSiteNumber ?? null,
-        attributeDelEmail: row.attributeDelEmail ?? null,
-        attributeSmsTxt: row.attributeSmsTxt ?? null,
-        attributeEmailNoty: row.attributeEmailNoty ?? null,
-        contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
-        contactPhone, // TODO: replace with actual contact phone field
-        contactEmail,
-        locationId,
-        smsOptIn,
-        lastReadyAt: now,
-      },
-      create: {
-        orderNbr,
-        baid: row.customerId ?? null,
-        status: row.status ?? null,
-        orderType: row.orderType ?? null,
-        shipVia: row.shipVia ?? null,
-        qtyUnallocated: row.qtyUnallocated ?? null,
-        qtyAllocated: row.qtyAllocated ?? null,
-        customerId: row.customerId ?? null,
-        customerLocationId: row.customerLocationId ?? null,
-        attributeBuyerGroup: row.attributeBuyerGroup ?? null,
-        attributeOsContact: row.attributeOsContact ?? null,
-        attributeSiteNumber: row.attributeSiteNumber ?? null,
-        attributeDelEmail: row.attributeDelEmail ?? null,
-        attributeSmsTxt: row.attributeSmsTxt ?? null,
-        attributeEmailNoty: row.attributeEmailNoty ?? null,
-        contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
-        contactPhone, // TODO: replace with actual contact phone field
-        contactEmail,
-        locationId,
-        smsOptIn,
-        lastReadyAt: now,
-      },
+      update: updateData,
+      create: createData,
     });
 
     await prisma.orderReadyLine.deleteMany({ where: { orderReadyId: notice.id } });
@@ -172,7 +197,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       where: {
         orderNbr,
         appointment: {
-          status: { in: ["Scheduled", "Confirmed", "InProgress", "Ready", "Completed"] },
+          status: { in: ACTIVE_APPOINTMENT_STATUSES },
         },
       },
       include: { appointment: true },
@@ -187,6 +212,13 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       continue;
     }
 
+    if (notice.scheduledAppointmentId) {
+      await prisma.orderReadyNotice.update({
+        where: { id: notice.id },
+        data: { scheduledAppointmentId: null },
+      });
+    }
+
     const eligible =
       !notice.lastNotifiedAt ||
       (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
@@ -194,6 +226,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     if (!notice.contactEmail && !process.env.NOTIFICATIONS_TEST_EMAIL) {
       // TODO: When production-ready, require a real contactEmail before sending.
+      // TODO: If the email is invalid or bounces, notify the salesperson for this order.
       console.log("[order-ready] skipped (missing email)", { orderNbr });
       continue;
     }

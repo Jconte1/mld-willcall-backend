@@ -30,6 +30,13 @@ export async function handleAppointmentCancelled(
 
   await cancelPendingJobs(prisma, appointment.id);
 
+  if (orderNbrs.length) {
+    await prisma.orderReadyNotice.updateMany({
+      where: { orderNbr: { in: orderNbrs } },
+      data: { scheduledAppointmentId: null },
+    });
+  }
+
   const token = await rotateAppointmentToken(prisma, appointment.id, appointment.endAt);
   const link = buildAppointmentLink(appointment.id, token.token);
 
