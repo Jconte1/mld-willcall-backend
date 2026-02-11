@@ -15,6 +15,7 @@ const RESEND_DAYS = 1;
 const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
+const RUN_WINDOW_MINUTES = 12 * 60;
 
 function normalizePhone(value: string | null | undefined) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -56,6 +57,9 @@ async function shouldRun(prisma: PrismaClient, now: Date) {
   if (parts.hour < RUN_HOUR || (parts.hour === RUN_HOUR && parts.minute < RUN_MINUTE)) {
     return false;
   }
+  const minutesSinceStart =
+    parts.hour * 60 + parts.minute - (RUN_HOUR * 60 + RUN_MINUTE);
+  if (minutesSinceStart > RUN_WINDOW_MINUTES) return false;
   if (!existing?.lastRunAt) return true;
   const last = getDenverParts(existing.lastRunAt);
   return last.date !== parts.date;
@@ -76,6 +80,16 @@ export async function runOrderReadySync(prisma: PrismaClient) {
   console.log("[order-ready] running daily sync");
   const rows = await fetchOrderReadyReport();
   console.log("[order-ready] rows fetched", { count: rows.length });
+  if (rows.length) {
+    console.log("[order-ready] sample row", {
+      orderNbr: rows[0]?.orderNbr,
+      orderType: rows[0]?.orderType,
+      status: rows[0]?.status,
+      textNotification: rows[0]?.attributeSmsTxt,
+      emailNotification: rows[0]?.attributeEmailNoty,
+      warehouse: rows[0]?.warehouse,
+    });
+  }
 
   const grouped = groupOrderReadyRows(rows);
   const seenOrderNbrs = new Set<string>(Array.from(grouped.keys()));
