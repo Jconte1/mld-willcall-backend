@@ -30,6 +30,7 @@ model InviteCode {
   recipientEmail  String?          @db.VarChar(256)
   recipientPhone  String?          @db.VarChar(64)
   codeHash        String           @db.VarChar(256)
+  codePlain       String?          @db.VarChar(16)
   status          InviteCodeStatus @default(Pending)
   expiresAt       DateTime
   sentAt          DateTime?

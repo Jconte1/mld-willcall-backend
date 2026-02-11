@@ -9,6 +9,7 @@ function renderInviteTemplate({
   message,
   code,
   baid,
+  zipCode,
   roleLabel,
   link,
   logoUrl,
@@ -18,10 +19,12 @@ function renderInviteTemplate({
   message: string;
   code: string;
   baid: string;
+  zipCode?: string | null;
   roleLabel: string;
   link: string;
   logoUrl: string;
 }) {
+  const zipLine = zipCode ? `<tr><td style="font-size:14px;color:#374151;">Billing ZIP: ${zipCode}</td></tr>` : "";
   return `<!doctype html>
 <html>
   <head>
@@ -60,8 +63,9 @@ function renderInviteTemplate({
                     <td style="font-size:13px;color:#6b7280;padding-top:12px;">Account</td>
                   </tr>
                   <tr>
-                    <td style="font-size:14px;color:#374151;">BAID: ${baid}</td>
+                    <td style="font-size:14px;color:#374151;">Customer ID#: ${baid}</td>
                   </tr>
+                  ${zipLine}
                   <tr>
                     <td style="font-size:14px;color:#374151;">Role: ${roleLabel}</td>
                   </tr>
@@ -87,7 +91,13 @@ function renderInviteTemplate({
 </html>`;
 }
 
-export function buildInviteEmail(code: string, baid: string, roleLabel: string, link: string) {
+export function buildInviteEmail(
+  code: string,
+  baid: string,
+  roleLabel: string,
+  link: string,
+  zipCode?: string | null
+) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   return {
@@ -98,6 +108,7 @@ export function buildInviteEmail(code: string, baid: string, roleLabel: string, 
       message: "Use the invite code below to create your Will Call account.",
       code,
       baid,
+      zipCode,
       roleLabel,
       link,
       logoUrl,

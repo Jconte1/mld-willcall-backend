@@ -199,10 +199,11 @@ async function sendInviteEmail(opts: {
   code: string;
   baid: string;
   roleLabel: string;
+  zipCode?: string | null;
   allowTestOverride?: boolean;
 }) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
-  const message = buildInviteEmail(opts.code, opts.baid, opts.roleLabel, frontendUrl);
+  const message = buildInviteEmail(opts.code, opts.baid, opts.roleLabel, frontendUrl, opts.zipCode);
 
   await sendEmail(opts.recipient, message.subject, message.body, {
     allowTestOverride: opts.allowTestOverride,
@@ -323,6 +324,7 @@ customerInvitesRouter.post("/request", async (req, res) => {
       role: "ADMIN",
       recipientEmail: recipient || null,
       codeHash,
+      codePlain: code,
       status: "Pending",
       expiresAt,
       sentAt: new Date(),
@@ -335,6 +337,7 @@ customerInvitesRouter.post("/request", async (req, res) => {
       code,
       baid,
       roleLabel: "Admin",
+      zipCode: zip,
       allowTestOverride: true,
     });
   }
@@ -404,6 +407,7 @@ customerInvitesRouter.post("/invitations", async (req, res) => {
       recipientEmail: parsed.data.email,
       recipientPhone: parsed.data.phone ?? null,
       codeHash,
+      codePlain: code,
       status: "Pending",
       expiresAt,
       sentAt: new Date(),
@@ -428,6 +432,7 @@ customerInvitesRouter.post("/invitations", async (req, res) => {
       code,
       baid: parsed.data.baid,
       roleLabel,
+      zipCode: null,
       allowTestOverride: false,
     });
   }

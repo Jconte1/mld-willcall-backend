@@ -11,6 +11,7 @@ import { customerOrdersRouter } from "./routes/customerOrders";
 import { customerSyncRouter } from "./routes/customerSync";
 import { customerPickupsRouter } from "./routes/customerPickups";
 import { customerInvitesRouter } from "./routes/customerInvites";
+import { internalInvitesRouter } from "./routes/internalInvites";
 import { staffUsersRouter } from "./routes/staffUsers";
 import { pickupsRouter } from "./routes/pickups";
 import { acumaticaRouter } from "./routes/acumatica";
@@ -54,6 +55,9 @@ app.use("/api/customer/pickups", customerPickupsRouter);
 
 // Customer invites + members
 app.use("/api/customer/invites", customerInvitesRouter);
+
+// Internal invites (server-to-server)
+app.use("/api/internal/invites", internalInvitesRouter);
 
 // Public appointments (secure link)
 app.use("/api/public/appointments", publicAppointmentsRouter);
