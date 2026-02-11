@@ -42,6 +42,11 @@ function normalizeZip(value: string) {
 function requireInternalAuth(req: any, res: any, next: any) {
   const auth = String(req.headers.authorization || "");
   if (!INTERNAL_TOKEN || auth !== `Bearer ${INTERNAL_TOKEN}`) {
+    console.info("[internal-invites] unauthorized", {
+      hasToken: Boolean(INTERNAL_TOKEN),
+      hasAuthHeader: Boolean(auth),
+      authPrefix: auth ? auth.slice(0, 8) : "",
+    });
     return res.status(401).json({ message: "Unauthorized" });
   }
   return next();
@@ -49,7 +54,12 @@ function requireInternalAuth(req: any, res: any, next: any) {
 
 internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) => {
   const parsed = DISPATCH_BODY.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: "Invalid request body" });
+  if (!parsed.success) {
+    console.info("[internal-invites] invalid body", {
+      issues: parsed.error.issues.map((issue) => issue.message),
+    });
+    return res.status(400).json({ message: "Invalid request body" });
+  }
 
   const baid = normalizeBaid(parsed.data.customerId);
   const zip = normalizeZip(parsed.data.billingZip);
@@ -57,15 +67,25 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
   const shouldSendEmail = Boolean(parsed.data.sendEmail);
 
   if (!BAID_REGEX.test(baid) || zip.length !== 5) {
+    console.info("[internal-invites] invalid inputs", {
+      hasBaid: Boolean(baid),
+      hasZip: Boolean(zip),
+      zipLen: zip.length,
+    });
     return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
   }
 
   try {
     const verified = await verifyBaidInAcumatica(baid, zip);
     if (!verified) {
+      console.info("[internal-invites] verify failed", { baid });
       return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
     }
   } catch (err: any) {
+    console.info("[internal-invites] verify error", {
+      baid,
+      message: String(err?.message || err),
+    });
     return res.status(502).json({ message: "Unable to verify right now" });
   }
 
@@ -85,6 +105,7 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
   let expiresAt = existing?.expiresAt || null;
 
   if (!code) {
+    console.info("[internal-invites] issuing new code", { baid, hasExisting: Boolean(existing) });
     code = generateInviteCode();
     const codeHash = hashInviteCode(code);
     const nextExpiresAt = new Date(now.getTime() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
