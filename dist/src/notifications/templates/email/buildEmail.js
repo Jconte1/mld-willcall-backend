@@ -182,11 +182,11 @@ function buildEmailMessage(type, payload) {
         }
         case client_1.AppointmentNotificationType.Completed:
             return {
-                subject: "Pickup completed",
+                subject: `[${orders}] Complete`,
                 body: renderTemplate({
-                    title: "Pickup completed",
-                    preheader: `Your pickup for ${when} is marked complete.`,
-                    message: `Your pickup appointment for ${when} is marked complete.`,
+                    title: "Thank you! Your appointment is complete.",
+                    preheader: `MLD Will Call: Your appointment is complete. Thank you for picking up with us.`,
+                    message: "MLD Will Call: Your appointment is complete! Thank you for picking up with us.",
                     when,
                     orders,
                     link: payload.link,
@@ -204,6 +204,22 @@ function buildEmailMessage(type, payload) {
                     message: "Your pickup order list has been updated. Please review the orders below.",
                     when,
                     orders,
+                    link: payload.link,
+                    unsubscribeLink: payload.unsubscribeLink,
+                    staffNote,
+                    logoUrl,
+                }),
+            };
+        case client_1.AppointmentNotificationType.ReadyForPickup:
+            return {
+                subject: "Your pickup is prepared",
+                body: renderTemplate({
+                    title: "Your pickup is prepared",
+                    preheader: "Our team has pulled your items for pickup.",
+                    message: "Our team has pulled your items for your scheduled pickup.",
+                    when,
+                    orders,
+                    location: locationLine,
                     link: payload.link,
                     unsubscribeLink: payload.unsubscribeLink,
                     staffNote,

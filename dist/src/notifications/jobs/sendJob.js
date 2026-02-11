@@ -58,10 +58,20 @@ async function sendJob(prisma, job, appointment) {
             appointmentId: appointment.id,
         });
         if (job.channel === client_1.NotificationChannel.SMS || job.channel === client_1.NotificationChannel.Both) {
-            if (appointment.smsOptIn && (appointment.smsOptInPhone || appointment.customerPhone)) {
+            if (appointment.smsOptIn &&
+                !appointment.smsOptOutAt &&
+                (appointment.smsOptInPhone || appointment.customerPhone)) {
                 const sms = (0, buildSms_1.buildSmsMessage)(job.type, payload);
+                const includeStopLine = !appointment.smsFirstSentAt;
+                const smsBody = (0, buildSms_1.applySmsCompliance)(sms, includeStopLine);
                 const smsTo = appointment.smsOptInPhone || appointment.customerPhone;
-                await (0, sendSms_1.sendSms)(smsTo, sms);
+                await (0, sendSms_1.sendSms)(smsTo, smsBody);
+                if (!appointment.smsFirstSentAt) {
+                    await prisma.pickupAppointment.update({
+                        where: { id: appointment.id },
+                        data: { smsFirstSentAt: new Date() },
+                    });
+                }
             }
         }
         if (job.channel === client_1.NotificationChannel.Email || job.channel === client_1.NotificationChannel.Both) {

@@ -86,6 +86,17 @@ async function getCustomerOrderDetail(baid, orderNbr) {
         include: { appointment: true },
         orderBy: { appointment: { endAt: "desc" } },
     });
+    const salesPerson = summary.salesPersonNumber
+        ? await prisma.staffUser.findFirst({
+            where: { salespersonNumber: summary.salesPersonNumber },
+            select: {
+                salespersonNumber: true,
+                salespersonName: true,
+                salespersonPhone: true,
+                salespersonEmail: true,
+            },
+        })
+        : null;
     return {
         summary: {
             id: summary.id,
@@ -98,6 +109,15 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             customerName: summary.customerName,
             buyerGroup: summary.buyerGroup,
             noteId: summary.noteId,
+            salesPersonNumber: summary.salesPersonNumber ?? null,
+            salesPerson: salesPerson
+                ? {
+                    number: salesPerson.salespersonNumber ?? "",
+                    name: salesPerson.salespersonName ?? null,
+                    phone: salesPerson.salespersonPhone ?? null,
+                    email: salesPerson.salespersonEmail ?? null,
+                }
+                : null,
             orderType,
             fulfillmentStatus,
             paymentStatus,

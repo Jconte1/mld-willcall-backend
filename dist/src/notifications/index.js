@@ -8,12 +8,14 @@ exports.notifyStaffCancelled = notifyStaffCancelled;
 exports.notifyAppointmentRescheduled = notifyAppointmentRescheduled;
 exports.notifyAppointmentCompleted = notifyAppointmentCompleted;
 exports.notifyOrderListChanged = notifyOrderListChanged;
+exports.notifyAppointmentReady = notifyAppointmentReady;
 exports.cancelAppointmentNotifications = cancelAppointmentNotifications;
 const appointmentScheduled_1 = require("./scheduler/appointmentScheduled");
 const appointmentCancelled_1 = require("./scheduler/appointmentCancelled");
 const appointmentRescheduled_1 = require("./scheduler/appointmentRescheduled");
 const appointmentCompleted_1 = require("./scheduler/appointmentCompleted");
 const appointmentOrderListChanged_1 = require("./scheduler/appointmentOrderListChanged");
+const appointmentReady_1 = require("./scheduler/appointmentReady");
 const cancelJobs_1 = require("./scheduler/cancelJobs");
 async function notifyCustomerScheduled(prisma, appointment, orderNbrs) {
     return (0, appointmentScheduled_1.handleAppointmentScheduled)(prisma, { appointment, orderNbrs, staffCreated: false });
@@ -72,6 +74,16 @@ async function notifyOrderListChanged(prisma, appointment, orderNbrs, notifyCust
     if (!notifyCustomer)
         return;
     return (0, appointmentOrderListChanged_1.handleAppointmentOrderListChanged)(prisma, {
+        appointment,
+        orderNbrs,
+        ignoreCap,
+        staffInitiated,
+    });
+}
+async function notifyAppointmentReady(prisma, appointment, orderNbrs, notifyCustomer, ignoreCap = false, staffInitiated = false) {
+    if (!notifyCustomer)
+        return;
+    return (0, appointmentReady_1.handleAppointmentReady)(prisma, {
         appointment,
         orderNbrs,
         ignoreCap,

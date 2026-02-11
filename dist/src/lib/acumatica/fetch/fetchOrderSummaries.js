@@ -24,6 +24,7 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
         "ShipVia",
         "JobName",
         "CustomerName",
+        "DefaultSalesperson",
         "NoteID",
     ].join(",");
     const custom = "Document.AttributeBUYERGROUP";

@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
 import { fetchOrderReadyReport, OrderReadyRow } from "../../lib/acumatica/fetch/fetchOrderReadyReport";
 import { normalizeWarehouseToLocationId } from "../../lib/locationIds";
 import { buildOrderReadyLink } from "../links/buildLink";
@@ -16,7 +16,12 @@ const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
 const RUN_WINDOW_MINUTES = 12 * 60;
-const ACTIVE_APPOINTMENT_STATUSES = ["Scheduled", "Confirmed", "InProgress", "Ready"];
+const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
+  PickupAppointmentStatus.Scheduled,
+  PickupAppointmentStatus.Confirmed,
+  PickupAppointmentStatus.InProgress,
+  PickupAppointmentStatus.Ready,
+];
 
 function normalizePhone(value: string | null | undefined) {
   const digits = String(value || "").replace(/\D/g, "");

@@ -15,10 +15,22 @@ const writePaymentInfo_1 = __importDefault(require("../write/writePaymentInfo"))
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
 const prisma = new client_1.PrismaClient();
 async function refreshOrderReadyDetails(input) {
-    const { baid, orderNbr, status, locationId, shipVia } = input;
+    const { baid, orderNbr, status, locationId, shipVia, lastModified } = input;
     const restService = (0, createAcumaticaService_1.createAcumaticaService)();
     await restService.getToken();
     const now = new Date();
+    const summaryUpdate = {
+        status: status ?? "Ready",
+        locationId: locationId ?? null,
+        shipVia: shipVia ?? null,
+        lastSeenAt: now,
+        isActive: true,
+        updatedAt: now,
+        lastAcumaticaPullAt: now,
+    };
+    if (lastModified !== undefined) {
+        summaryUpdate.lastAcumaticaModifiedAt = lastModified;
+    }
     await prisma.erpOrderSummary.upsert({
         where: { baid_orderNbr: { baid, orderNbr } },
         create: {
@@ -36,15 +48,10 @@ async function refreshOrderReadyDetails(input) {
             lastSeenAt: now,
             isActive: true,
             updatedAt: now,
+            lastAcumaticaPullAt: now,
+            lastAcumaticaModifiedAt: lastModified ?? null,
         },
-        update: {
-            status: status ?? "Ready",
-            locationId: locationId ?? null,
-            shipVia: shipVia ?? null,
-            lastSeenAt: now,
-            isActive: true,
-            updatedAt: now,
-        },
+        update: summaryUpdate,
     });
     const orderNbrs = [orderNbr];
     const [addressRows, paymentRows, detailRows] = await Promise.all([

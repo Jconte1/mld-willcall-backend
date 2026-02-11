@@ -24,6 +24,7 @@ async function getCustomerOrders(baid) {
             buyerGroup: true,
             shipVia: true,
             locationId: true,
+            salesPersonNumber: true,
             ErpOrderPayment: {
                 select: {
                     unpaidBalance: true,
@@ -35,6 +36,29 @@ async function getCustomerOrders(baid) {
         },
     });
     const orderNbrs = summaries.map((summary) => summary.orderNbr);
+    const salesNumbers = Array.from(new Set(summaries
+        .map((summary) => summary.salesPersonNumber)
+        .filter((value) => Boolean(value))));
+    const salesPeople = salesNumbers.length
+        ? await prisma.staffUser.findMany({
+            where: { salespersonNumber: { in: salesNumbers } },
+            select: {
+                salespersonNumber: true,
+                salespersonName: true,
+                salespersonPhone: true,
+                salespersonEmail: true,
+            },
+        })
+        : [];
+    const salesByNumber = new Map(salesPeople.map((person) => [
+        person.salespersonNumber,
+        {
+            number: person.salespersonNumber,
+            name: person.salespersonName ?? null,
+            phone: person.salespersonPhone ?? null,
+            email: person.salespersonEmail ?? null,
+        },
+    ]));
     const appointmentOrders = orderNbrs.length
         ? await prisma.pickupAppointmentOrder.findMany({
             where: {
@@ -157,6 +181,10 @@ async function getCustomerOrders(baid) {
             buyerGroup: summary.buyerGroup,
             shipVia: summary.shipVia,
             locationId: summary.locationId,
+            salesPersonNumber: summary.salesPersonNumber ?? null,
+            salesPerson: summary.salesPersonNumber
+                ? salesByNumber.get(summary.salesPersonNumber) ?? null
+                : null,
             orderType: orderType,
             fulfillmentStatus,
             paymentStatus,

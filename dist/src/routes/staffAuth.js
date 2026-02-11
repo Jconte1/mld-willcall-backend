@@ -34,6 +34,11 @@ const LOGIN_BODY = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().min(1)
 });
+function isSalespersonProfileComplete(user) {
+    if (user.role !== "SALESPERSON")
+        return true;
+    return Boolean(user.salespersonNumber && user.salespersonName);
+}
 /**
  * POST /api/staff/login
  * Body: { email, password }
@@ -59,14 +64,27 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
     if (!secret)
         return res.status(500).json({ message: "Server misconfigured: JWT_SECRET missing" });
     const normalizedLocationAccess = (0, locationIds_1.normalizeLocationIds)(user.locationAccess ?? []);
+    console.info("[staffAuth/login] user resolved", {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        mustChangePassword: user.mustChangePassword,
+    });
     const token = jsonwebtoken_1.default.sign({
         email: user.email,
         role: user.role,
         locationAccess: normalizedLocationAccess,
-        mustChangePassword: user.mustChangePassword
+        mustChangePassword: user.mustChangePassword,
+        mustCompleteProfile: !isSalespersonProfileComplete(user)
     }, secret, {
         subject: user.id,
         expiresIn: "7d"
+    });
+    console.info("[staffAuth/login] token issued", {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        mustCompleteProfile: !isSalespersonProfileComplete(user),
     });
     return res.json({
         token,
@@ -77,6 +95,7 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
             role: user.role,
             locationAccess: normalizedLocationAccess,
             mustChangePassword: user.mustChangePassword,
+            mustCompleteProfile: !isSalespersonProfileComplete(user),
             isActive: user.isActive
         }
     });

@@ -16,6 +16,12 @@ async function handleAppointmentCancelled(prisma, input) {
         hasReason: Boolean(cancelReason),
     });
     await (0, cancelJobs_1.cancelPendingJobs)(prisma, appointment.id);
+    if (orderNbrs.length) {
+        await prisma.orderReadyNotice.updateMany({
+            where: { orderNbr: { in: orderNbrs } },
+            data: { scheduledAppointmentId: null },
+        });
+    }
     const token = await (0, tokens_1.rotateAppointmentToken)(prisma, appointment.id, appointment.endAt);
     const link = (0, buildLink_1.buildAppointmentLink)(appointment.id, token.token);
     if (!shouldNotify)

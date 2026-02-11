@@ -4,6 +4,7 @@ exports.runPendingJobs = runPendingJobs;
 const client_1 = require("@prisma/client");
 const sendJob_1 = require("./sendJob");
 const eligibility_1 = require("../rules/eligibility");
+const quietHours_1 = require("../rules/quietHours");
 const REMINDER_TYPES = new Set([
     client_1.AppointmentNotificationType.Reminder1Day,
     client_1.AppointmentNotificationType.Reminder1Hour,
@@ -36,10 +37,18 @@ async function runPendingJobs(prisma) {
             scheduledAt: job.scheduledAt.toISOString(),
         });
         if ((0, eligibility_1.shouldSkipForQuietHours)(job.scheduledAt)) {
-            console.log("[notifications][worker] skipped (quiet hours)", { id: job.id });
+            const nextAt = (0, quietHours_1.nextAllowedTime)(new Date());
+            console.log("[notifications][worker] deferred (quiet hours)", {
+                id: job.id,
+                nextAt: nextAt.toISOString(),
+            });
             await prisma.appointmentNotificationJob.update({
                 where: { id: job.id },
-                data: { status: client_1.NotificationJobStatus.Skipped, lastAttemptAt: new Date() },
+                data: {
+                    status: client_1.NotificationJobStatus.Pending,
+                    scheduledAt: nextAt,
+                    lastAttemptAt: new Date(),
+                },
             });
             continue;
         }

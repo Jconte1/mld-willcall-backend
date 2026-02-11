@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildAppointmentLink = buildAppointmentLink;
 exports.buildOrderReadyLink = buildOrderReadyLink;
 exports.buildUnsubscribeLink = buildUnsubscribeLink;
+exports.buildAppointmentSmsLink = buildAppointmentSmsLink;
+exports.buildOrderReadySmsLink = buildOrderReadySmsLink;
 function buildAppointmentLink(appointmentId, token) {
     const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "");
     return `${base}/appointments/${appointmentId}?token=${encodeURIComponent(token)}`;
@@ -24,4 +26,16 @@ function buildUnsubscribeLink(appointmentId, token) {
     if (!base)
         return "";
     return `${base}/api/public/appointments/${appointmentId}/unsubscribe?token=${encodeURIComponent(token)}`;
+}
+function buildAppointmentSmsLink(token) {
+    const base = getBackendBaseUrl();
+    if (!base)
+        return "";
+    return `${base}/api/public/appointments/short/${encodeURIComponent(token)}`;
+}
+function buildOrderReadySmsLink(token) {
+    const base = getBackendBaseUrl();
+    if (!base)
+        return "";
+    return `${base}/api/public/order-ready/short/${encodeURIComponent(token)}`;
 }

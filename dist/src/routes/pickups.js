@@ -12,6 +12,7 @@ exports.pickupsRouter = (0, express_1.Router)();
 const LOCATION_IDS = ["slc-hq", "slc-outlet", "boise-willcall"];
 exports.pickupsRouter.use(auth_1.requireAuth);
 exports.pickupsRouter.use(auth_1.blockIfMustChangePassword);
+exports.pickupsRouter.use(auth_1.blockIfMustCompleteProfile);
 const STATUS = zod_1.z.enum([
     "Scheduled",
     "Confirmed",
@@ -33,13 +34,18 @@ const selectedItemsSchema = zod_1.z.object({
     orderNbr: zod_1.z.string().min(1),
     items: zod_1.z.array(selectedItemSchema),
 });
+const SHIPMENT_FORMAT = /^SMT\d{7}$/;
+const shipmentUpdateSchema = zod_1.z.object({
+    orderNbr: zod_1.z.string().min(1),
+    shipmentNbrs: zod_1.z.array(zod_1.z.string().min(1)).default([]),
+});
 function canAccessLocation(req, locationId) {
     if (req.auth.role === "ADMIN")
         return true;
     return (0, locationIds_1.expandLocationIds)(req.auth.locationAccess ?? []).includes(locationId);
 }
 function canWritePickups(req) {
-    return req.auth?.role !== "VIEWER";
+    return req.auth?.role !== "VIEWER" && req.auth?.role !== "SALESPERSON";
 }
 function normalizeSelections(selectedItems, allowedOrders) {
     if (!selectedItems?.length)
@@ -101,6 +107,17 @@ function areSelectedItemsEqual(a, b) {
         item.inventoryId === right[idx].inventoryId &&
         item.qty === right[idx].qty);
 }
+function normalizeShipmentNbr(input) {
+    return input.trim().toUpperCase();
+}
+function validateShipmentNbrs(input) {
+    const normalized = input.map(normalizeShipmentNbr).filter(Boolean);
+    const invalid = normalized.find((value) => !SHIPMENT_FORMAT.test(value));
+    if (invalid) {
+        return { ok: false, invalid };
+    }
+    return { ok: true, values: Array.from(new Set(normalized)) };
+}
 /**
  * GET /api/staff/pickups
  * Optional query: locationId, status, from, to
@@ -108,12 +125,27 @@ function areSelectedItemsEqual(a, b) {
 exports.pickupsRouter.get("/", async (req, res) => {
     if (!req.auth)
         return res.status(401).json({ message: "Unauthenticated" });
+    console.info("[staff-pickups] request", {
+        id: req.auth.id,
+        email: req.auth.email,
+        role: req.auth.role,
+        mustChangePassword: req.auth.mustChangePassword,
+        mustCompleteProfile: req.auth.mustCompleteProfile,
+        locationAccess: req.auth.locationAccess ?? [],
+        query: req.query,
+    });
     const auth = req.auth;
     const locationId = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
     const status = typeof req.query.status === "string" ? req.query.status : undefined;
     const from = typeof req.query.from === "string" ? req.query.from : undefined;
     const to = typeof req.query.to === "string" ? req.query.to : undefined;
     if (locationId && !canAccessLocation(req, locationId)) {
+        console.warn("[staff-pickups] forbidden location", {
+            id: auth.id,
+            role: auth.role,
+            locationId,
+            locationAccess: auth.locationAccess ?? [],
+        });
         return res.status(403).json({ message: "Forbidden" });
     }
     const where = {};
@@ -152,7 +184,7 @@ exports.pickupsRouter.get("/", async (req, res) => {
     const pickups = await prisma.pickupAppointment.findMany({
         where,
         orderBy: { startAt: "asc" },
-        include: { orders: true },
+        include: { orders: true, shipments: true },
     });
     const normalized = pickups.map((pickup) => ({
         ...pickup,
@@ -260,7 +292,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
 exports.pickupsRouter.get("/:id", async (req, res) => {
     const pickup = await prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
-        include: { orders: true },
+        include: { orders: true, shipments: true },
     });
     if (!pickup)
         return res.status(404).json({ message: "Not found" });
@@ -279,7 +311,7 @@ exports.pickupsRouter.get("/:id", async (req, res) => {
 exports.pickupsRouter.get("/:id/items", async (req, res) => {
     const pickup = await prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
-        include: { orders: true, lines: true },
+        include: { orders: true, lines: true, shipments: true },
     });
     if (!pickup)
         return res.status(404).json({ message: "Not found" });
@@ -304,6 +336,91 @@ exports.pickupsRouter.get("/:id/items", async (req, res) => {
         orderNbrs,
         lines: pickup.lines,
         orderLines,
+        shipments: pickup.shipments,
+    });
+});
+/**
+ * PATCH /api/staff/pickups/:id/shipments
+ * Body: { shipments: [{ orderNbr, shipmentNbrs: string[] }] }
+ */
+exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
+    if (!canWritePickups(req)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const body = zod_1.z
+        .object({
+        shipments: zod_1.z.array(shipmentUpdateSchema),
+    })
+        .safeParse(req.body);
+    if (!body.success)
+        return res.status(400).json({ message: "Invalid request body" });
+    const appointment = await prisma.pickupAppointment.findUnique({
+        where: { id: req.params.id },
+        include: { orders: true, shipments: true },
+    });
+    if (!appointment)
+        return res.status(404).json({ message: "Not found" });
+    if (!canAccessLocation(req, appointment.locationId)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const allowedOrders = new Set(appointment.orders.map((order) => order.orderNbr));
+    const incoming = body.data.shipments;
+    for (const entry of incoming) {
+        if (!allowedOrders.has(entry.orderNbr)) {
+            return res.status(400).json({ message: "Invalid order for appointment." });
+        }
+        const validation = validateShipmentNbrs(entry.shipmentNbrs);
+        if (!validation.ok) {
+            return res.status(400).json({
+                message: "Invalid shipment number format.",
+                shipmentNbr: validation.invalid,
+            });
+        }
+    }
+    const shipmentRows = incoming.flatMap((entry) => {
+        const validation = validateShipmentNbrs(entry.shipmentNbrs);
+        if (!validation.ok)
+            return [];
+        return validation.values.map((shipmentNbr) => ({
+            appointmentId: appointment.id,
+            orderNbr: entry.orderNbr,
+            shipmentNbr,
+            createdByUserId: req.auth?.id ?? null,
+        }));
+    });
+    await prisma.$transaction(async (tx) => {
+        const orderNbrs = incoming.map((entry) => entry.orderNbr);
+        if (orderNbrs.length) {
+            await tx.pickupAppointmentShipment.deleteMany({
+                where: { appointmentId: appointment.id, orderNbr: { in: orderNbrs } },
+            });
+        }
+        if (shipmentRows.length) {
+            await tx.pickupAppointmentShipment.createMany({ data: shipmentRows });
+        }
+        const shipmentsByOrder = incoming.reduce((map, entry) => {
+            map.set(entry.orderNbr, entry.shipmentNbrs.filter(Boolean));
+            return map;
+        }, new Map());
+        const allShipped = appointment.orders.every((order) => (shipmentsByOrder.get(order.orderNbr) ?? []).length > 0);
+        if (appointment.status === "Ready" && !allShipped) {
+            await tx.pickupAppointment.update({
+                where: { id: appointment.id },
+                data: { status: "Scheduled" },
+            });
+        }
+    });
+    const updated = await prisma.pickupAppointment.findUnique({
+        where: { id: appointment.id },
+        include: { orders: true, shipments: true },
+    });
+    return res.json({
+        pickup: {
+            ...updated,
+            locationId: updated
+                ? (0, locationIds_1.normalizeLocationId)(updated.locationId) ?? updated.locationId
+                : appointment.locationId,
+        },
     });
 });
 /**
@@ -441,11 +558,18 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
             else {
                 await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
             }
+            if (updated.status === "Ready") {
+                await (0, notifications_1.notifyAppointmentReady)(prisma, updated, effectiveOrderNbrs, true, true, true);
+            }
         }
         if (statusChanged && body.data.status === "Completed") {
             await (0, notifications_1.notifyAppointmentCompleted)(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
         }
+        if (statusChanged && body.data.status === "Ready") {
+            await (0, notifications_1.notifyAppointmentReady)(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
+        }
         if (statusChanged && body.data.status === "Cancelled") {
+            await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
             await (0, notifications_1.notifyStaffCancelled)(prisma, updated, effectiveOrderNbrs, cancelReason, notifyCustomer);
         }
         if (statusChanged && body.data.status === "NoShow") {

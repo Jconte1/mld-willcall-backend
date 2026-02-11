@@ -8,6 +8,7 @@ const eligibility_1 = require("../rules/eligibility");
 const cancelJobs_1 = require("./cancelJobs");
 const sendImmediate_1 = require("./sendImmediate");
 async function handleAppointmentCompleted(prisma, input) {
+    // TODO: Completed notifications still honor NOTIFICATIONS_TEST_EMAIL; switch to live recipients before production.
     const now = new Date();
     const { appointment, orderNbrs, ignoreCap, staffInitiated } = input;
     console.log("[notifications] completed", {
@@ -15,6 +16,12 @@ async function handleAppointmentCompleted(prisma, input) {
         orderCount: orderNbrs.length,
     });
     await (0, cancelJobs_1.cancelPendingJobs)(prisma, appointment.id);
+    if (orderNbrs.length) {
+        await prisma.orderReadyNotice.updateMany({
+            where: { orderNbr: { in: orderNbrs } },
+            data: { scheduledAppointmentId: null },
+        });
+    }
     if (!ignoreCap && (await (0, eligibility_1.hasReachedNotificationCap)(prisma, appointment.id)))
         return;
     if ((0, eligibility_1.shouldSkipForQuietHours)(now))

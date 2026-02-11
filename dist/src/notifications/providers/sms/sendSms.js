@@ -1,17 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendSms = sendSms;
-function resolveRecipient(phone) {
-    if (process.env.NODE_ENV !== "production") {
-        return process.env.NOTIFICATIONS_TEST_PHONE || "";
+function resolveRecipient(phone, { allowTestOverride = true } = {}) {
+    const testPhone = process.env.NOTIFICATIONS_TEST_PHONE || "";
+    if (allowTestOverride && testPhone) {
+        return testPhone;
     }
     return phone;
 }
-async function sendSms(to, body) {
+async function sendSms(to, body, options = {}) {
     const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
     const authToken = process.env.TWILIO_AUTH_TOKEN || "";
     const from = process.env.TWILIO_FROM_NUMBER || "";
-    const recipient = resolveRecipient(to);
+    const recipient = resolveRecipient(to, options);
     if (!recipient) {
         console.log("[notifications][sms] skipped (no recipient)", { to });
         return { ok: true, skipped: true };

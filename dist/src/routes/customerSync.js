@@ -41,7 +41,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
     if (existing?.inProgress && existing.inProgressSince) {
         const age = now.getTime() - new Date(existing.inProgressSince).getTime();
         if (age < IN_PROGRESS_GRACE_MS) {
-            console.log("[customer-sync] skip (in-progress)", { baid, ageMs: age });
+            console.log("[customer-sync] skip (in-progress)", { baid, ageMs: age, source: "db" });
             return res.json({
                 status: "in-progress",
                 lastSyncAt: existing.lastSyncAt,
@@ -52,14 +52,14 @@ exports.customerSyncRouter.post("/", async (req, res) => {
     if (existing?.lastSyncAt) {
         const age = now.getTime() - new Date(existing.lastSyncAt).getTime();
         if (age < STALE_MS) {
-            console.log("[customer-sync] skip (fresh)", { baid, ageMs: age });
+            console.log("[customer-sync] skip (fresh)", { baid, ageMs: age, source: "db" });
             return res.json({ status: "fresh", lastSyncAt: existing.lastSyncAt });
         }
     }
     if (existing?.lastErrorAt) {
         const age = now.getTime() - new Date(existing.lastErrorAt).getTime();
         if (age < FAILURE_BACKOFF_MS) {
-            console.log("[customer-sync] skip (backoff)", { baid, ageMs: age });
+            console.log("[customer-sync] skip (backoff)", { baid, ageMs: age, source: "db" });
             return res.json({
                 status: "backoff",
                 lastSyncAt: existing.lastSyncAt,
@@ -86,7 +86,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
         const sinceLiteral = existing?.lastSyncAt
             ? (0, denver_1.toDenverDateTimeOffsetLiteralAt)(existing.lastSyncAt)
             : undefined;
-        console.log("[customer-sync] run", { baid });
+        console.log("[customer-sync] run", { baid, source: "acumatica" });
         const result = await (0, syncCustomerAccount_1.runCustomerDeltaSync)(baid, { sinceLiteral });
         const finishedAt = new Date();
         await prisma.baidSyncState.update({

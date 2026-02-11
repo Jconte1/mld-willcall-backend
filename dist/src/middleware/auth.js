@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireAuth = requireAuth;
 exports.blockIfMustChangePassword = blockIfMustChangePassword;
+exports.blockIfMustCompleteProfile = blockIfMustCompleteProfile;
 exports.requireRole = requireRole;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 function requireAuth(req, res, next) {
@@ -23,7 +24,8 @@ function requireAuth(req, res, next) {
             email: decoded.email,
             role: decoded.role,
             locationAccess: decoded.locationAccess ?? [],
-            mustChangePassword: Boolean(decoded.mustChangePassword)
+            mustChangePassword: Boolean(decoded.mustChangePassword),
+            mustCompleteProfile: Boolean(decoded.mustCompleteProfile)
         };
         return next();
     }
@@ -37,6 +39,12 @@ function requireAuth(req, res, next) {
 function blockIfMustChangePassword(req, res, next) {
     if (req.auth?.mustChangePassword) {
         return res.status(403).json({ code: "MUST_CHANGE_PASSWORD", message: "Password change required" });
+    }
+    return next();
+}
+function blockIfMustCompleteProfile(req, res, next) {
+    if (req.auth?.mustCompleteProfile) {
+        return res.status(403).json({ code: "MUST_COMPLETE_PROFILE", message: "Profile completion required" });
     }
     return next();
 }

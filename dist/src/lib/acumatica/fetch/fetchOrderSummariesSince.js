@@ -37,6 +37,7 @@ async function fetchOrderSummariesSince(restService, baid, { sinceLiteral, pageS
         "ShipVia",
         "JobName",
         "CustomerName",
+        "DefaultSalesperson",
         "NoteID",
         "LastModified",
     ].join(",");

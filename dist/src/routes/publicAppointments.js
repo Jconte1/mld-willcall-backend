@@ -160,6 +160,25 @@ async function getLatestLink(appointmentId) {
     return (0, buildLink_1.buildAppointmentLink)(appointmentId, token.token);
 }
 /**
+ * GET /api/public/appointments/short/:token
+ */
+exports.publicAppointmentsRouter.get("/short/:token", async (req, res) => {
+    const tokenValue = req.params.token;
+    const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+    const token = await prisma.appointmentAccessToken.findFirst({
+        where: {
+            token: tokenValue,
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
+        },
+    });
+    if (!token) {
+        return res.redirect(`${frontend}/appointments/invalid`);
+    }
+    const longLink = (0, buildLink_1.buildAppointmentLink)(token.appointmentId, tokenValue);
+    return res.redirect(longLink);
+});
+/**
  * GET /api/public/appointments/:id?token=...
  */
 exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
@@ -177,32 +196,24 @@ exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
     const orderNbrs = appointment.orders.map((order) => order.orderNbr);
-    const lines = orderNbrs.length
-        ? await prisma.erpOrderLine.findMany({
-            where: { orderNbr: { in: orderNbrs } },
-            select: {
-                orderNbr: true,
-                inventoryId: true,
-                lineDescription: true,
-                openQty: true,
-                orderQty: true,
-                allocatedQty: true,
-                isAllocated: true,
-            },
-            orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
-        })
-        : [];
+    const selectedLines = await prisma.pickupAppointmentLine.findMany({
+        where: { appointmentId: appointment.id },
+        select: {
+            orderNbr: true,
+            inventoryId: true,
+            lineDescription: true,
+            qtySelected: true,
+        },
+        orderBy: [{ orderNbr: "asc" }, { inventoryId: "asc" }],
+    });
     const orderLines = orderNbrs.map((orderNbr) => ({
         orderNbr,
-        items: lines
+        items: selectedLines
             .filter((line) => line.orderNbr === orderNbr)
             .map((line) => ({
             inventoryId: line.inventoryId,
             lineDescription: line.lineDescription,
-            openQty: (0, orderHelpers_1.toNumber)(line.openQty),
-            orderQty: (0, orderHelpers_1.toNumber)(line.orderQty),
-            allocatedQty: (0, orderHelpers_1.toNumber)(line.allocatedQty),
-            isAllocated: line.isAllocated,
+            qty: (0, orderHelpers_1.toNumber)(line.qtySelected),
         })),
     }));
     return res.json({ appointment, orderLines });
@@ -254,10 +265,10 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     });
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
-    if (appointment.status === client_1.PickupAppointmentStatus.Cancelled) {
-        return res.json({ appointment });
-    }
     if (action === "cancel") {
+        if (appointment.status === client_1.PickupAppointmentStatus.Cancelled) {
+            return res.json({ appointment });
+        }
         const parsed = cancelSchema.safeParse(req.body);
         if (!parsed.success)
             return res.status(400).json({ message: "Invalid request body" });
@@ -265,6 +276,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
             where: { id: appointment.id },
             data: { status: client_1.PickupAppointmentStatus.Cancelled },
         });
+        await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
         await (0, notifications_1.notifyCustomerCancelled)(prisma, updated, appointment.orders.map((o) => o.orderNbr));
         const nextLink = await getLatestLink(updated.id);
         return res.json({ appointment: updated, nextLink });
@@ -276,7 +288,6 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     const disallowedStatuses = [
         client_1.PickupAppointmentStatus.Completed,
         client_1.PickupAppointmentStatus.NoShow,
-        client_1.PickupAppointmentStatus.Cancelled,
     ];
     if (disallowedStatuses.includes(appointment.status)) {
         return res.status(409).json({ message: "Appointment cannot be rescheduled." });

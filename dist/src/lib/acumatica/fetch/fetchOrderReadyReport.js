@@ -77,6 +77,18 @@ async function fetchOrderReadyReport() {
             "AttributeDELEMAIL",
             "SOOrder_AttributeDELEMAIL",
         ]),
+        attributeSmsTxt: pickField(row, [
+            "TextNotification",
+            "AttributeSMSTXT",
+            "SOOrder_AttributeSMSTXT",
+            "SOOrder.AttributeSMSTXT",
+        ]),
+        attributeEmailNoty: pickField(row, [
+            "EmailNotification",
+            "AttributeEMAILNOTY",
+            "SOOrder_AttributeEMAILNOTY",
+            "SOOrder.AttributeEMAILNOTY",
+        ]),
         warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
         inventoryId: pickField(row, [
             "InventoryID",

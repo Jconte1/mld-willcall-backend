@@ -37,6 +37,7 @@ function mapOrderSummaryRows(rawRows) {
         const shipVia = firstVal(row, ["ShipVia", "shipVia"]);
         const jobName = firstVal(row, ["JobName", "jobName"]);
         const customerName = firstVal(row, ["CustomerName", "customerName"]);
+        const salesPersonNumber = firstVal(row, ["DefaultSalesperson", "defaultSalesperson"]);
         const buyerGroup = firstVal(row, [
             "custom.Document.AttributeBUYERGROUP",
             "Document.AttributeBUYERGROUP",
@@ -57,6 +58,7 @@ function mapOrderSummaryRows(rawRows) {
             customerName: optStr(customerName),
             buyerGroup: optStr(buyerGroup),
             noteId: optStr(noteId),
+            salesPersonNumber: optStr(salesPersonNumber),
         });
     }
     return incoming;
@@ -77,6 +79,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
             customerName: true,
             buyerGroup: true,
             noteId: true,
+            salesPersonNumber: true,
         },
     });
     const byNbr = new Map(existing.map((r) => [r.orderNbr, r]));
@@ -95,7 +98,8 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
                 (r.jobName || null) !== (prev.jobName || null) ||
                 (r.customerName || null) !== (prev.customerName || null) ||
                 (r.buyerGroup || null) !== (prev.buyerGroup || null) ||
-                (r.noteId || null) !== (prev.noteId || null);
+                (r.noteId || null) !== (prev.noteId || null) ||
+                (r.salesPersonNumber || null) !== (prev.salesPersonNumber || null);
             if (changed)
                 toUpdate.push(r);
         }
@@ -117,6 +121,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
                 isActive: true,
                 buyerGroup: r.buyerGroup ?? "",
                 noteId: r.noteId ?? "",
+                salesPersonNumber: r.salesPersonNumber ?? null,
                 updatedAt: now,
             })),
             skipDuplicates: true,
@@ -138,6 +143,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
                     deliveryDate: r.deliveryDate,
                     buyerGroup: r.buyerGroup ?? "",
                     noteId: r.noteId ?? "",
+                    salesPersonNumber: r.salesPersonNumber ?? null,
                     lastSeenAt: now,
                     isActive: true,
                 },
@@ -174,6 +180,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
             customerName: true,
             buyerGroup: true,
             noteId: true,
+            salesPersonNumber: true,
             isActive: true,
         },
     });
@@ -195,6 +202,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
                 (r.customerName || null) !== (prev.customerName || null) ||
                 (r.buyerGroup || null) !== (prev.buyerGroup || null) ||
                 (r.noteId || null) !== (prev.noteId || null) ||
+                (r.salesPersonNumber || null) !== (prev.salesPersonNumber || null) ||
                 nextActive !== Boolean(prev.isActive);
             if (changed)
                 toUpdate.push(r);
@@ -217,6 +225,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
                 isActive: shouldBeActive(r.status),
                 buyerGroup: r.buyerGroup ?? "",
                 noteId: r.noteId ?? "",
+                salesPersonNumber: r.salesPersonNumber ?? null,
                 updatedAt: now,
             })),
             skipDuplicates: true,
@@ -238,6 +247,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
                     deliveryDate: r.deliveryDate,
                     buyerGroup: r.buyerGroup ?? "",
                     noteId: r.noteId ?? "",
+                    salesPersonNumber: r.salesPersonNumber ?? null,
                     lastSeenAt: now,
                     isActive: shouldBeActive(r.status),
                 },
