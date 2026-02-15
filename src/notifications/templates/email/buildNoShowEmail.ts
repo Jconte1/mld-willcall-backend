@@ -62,10 +62,10 @@ function renderNoShowTemplate({
                   </tr>
                 </table>
 
-                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Reschedule pickup</a>
+                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Manage appointment</a>
 
                 <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#6b7280;">
-                  This link is secure and can be used to reschedule your pickup.
+                  This link is secure and can be used to view or update your appointment.
                 </p>
               </td>
             </tr>

@@ -5,6 +5,8 @@ import { sendSms } from "../providers/sms/sendSms";
 import { cancelPendingJobs } from "../scheduler/cancelJobs";
 import { buildNoShowEmail } from "../templates/email/buildNoShowEmail";
 import { startOfDayDenver } from "../../lib/time/denver";
+import { buildAppointmentLink } from "../links/buildLink";
+import { rotateAppointmentToken } from "../links/tokens";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
@@ -61,7 +63,9 @@ async function markRun(prisma: PrismaClient, now: Date) {
   });
 }
 
-async function sendNoShowNotifications(appointment: {
+async function sendNoShowNotifications(
+  prisma: PrismaClient,
+  appointment: {
   id: string;
   startAt: Date;
   endAt: Date;
@@ -72,14 +76,15 @@ async function sendNoShowNotifications(appointment: {
   smsOptInPhone: string | null;
   customerPhone: string | null;
   orders: { orderNbr: string }[];
-}) {
+  }
+) {
   const when = formatDenverDateTime(appointment.startAt);
   const orderList = formatOrderList(appointment.orders.map((o) => o.orderNbr));
+  const token = await rotateAppointmentToken(prisma, appointment.id, appointment.endAt);
+  const link = buildAppointmentLink(appointment.id, token.token);
 
   if (appointment.emailOptIn) {
     const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-    const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
-    const link = frontendUrl ? `${frontendUrl}/` : "https://mld-willcall.vercel.app";
     const message = buildNoShowEmail(when, orderList, link);
     await sendEmail(recipient, message.subject, message.body);
   }
@@ -87,7 +92,7 @@ async function sendNoShowNotifications(appointment: {
   if (appointment.smsOptIn) {
     const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
     if (smsTo) {
-      const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP.`;
+      const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP. Manage: ${link}`;
       await sendSms(smsTo, smsBody);
     }
   }
@@ -128,7 +133,7 @@ export async function runNoShowSweep(prisma: PrismaClient) {
         data: { scheduledAppointmentId: null },
       });
     }
-    await sendNoShowNotifications({
+    await sendNoShowNotifications(prisma, {
       id: updated.id,
       startAt: updated.startAt,
       endAt: updated.endAt,
