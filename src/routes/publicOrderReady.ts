@@ -58,6 +58,25 @@ function normalizePhone(value: string | null | undefined) {
   return digits || null;
 }
 
+function normalizeEmail(value: string | null | undefined) {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
+function resolveNoticePhone(notice: {
+  attributeSmsTxt?: string | null;
+  contactPhone?: string | null;
+}) {
+  return normalizePhone(notice.attributeSmsTxt) || normalizePhone(notice.contactPhone);
+}
+
+function resolveNoticeEmail(notice: {
+  attributeEmailNoty?: string | null;
+  contactEmail?: string | null;
+}) {
+  return normalizeEmail(notice.attributeEmailNoty) || normalizeEmail(notice.contactEmail);
+}
+
 function getClientIp(req: any) {
   const xf = (req.headers["x-forwarded-for"] as string | undefined) || "";
   if (xf) return xf.split(",")[0].trim();
@@ -256,7 +275,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "OrderReadyLine (empty)",
   });
 
-  const lines =
+  let lines =
     readyInventoryIds.size === 0
       ? []
       : await prisma.erpOrderLine.findMany({
@@ -278,6 +297,43 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
           },
           orderBy: { inventoryId: "asc" },
         });
+  if (readyInventoryIds.size > 0 && lines.length === 0 && notice.baid) {
+    console.log("[order-ready] forcing detail refresh because lines are missing", {
+      orderNbr,
+      baid: notice.baid,
+      readyInventoryIds: Array.from(readyInventoryIds),
+    });
+    try {
+      await refreshOrderReadyDetails({
+        baid: notice.baid,
+        orderNbr,
+        status: notice.status,
+        locationId: notice.locationId,
+        shipVia: notice.shipVia,
+      });
+      lines = await prisma.erpOrderLine.findMany({
+        where: {
+          orderNbr,
+          inventoryId: { in: Array.from(readyInventoryIds) },
+        },
+        select: {
+          id: true,
+          inventoryId: true,
+          lineDescription: true,
+          warehouse: true,
+          openQty: true,
+          orderQty: true,
+          allocatedQty: true,
+          isAllocated: true,
+          amount: true,
+          taxRate: true,
+        },
+        orderBy: { inventoryId: "asc" },
+      });
+    } catch (err) {
+      console.error("[order-ready] forced refresh failed", { orderNbr, err });
+    }
+  }
   mark("orderLinesDb");
 
   const orderLines = lines.map((line) => ({
@@ -319,6 +375,9 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   mark("paymentDb");
   finalizeTiming();
 
+  const resolvedContactPhone = resolveNoticePhone(notice);
+  const resolvedContactEmail = resolveNoticeEmail(notice);
+
   return res.json({
     orderReady: {
       orderNbr: notice.orderNbr,
@@ -330,8 +389,8 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       customerId: notice.customerId,
       customerLocationId: notice.customerLocationId,
       contactName: notice.contactName,
-      contactPhone: notice.contactPhone,
-      contactEmail: notice.contactEmail,
+      contactPhone: resolvedContactPhone,
+      contactEmail: resolvedContactEmail,
       locationId: notice.locationId,
       smsOptIn: notice.smsOptIn,
       salesPersonNumber,
@@ -413,8 +472,8 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
     where: { orderNbr },
   });
 
-  const contactEmail = (notice?.contactEmail || "").toLowerCase().trim() || null;
-  const contactPhone = normalizePhone(notice?.contactPhone);
+  const contactEmail = notice ? resolveNoticeEmail(notice) : null;
+  const contactPhone = notice ? resolveNoticePhone(notice) : null;
   const match =
     (email && contactEmail && email === contactEmail) ||
     (phone && contactPhone && phone === contactPhone);

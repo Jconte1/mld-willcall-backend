@@ -74,7 +74,6 @@ export default async function fetchInventoryDetails(
       "Pending Approval",
       "Rejected",
       "Pending Processing",
-      "Awaiting Payment",
       "Credit Hold",
       "Completed",
       "Invoiced",
