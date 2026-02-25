@@ -1,6 +1,6 @@
 import https from "node:https";
 import { oneYearAgoDenver, toDenverDateTimeOffsetLiteral } from "../../time/denver";
-import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import { queueErpJobRequest, shouldUseQueueErp } from "../../queue/erpClient";
 import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
@@ -24,13 +24,12 @@ export default async function fetchOrderSummaries(
   const maxPages = Number.isFinite(envMax) && envMax > 0 ? envMax : (maxPagesArg || 50);
 
   if (shouldUseQueueErp()) {
-    const params = new URLSearchParams({
+    const resp = await queueErpJobRequest<QueueRowsResponse<AnyRow>>("/api/erp/jobs/orders/summaries", {
       baid,
-      pageSize: String(pageSize),
-      maxPages: String(maxPages),
-      useOrderBy: String(Boolean(useOrderBy)),
+      pageSize,
+      maxPages,
+      useOrderBy: Boolean(useOrderBy),
     });
-    const resp = await queueErpRequest<QueueRowsResponse<AnyRow>>(`/api/erp/orders/summaries?${params.toString()}`);
     const rows = Array.isArray(resp?.rows) ? resp.rows : [];
     console.log(`[fetchOrderSummaries][queue] baid=${baid} totalRows=${rows.length}`);
     return rows;

@@ -1,7 +1,7 @@
 import https from "node:https";
 
 import AcumaticaService from "./auth/acumaticaService";
-import { queueErpRequest, shouldUseQueueErp } from "../queue/erpClient";
+import { queueErpJobRequest, shouldUseQueueErp } from "../queue/erpClient";
 import type { QueueVerifyCustomerResponse } from "../queue/contracts";
 
 function requireEnv(name: string): string {
@@ -111,9 +111,9 @@ async function fetchCustomerRowsByBaid(
 }
 
 async function verifyBaidViaQueue(baid: string, zip: string): Promise<boolean> {
-  const resp = await queueErpRequest<QueueVerifyCustomerResponse>("/api/erp/customers/verify", {
-    method: "POST",
-    body: { customerId: baid, zip5: zip },
+  const resp = await queueErpJobRequest<QueueVerifyCustomerResponse>("/api/erp/jobs/customers/verify", {
+    customerId: baid,
+    zip5: zip,
   });
   return Boolean(resp?.matched);
 }

@@ -1,4 +1,4 @@
-import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import { queueErpJobRequest, shouldUseQueueErp } from "../../queue/erpClient";
 import type { QueueRowsResponse } from "../../queue/contracts";
 
 export type OrderReadyRow = {
@@ -47,7 +47,10 @@ function parseBoolean(value: any) {
 
 async function fetchRawRows() {
   if (shouldUseQueueErp()) {
-    const resp = await queueErpRequest<QueueRowsResponse<Record<string, any>>>("/api/erp/reports/order-ready");
+    const resp = await queueErpJobRequest<QueueRowsResponse<Record<string, any>>>(
+      "/api/erp/jobs/reports/order-ready",
+      {}
+    );
     return Array.isArray(resp?.rows) ? resp.rows : [];
   }
 
