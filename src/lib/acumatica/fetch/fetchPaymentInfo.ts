@@ -1,4 +1,6 @@
 import https from "node:https";
+import { queueErpJobRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -18,6 +20,16 @@ export default async function fetchPaymentInfo(
   if (!Array.isArray(orderNbrs) || !orderNbrs.length) {
     console.log(`[fetchPaymentInfo] baid=${baid} no orderNbrs provided`);
     return [];
+  }
+
+  if (shouldUseQueueErp()) {
+    const resp = await queueErpJobRequest<QueueRowsResponse<AnyRow>>("/api/erp/jobs/orders/payment-info", {
+      baid,
+      orderNbrs,
+    });
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    console.log(`[fetchPaymentInfo][queue] baid=${baid} totalRows=${rows.length}`);
+    return rows;
   }
 
   const token = await restService.getToken();

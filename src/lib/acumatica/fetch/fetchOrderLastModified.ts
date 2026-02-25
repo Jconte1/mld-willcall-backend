@@ -1,4 +1,6 @@
 import { createAcumaticaService } from "../createAcumaticaService";
+import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueOrderLastModifiedResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -12,6 +14,16 @@ export async function fetchOrderLastModified(
   orderNbr: string,
   restService?: { baseUrl: string; getToken: () => Promise<string> }
 ) {
+  if (shouldUseQueueErp()) {
+    const params = new URLSearchParams({ baid, orderNbr });
+    const resp = await queueErpRequest<QueueOrderLastModifiedResponse>(
+      `/api/erp/orders/last-modified?${params.toString()}`
+    );
+    const raw = resp?.lastModified ?? null;
+    const parsed = raw ? new Date(raw) : null;
+    return { lastModified: parsed && !Number.isNaN(parsed.getTime()) ? parsed : null, raw };
+  }
+
   const service = restService ?? createAcumaticaService();
   const token = await service.getToken();
 

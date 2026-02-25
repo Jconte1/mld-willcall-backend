@@ -639,11 +639,14 @@ model OrderReadyNotice {
   attributeDelEmail    String?                  @db.VarChar(256)
   attributeSmsTxt      String?                  @db.VarChar(256)
   attributeEmailNoty   String?                  @db.VarChar(256)
+  attributeSmsOptIn    Boolean?
+  attributeEmailOptIn  Boolean?
   contactName          String?                  @db.VarChar(256)
   contactPhone         String?                  @db.VarChar(64)
   contactEmail         String?                  @db.VarChar(256)
   locationId           String?                  @db.VarChar(64)
   smsOptIn             Boolean                  @default(false)
+  emailOptIn           Boolean                  @default(false)
   smsOptOutAt          DateTime?
   smsOptOutReason      String?                  @db.VarChar(64)
   smsFirstSentAt       DateTime?

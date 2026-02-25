@@ -1,4 +1,6 @@
 import { denver3amWindowStartLiteral } from "../../time/denver";
+import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -40,8 +42,6 @@ export default async function fetchOrderSummariesSince(
     useOrderBy?: boolean;
   } = {}
 ): Promise<AnyRow[]> {
-  const token = await restService.getToken();
-
   const envPage = Number(process.env.ACU_PAGE_SIZE || "");
   const pageSize =
     Number.isFinite(envPage) && envPage > 0 ? envPage : pageSizeArg || DEFAULT_PAGE_SIZE;
@@ -49,6 +49,25 @@ export default async function fetchOrderSummariesSince(
   const maxPages =
     Number.isFinite(envMax) && envMax > 0 ? envMax : maxPagesArg || DEFAULT_MAX_PAGES;
 
+  const since = normalizeDatetimeOffsetLiteral(
+    sinceLiteral ?? denver3amWindowStartLiteral(new Date())
+  );
+
+  if (shouldUseQueueErp()) {
+    const params = new URLSearchParams({
+      baid,
+      since,
+      pageSize: String(pageSize),
+      maxPages: String(maxPages),
+      useOrderBy: String(Boolean(useOrderBy)),
+    });
+    const resp = await queueErpRequest<QueueRowsResponse<AnyRow>>(`/api/erp/orders/summaries/delta?${params.toString()}`);
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    console.log(`[fetchOrderSummariesSince][queue] baid=${baid} totalRows=${rows.length}`);
+    return rows;
+  }
+
+  const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
   const select = [
     "OrderNbr",
@@ -63,11 +82,6 @@ export default async function fetchOrderSummariesSince(
     "LastModified",
   ].join(",");
   const custom = "Document.AttributeBUYERGROUP";
-
-  // TODO: Confirm the ERP last-modified field name if this ever errors.
-  const since = normalizeDatetimeOffsetLiteral(
-    sinceLiteral ?? denver3amWindowStartLiteral(new Date())
-  );
 
   const all: AnyRow[] = [];
   for (let page = 0; page < maxPages; page++) {

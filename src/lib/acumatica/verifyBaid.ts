@@ -1,6 +1,8 @@
 import https from "node:https";
 
 import AcumaticaService from "./auth/acumaticaService";
+import { queueErpRequest, shouldUseQueueErp } from "../queue/erpClient";
+import type { QueueVerifyCustomerResponse } from "../queue/contracts";
 
 function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
@@ -21,7 +23,6 @@ function createErpClient() {
 }
 
 function odataEscape(value: string) {
-  // OData escapes single quotes by doubling them.
   return value.replace(/'/g, "''");
 }
 
@@ -40,7 +41,7 @@ function safeJsonParse(text: string): AnyJson | null {
 
 function truncate(str: string, max = 2000) {
   if (!str) return "";
-  return str.length > max ? str.slice(0, max) + `… (truncated, ${str.length} chars)` : str;
+  return str.length > max ? str.slice(0, max) + `... (truncated, ${str.length} chars)` : str;
 }
 
 async function fetchCustomerRowsByBaid(
@@ -88,10 +89,8 @@ async function fetchCustomerRowsByBaid(
       bytes: text.length,
     });
 
-    // ✅ This is the raw Acumatica response body (capped)
     console.log(`${LOG_PREFIX} raw`, truncate(text, 2000));
 
-    // ✅ Pretty JSON (capped)
     const json = safeJsonParse(text);
     if (json != null) {
       console.log(`${LOG_PREFIX} json`, truncate(JSON.stringify(json, null, 2), 4000));
@@ -101,7 +100,6 @@ async function fetchCustomerRowsByBaid(
   }
 
   if (!resp.ok) {
-    // Surface the ERP response body for debugging, but keep it bounded.
     throw new Error(truncate(text, 500) || `ERP error (${resp.status})`);
   }
 
@@ -112,9 +110,14 @@ async function fetchCustomerRowsByBaid(
   return [];
 }
 
-/**
- * Returns true if the BAID exists in Acumatica.
- */
+async function verifyBaidViaQueue(baid: string, zip: string): Promise<boolean> {
+  const resp = await queueErpRequest<QueueVerifyCustomerResponse>("/api/erp/customers/verify", {
+    method: "POST",
+    body: { customerId: baid, zip5: zip },
+  });
+  return Boolean(resp?.matched);
+}
+
 export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<boolean> {
   const cleaned = String(baid || "").trim().toUpperCase();
   const cleanedZip = String(zip || "").replace(/\D/g, "").slice(0, 5);
@@ -122,6 +125,12 @@ export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<
   if (cleanedZip.length !== 5) return false;
 
   if (IS_DEV) console.log(`${LOG_PREFIX} start`, { baid: cleaned });
+
+  if (shouldUseQueueErp()) {
+    const ok = await verifyBaidViaQueue(cleaned, cleanedZip);
+    if (IS_DEV) console.log("[willcall][verify-baid][queue] result", { baid: cleaned, ok });
+    return ok;
+  }
 
   const restService = createErpClient();
   const rows = await fetchCustomerRowsByBaid(restService, cleaned, cleanedZip);

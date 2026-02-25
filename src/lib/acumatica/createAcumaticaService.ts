@@ -1,4 +1,5 @@
 import AcumaticaService from "./auth/acumaticaService";
+import { shouldUseQueueErp } from "../queue/erpClient";
 
 function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
@@ -9,6 +10,13 @@ function requireEnv(name: string): string {
 }
 
 export function createAcumaticaService() {
+  if (shouldUseQueueErp()) {
+    return {
+      baseUrl: "",
+      getToken: async () => "",
+    } as unknown as AcumaticaService;
+  }
+
   return new AcumaticaService(
     requireEnv("ACUMATICA_BASE_URL"),
     requireEnv("ACUMATICA_CLIENT_ID"),

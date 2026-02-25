@@ -1,5 +1,7 @@
 import https from "node:https";
 import { oneYearAgoDenver, toDenverDateTimeOffsetLiteral } from "../../time/denver";
+import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -16,12 +18,25 @@ export default async function fetchOrderSummaries(
     useOrderBy?: boolean;
   } = {}
 ): Promise<AnyRow[]> {
-  const token = await restService.getToken();
-
   const envPage = Number(process.env.ACU_PAGE_SIZE || "");
   const pageSize = Number.isFinite(envPage) && envPage > 0 ? envPage : (pageSizeArg || 250);
   const envMax = Number(process.env.ACU_MAX_PAGES || "");
   const maxPages = Number.isFinite(envMax) && envMax > 0 ? envMax : (maxPagesArg || 50);
+
+  if (shouldUseQueueErp()) {
+    const params = new URLSearchParams({
+      baid,
+      pageSize: String(pageSize),
+      maxPages: String(maxPages),
+      useOrderBy: String(Boolean(useOrderBy)),
+    });
+    const resp = await queueErpRequest<QueueRowsResponse<AnyRow>>(`/api/erp/orders/summaries?${params.toString()}`);
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    console.log(`[fetchOrderSummaries][queue] baid=${baid} totalRows=${rows.length}`);
+    return rows;
+  }
+
+  const token = await restService.getToken();
 
   const cutoffDenver = oneYearAgoDenver(new Date());
   const cutoffLiteral = toDenverDateTimeOffsetLiteral(cutoffDenver);

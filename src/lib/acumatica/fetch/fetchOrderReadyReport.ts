@@ -1,3 +1,6 @@
+import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
+
 export type OrderReadyRow = {
   orderType: string | null;
   orderNbr: string | null;
@@ -13,6 +16,8 @@ export type OrderReadyRow = {
   attributeDelEmail: string | null;
   attributeSmsTxt: string | null;
   attributeEmailNoty: string | null;
+  attributeSmsOptIn: boolean | null;
+  attributeEmailOptIn: boolean | null;
   warehouse: string | null;
   inventoryId: string | null;
 };
@@ -31,7 +36,21 @@ function parseNumber(value: string) {
   return Number.isFinite(num) ? num : null;
 }
 
-export async function fetchOrderReadyReport() {
+function parseBoolean(value: any) {
+  if (value == null) return null;
+  if (typeof value === "boolean") return value;
+  const s = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y"].includes(s)) return true;
+  if (["false", "0", "no", "n"].includes(s)) return false;
+  return null;
+}
+
+async function fetchRawRows() {
+  if (shouldUseQueueErp()) {
+    const resp = await queueErpRequest<QueueRowsResponse<Record<string, any>>>("/api/erp/reports/order-ready");
+    return Array.isArray(resp?.rows) ? resp.rows : [];
+  }
+
   const url =
     process.env.ACUMATICA_ORDER_READY_ODATA_URL ||
     "https://acumatica.mld.com/OData/MLD/Ready%20for%20Willcall";
@@ -65,7 +84,11 @@ export async function fetchOrderReadyReport() {
   }
 
   const json = await res.json().catch(() => ({}));
-  const rows = Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
+  return Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
+}
+
+export async function fetchOrderReadyReport() {
+  const rows = await fetchRawRows();
   if (!loggedKeys && rows.length) {
     loggedKeys = true;
     console.log("[order-ready] sample fields", Object.keys(rows[0] || {}).slice(0, 50));
@@ -122,6 +145,22 @@ export async function fetchOrderReadyReport() {
       "SOOrder_AttributeEMAILNOTY",
       "SOOrder.AttributeEMAILNOTY",
     ]),
+    attributeSmsOptIn: parseBoolean(
+      pickField(row, [
+        "TextOptIn",
+        "AttributeSMSOPTIN",
+        "SOOrder_AttributeSMSOPTIN",
+        "SOOrder.AttributeSMSOPTIN",
+      ])
+    ),
+    attributeEmailOptIn: parseBoolean(
+      pickField(row, [
+        "EmailOptIn",
+        "AttributeEMAILOPTIN",
+        "SOOrder_AttributeEMAILOPTIN",
+        "SOOrder.AttributeEMAILOPTIN",
+      ])
+    ),
     warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
     inventoryId: pickField(row, [
       "InventoryID",

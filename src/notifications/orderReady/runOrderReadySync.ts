@@ -93,6 +93,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       status: rows[0]?.status,
       textNotification: rows[0]?.attributeSmsTxt,
       emailNotification: rows[0]?.attributeEmailNoty,
+      textOptIn: rows[0]?.attributeSmsOptIn,
+      emailOptIn: rows[0]?.attributeEmailOptIn,
       warehouse: rows[0]?.warehouse,
     });
   }
@@ -107,13 +109,18 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
 
-    const smsOptIn = Boolean(contactPhone);
+    const smsOptIn = row.attributeSmsOptIn === true;
+    const emailOptIn = row.attributeEmailOptIn === true;
+    const smsEligible = smsOptIn && Boolean(contactPhone);
+    const emailEligible = emailOptIn && Boolean(contactEmail);
     const existingNotice = await prisma.orderReadyNotice.findUnique({
       where: { orderNbr },
       select: {
         id: true,
         attributeSmsTxt: true,
         attributeEmailNoty: true,
+        attributeSmsOptIn: true,
+        attributeEmailOptIn: true,
         lastNotifiedAt: true,
         nextEligibleNotifyAt: true,
         scheduledAppointmentId: true,
@@ -123,7 +130,11 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     const prevEmail = (existingNotice?.attributeEmailNoty || "").trim() || null;
     const prevPhone = normalizePhone(existingNotice?.attributeSmsTxt);
     const contactChanged =
-      Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
+      Boolean(existingNotice) &&
+      (prevEmail !== contactEmail ||
+        prevPhone !== contactPhone ||
+        existingNotice?.attributeSmsOptIn !== row.attributeSmsOptIn ||
+        existingNotice?.attributeEmailOptIn !== row.attributeEmailOptIn);
     const nextEligibleOverride =
       contactChanged && existingNotice?.lastNotifiedAt ? now : undefined;
 
@@ -142,11 +153,14 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeDelEmail: row.attributeDelEmail ?? null,
       attributeSmsTxt: row.attributeSmsTxt ?? null,
       attributeEmailNoty: row.attributeEmailNoty ?? null,
+      attributeSmsOptIn: row.attributeSmsOptIn ?? null,
+      attributeEmailOptIn: row.attributeEmailOptIn ?? null,
       contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
       contactPhone, // TODO: replace with actual contact phone field
       contactEmail,
       locationId,
-      smsOptIn,
+      smsOptIn: smsEligible,
+      emailOptIn: emailEligible,
       lastReadyAt: now,
       ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
     };
@@ -167,11 +181,14 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeDelEmail: row.attributeDelEmail ?? null,
       attributeSmsTxt: row.attributeSmsTxt ?? null,
       attributeEmailNoty: row.attributeEmailNoty ?? null,
+      attributeSmsOptIn: row.attributeSmsOptIn ?? null,
+      attributeEmailOptIn: row.attributeEmailOptIn ?? null,
       contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
       contactPhone, // TODO: replace with actual contact phone field
       contactEmail,
       locationId,
-      smsOptIn,
+      smsOptIn: smsEligible,
+      emailOptIn: emailEligible,
       lastReadyAt: now,
     };
 
@@ -229,27 +246,9 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
     if (!eligible) continue;
 
-    if (!notice.contactEmail && !process.env.NOTIFICATIONS_TEST_EMAIL) {
-      // TODO: When production-ready, require a real contactEmail before sending.
-      // TODO: If the email is invalid or bounces, notify the salesperson for this order.
-      console.log("[order-ready] skipped (missing email)", { orderNbr });
-      continue;
-    }
-
     const activeToken = await getActiveOrderReadyToken(prisma, notice.id);
     const tokenRow = activeToken ?? (await createOrderReadyToken(prisma, notice.id));
     const link = buildOrderReadyLink(orderNbr, tokenRow.token);
-    const message = buildOrderReadyEmail(orderNbr, link);
-    const recipient = notice.contactEmail || process.env.NOTIFICATIONS_TEST_EMAIL || "";
-    if (!recipient) {
-      console.log("[order-ready] skipped (missing recipient)", { orderNbr });
-      continue;
-    }
-
-    if (sentCount >= MAX_SEND_PER_RUN) {
-      console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
-      continue;
-    }
 
     const sendAt = nextAllowedTime(now);
     if (sendAt.getTime() > now.getTime()) {
@@ -257,11 +256,22 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       continue;
     }
 
-    await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
-    sentCount += 1;
+    if (notice.emailOptIn) {
+      const message = buildOrderReadyEmail(orderNbr, link);
+      const recipient = notice.contactEmail || process.env.NOTIFICATIONS_TEST_EMAIL || "";
+      if (!recipient) {
+        console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
+      } else if (sentCount >= MAX_SEND_PER_RUN) {
+        console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
+      } else {
+        await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
+        sentCount += 1;
+      }
+    } else {
+      console.log("[order-ready] email skipped (email opt-in false)", { orderNbr });
+    }
 
     if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
-      // TODO: switch to real opt-in + phone source when available in production.
       const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
@@ -272,6 +282,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
           data: { smsFirstSentAt: new Date() },
         });
       }
+    } else if (!notice.smsOptIn) {
+      console.log("[order-ready] sms skipped (sms opt-in false)", { orderNbr });
     }
 
     // TODO: After 5 consecutive daily sends, escalate to the salesperson for follow-up.

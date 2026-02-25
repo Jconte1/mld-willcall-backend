@@ -1,4 +1,6 @@
 import https from "node:https";
+import { queueErpJobRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -25,6 +27,16 @@ export default async function fetchInventoryDetails(
   } = {}
 ): Promise<AnyRow[]> {
   if (!Array.isArray(orderNbrs) || orderNbrs.length === 0) return [];
+
+  if (shouldUseQueueErp()) {
+    const resp = await queueErpJobRequest<QueueRowsResponse<AnyRow>>("/api/erp/jobs/orders/inventory-details", {
+      baid,
+      orderNbrs,
+    });
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    console.log(`[fetchInventoryDetails][queue] baid=${baid} totalRows=${rows.length}`);
+    return rows;
+  }
 
   const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;

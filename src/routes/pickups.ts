@@ -5,6 +5,7 @@ import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } fr
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
+import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
 import {
   cancelAppointmentNotifications,
   notifyAppointmentCompleted,
@@ -174,45 +175,60 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput: string) {
   const orderNbr = normalizeOrderNbr(orderNbrInput);
   console.info("[staff-pickups][lookup] salesorder fallback start", { orderNbr });
 
-  const service = createAcumaticaService();
-  const token = await service.getToken();
-  const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
-  const safeOrderNbr = orderNbr.replace(/'/g, "''");
-  const params = new URLSearchParams();
-  params.set("$filter", `OrderNbr eq '${safeOrderNbr}'`);
-  params.set(
-    "$select",
-    [
-      "OrderNbr",
-      "Status",
-      "LocationID",
-      "ShipVia",
-      "CustomerID",
-      "LastModified",
-    ].join(",")
-  );
-  params.set("$top", "1");
-  const url = `${base}?${params.toString()}`;
+  let row: Record<string, any> | null = null;
 
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(text || `SalesOrder lookup failed (${res.status})`);
+  if (shouldUseQueueErp()) {
+    const resp = await queueErpJobRequest<{ found: boolean; row?: Record<string, any> | null }>(
+      "/api/erp/jobs/orders/header",
+      { orderNbr }
+    );
+    if (!resp?.found || !resp.row) {
+      console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
+      return false;
+    }
+    row = resp.row;
+  } else {
+    const service = createAcumaticaService();
+    const token = await service.getToken();
+    const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
+    const safeOrderNbr = orderNbr.replace(/'/g, "''");
+    const params = new URLSearchParams();
+    params.set("$filter", `OrderNbr eq '${safeOrderNbr}'`);
+    params.set(
+      "$select",
+      [
+        "OrderNbr",
+        "Status",
+        "LocationID",
+        "ShipVia",
+        "CustomerID",
+        "LastModified",
+      ].join(",")
+    );
+    params.set("$top", "1");
+    const url = `${base}?${params.toString()}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(text || `SalesOrder lookup failed (${res.status})`);
+    }
+    const parsed = text ? JSON.parse(text) : [];
+    const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.value) ? parsed.value : [];
+    if (!rows.length) {
+      console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
+      return false;
+    }
+    row = rows[0] ?? {};
   }
-  const parsed = text ? JSON.parse(text) : [];
-  const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.value) ? parsed.value : [];
-  if (!rows.length) {
-    console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
-    return false;
-  }
-  const row = rows[0] ?? {};
+
   const baid = String(row?.CustomerID?.value ?? row?.CustomerID ?? "").trim();
   if (!baid) {
     console.warn("[staff-pickups][lookup] salesorder fallback missing baid", { orderNbr });

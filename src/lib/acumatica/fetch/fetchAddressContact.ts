@@ -1,4 +1,6 @@
 import https from "node:https";
+import { queueErpRequest, shouldUseQueueErp } from "../../queue/erpClient";
+import type { QueueRowsResponse } from "../../queue/contracts";
 
 type AnyRow = Record<string, any>;
 
@@ -19,6 +21,16 @@ export default async function fetchAddressContact(
     cutoffLiteral?: string | null;
   } = {}
 ): Promise<AnyRow[]> {
+  if (shouldUseQueueErp()) {
+    const resp = await queueErpRequest<QueueRowsResponse<AnyRow>>("/api/erp/orders/address-contact", {
+      method: "POST",
+      body: { baid, orderNbrs, cutoffLiteral, pageSize, chunkSize, useOrderBy },
+    });
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    console.log(`[fetchAddressContact][queue] baid=${baid} totalRows=${rows.length}`);
+    return rows;
+  }
+
   const token = await restService.getToken();
   const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
   const agent = new https.Agent({ keepAlive: true, maxSockets: 8 });
