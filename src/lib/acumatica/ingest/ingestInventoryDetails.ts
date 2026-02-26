@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchInventoryDetails from "../fetch/fetchInventoryDetails";
 import writeInventoryDetails from "../write/writeInventoryDetails";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 
 const prisma = new PrismaClient();
 
@@ -93,7 +94,9 @@ async function handleOne(restService: any, baid: string) {
 
 export async function ingestInventoryDetails(baid: string) {
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
   const result = await handleOne(restService, baid);
   return { count: 1, results: [result] };
 }

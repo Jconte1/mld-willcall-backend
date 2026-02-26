@@ -3,6 +3,7 @@ import fetchOrderSummariesSince from "../fetch/fetchOrderSummariesSince";
 import fetchAddressContact from "../fetch/fetchAddressContact";
 import fetchPaymentInfo from "../fetch/fetchPaymentInfo";
 import fetchInventoryDetails from "../fetch/fetchInventoryDetails";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 import filterOrders from "../filter/filterOrders";
 import { upsertOrderSummariesDelta } from "../write/writeOrderSummaries";
 import writeAddressContact from "../write/writeAddressContact";
@@ -46,7 +47,9 @@ export async function runCustomerDeltaSync(
   { sinceLiteral }: { sinceLiteral?: string } = {}
 ): Promise<SyncResult> {
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
 
   const since = sinceLiteral ?? denver3amWindowStartLiteral(new Date());
   console.log("[customer-sync][delta] fetch headers", { baid, since });

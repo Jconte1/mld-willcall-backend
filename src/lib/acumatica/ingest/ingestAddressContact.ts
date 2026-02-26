@@ -3,6 +3,7 @@ import { createAcumaticaService } from "../createAcumaticaService";
 import fetchAddressContact from "../fetch/fetchAddressContact";
 import writeAddressContact from "../write/writeAddressContact";
 import { oneYearAgoDenver, toDenverDateTimeOffsetLiteral } from "../../time/denver";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 
 const prisma = new PrismaClient();
 
@@ -62,7 +63,9 @@ async function handleOne(restService: any, baid: string) {
 
 export async function ingestAddressContact(baid: string) {
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
   const result = await handleOne(restService, baid);
   return { count: 1, results: [result] };
 }

@@ -2,6 +2,7 @@ import { createAcumaticaService } from "../createAcumaticaService";
 import fetchOrderSummaries from "../fetch/fetchOrderSummaries";
 import filterOrders from "../filter/filterOrders";
 import { purgeOldOrders, upsertOrderSummariesForBAID } from "../write/writeOrderSummaries";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 
 function nowMs() {
   return Number(process.hrtime.bigint() / 1_000_000n);
@@ -47,7 +48,9 @@ async function handleOne(restService: any, baid: string) {
 
 export async function ingestOrderSummaries(baid: string) {
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
   const result = await handleOne(restService, baid);
   return { count: 1, results: [result] };
 }

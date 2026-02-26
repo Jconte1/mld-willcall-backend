@@ -7,6 +7,7 @@ import fetchInventoryDetails from "../fetch/fetchInventoryDetails";
 import writeAddressContact from "../write/writeAddressContact";
 import writePaymentInfo from "../write/writePaymentInfo";
 import writeInventoryDetails from "../write/writeInventoryDetails";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 
 const prisma = new PrismaClient();
 
@@ -22,7 +23,9 @@ type RefreshInput = {
 export async function refreshOrderReadyDetails(input: RefreshInput) {
   const { baid, orderNbr, status, locationId, shipVia, lastModified } = input;
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
 
   const now = new Date();
   const summaryUpdate: Record<string, any> = {

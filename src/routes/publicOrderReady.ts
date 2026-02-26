@@ -5,6 +5,7 @@ import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { fetchOrderLastModified } from "../lib/acumatica/fetch/fetchOrderLastModified";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
+import { shouldUseQueueErp } from "../lib/queue/erpClient";
 import { buildOrderReadyLink } from "../notifications/links/buildLink";
 import { rotateOrderReadyToken } from "../notifications/links/tokens";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
@@ -205,7 +206,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
 
     if (notice.baid) {
       try {
-        const restService = createAcumaticaService();
+        const restService = shouldUseQueueErp() ? undefined : createAcumaticaService();
         const result = await fetchOrderLastModified(notice.baid, orderNbr, restService);
         acuLastModified = result.lastModified;
       } catch (err) {

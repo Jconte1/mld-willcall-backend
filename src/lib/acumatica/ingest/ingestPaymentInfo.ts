@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchPaymentInfo from "../fetch/fetchPaymentInfo";
 import writePaymentInfo from "../write/writePaymentInfo";
+import { shouldUseQueueErp } from "../../queue/erpClient";
 
 const prisma = new PrismaClient();
 
@@ -65,7 +66,9 @@ async function handleOne(restService: any, baid: string) {
 
 export async function ingestPaymentInfo(baid: string) {
   const restService = createAcumaticaService();
-  await restService.getToken();
+  if (!shouldUseQueueErp()) {
+    await restService.getToken();
+  }
   const result = await handleOne(restService, baid);
   return { count: 1, results: [result] };
 }
