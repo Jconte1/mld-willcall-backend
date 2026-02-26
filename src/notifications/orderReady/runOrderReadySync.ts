@@ -165,6 +165,26 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
     };
 
+    console.log("[order-ready] opt-in write attempt", {
+      orderNbr,
+      fetched: {
+        attributeSmsOptIn: row.attributeSmsOptIn,
+        attributeEmailOptIn: row.attributeEmailOptIn,
+        attributeSmsTxt: row.attributeSmsTxt ?? null,
+        attributeEmailNoty: row.attributeEmailNoty ?? null,
+      },
+      computed: {
+        smsEligible,
+        emailEligible,
+      },
+      writePayload: {
+        attributeSmsOptIn: updateData.attributeSmsOptIn,
+        attributeEmailOptIn: updateData.attributeEmailOptIn,
+        smsOptIn: updateData.smsOptIn,
+        emailOptIn: updateData.emailOptIn,
+      },
+    });
+
     const createData = {
       orderNbr,
       baid: row.customerId ?? null,
@@ -196,6 +216,16 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       where: { orderNbr },
       update: updateData,
       create: createData,
+    });
+
+    console.log("[order-ready] opt-in write result", {
+      orderNbr,
+      written: {
+        attributeSmsOptIn: notice.attributeSmsOptIn,
+        attributeEmailOptIn: notice.attributeEmailOptIn,
+        smsOptIn: notice.smsOptIn,
+        emailOptIn: notice.emailOptIn,
+      },
     });
 
     await prisma.orderReadyLine.deleteMany({ where: { orderReadyId: notice.id } });

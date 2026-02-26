@@ -31,15 +31,31 @@ function pickField(row: Record<string, any>, keys: string[]) {
   return null;
 }
 
+function pickCanonicalField(row: Record<string, any>, key: string) {
+  return Object.prototype.hasOwnProperty.call(row, key) ? row[key] : undefined;
+}
+
 function parseNumber(value: string) {
-  const num = Number(value);
+  const raw = unwrapValue(value);
+  const num = Number(raw);
   return Number.isFinite(num) ? num : null;
 }
 
-function parseBoolean(value: any) {
+function unwrapValue(value: any) {
   if (value == null) return null;
-  if (typeof value === "boolean") return value;
-  const s = String(value).trim().toLowerCase();
+  if (typeof value === "object") {
+    if ("value" in value) return (value as { value?: unknown }).value ?? null;
+    if ("Value" in value) return (value as { Value?: unknown }).Value ?? null;
+    if ("#text" in value) return (value as { "#text"?: unknown })["#text"] ?? null;
+  }
+  return value;
+}
+
+function parseBoolean(value: any) {
+  const raw = unwrapValue(value);
+  if (raw == null) return null;
+  if (typeof raw === "boolean") return raw;
+  const s = String(raw).trim().toLowerCase();
   if (["true", "1", "yes", "y"].includes(s)) return true;
   if (["false", "0", "no", "n"].includes(s)) return false;
   return null;
@@ -97,6 +113,35 @@ export async function fetchOrderReadyReport() {
     console.log("[order-ready] sample fields", Object.keys(rows[0] || {}).slice(0, 50));
   }
   return rows.map((row: Record<string, any>): OrderReadyRow => ({
+    ...(function () {
+      const orderNbr = pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]);
+      const smsOptInRaw = pickCanonicalField(row, "SMSOptin");
+      const emailOptInRaw = pickCanonicalField(row, "EmailOptin");
+      const smsOptInParsed = parseBoolean(smsOptInRaw);
+      const emailOptInParsed = parseBoolean(emailOptInRaw);
+
+      if (smsOptInRaw === undefined || emailOptInRaw === undefined) {
+        const optInKeys = Object.keys(row).filter((k) => k.toLowerCase().includes("optin"));
+        console.error("[order-ready] opt-in fetch shape mismatch", {
+          orderNbr,
+          expectedKeys: ["SMSOptin", "EmailOptin"],
+          foundOptInKeys: optInKeys,
+          smsOptInRaw,
+          emailOptInRaw,
+        });
+      }
+
+      if (smsOptInParsed == null || emailOptInParsed == null) {
+        console.warn("[order-ready] opt-in parse mismatch", {
+          orderNbr,
+          smsOptInRaw,
+          emailOptInRaw,
+          smsOptInParsed,
+          emailOptInParsed,
+        });
+      }
+
+      return {
     orderType: pickField(row, ["OrderType", "SOOrder_OrderType", "SOOrder.OrderType"]),
     orderNbr: pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]),
     qtyUnallocated: parseNumber(
@@ -148,33 +193,8 @@ export async function fetchOrderReadyReport() {
       "SOOrder_AttributeEMAILNOTY",
       "SOOrder.AttributeEMAILNOTY",
     ]),
-    attributeSmsOptIn: parseBoolean(
-      pickField(row, [
-        "textOptIn",
-        "TextOptIn",
-        "SMSOptin",
-        "SMSOptIn",
-        "AttributeSMSOPTIN",
-        "AttributeSMSOptin",
-        "SOOrder_AttributeSMSOPTIN",
-        "SOOrder_AttributeSMSOptin",
-        "SOOrder.AttributeSMSOptin",
-        "SOOrder.AttributeSMSOPTIN",
-      ])
-    ),
-    attributeEmailOptIn: parseBoolean(
-      pickField(row, [
-        "emailOptIn",
-        "EmailOptIn",
-        "EmailOptin",
-        "AttributeEMAILOPTIN",
-        "AttributeEmailOptin",
-        "SOOrder_AttributeEMAILOPTIN",
-        "SOOrder_AttributeEmailOptin",
-        "SOOrder.AttributeEmailOptin",
-        "SOOrder.AttributeEMAILOPTIN",
-      ])
-    ),
+    attributeSmsOptIn: smsOptInParsed,
+    attributeEmailOptIn: emailOptInParsed,
     warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
     inventoryId: pickField(row, [
       "InventoryID",
@@ -184,5 +204,7 @@ export async function fetchOrderReadyReport() {
       "InventoryItem_InventoryID",
       "INItem_InventoryID",
     ]),
+      };
+    })(),
   }));
 }
