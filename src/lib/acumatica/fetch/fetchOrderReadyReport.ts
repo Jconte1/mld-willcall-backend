@@ -150,17 +150,28 @@ export async function fetchOrderReadyReport() {
     ]),
     attributeSmsOptIn: parseBoolean(
       pickField(row, [
+        "textOptIn",
         "TextOptIn",
+        "SMSOptin",
+        "SMSOptIn",
         "AttributeSMSOPTIN",
+        "AttributeSMSOptin",
         "SOOrder_AttributeSMSOPTIN",
+        "SOOrder_AttributeSMSOptin",
+        "SOOrder.AttributeSMSOptin",
         "SOOrder.AttributeSMSOPTIN",
       ])
     ),
     attributeEmailOptIn: parseBoolean(
       pickField(row, [
+        "emailOptIn",
         "EmailOptIn",
+        "EmailOptin",
         "AttributeEMAILOPTIN",
+        "AttributeEmailOptin",
         "SOOrder_AttributeEMAILOPTIN",
+        "SOOrder_AttributeEmailOptin",
+        "SOOrder.AttributeEmailOptin",
         "SOOrder.AttributeEMAILOPTIN",
       ])
     ),
