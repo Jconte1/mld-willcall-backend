@@ -650,6 +650,10 @@ model OrderReadyNotice {
   smsOptOutAt          DateTime?
   smsOptOutReason      String?                  @db.VarChar(64)
   smsFirstSentAt       DateTime?
+  notifyAttemptCount   Int                      @default(0)
+  lastNotifyAttemptOn  String?                  @db.VarChar(10)
+  escalationCount      Int                      @default(0)
+  lastEscalatedAt      DateTime?
   lastNotifiedAt       DateTime?
   nextEligibleNotifyAt DateTime?
   lastReadyAt          DateTime?

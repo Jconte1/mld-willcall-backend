@@ -489,12 +489,12 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
 
     if (email) {
       const message = buildOrderReadyEmail(orderNbr, link);
-      await sendEmail(email, message.subject, message.body);
+      await sendEmail(email, message.subject, message.body, { allowTestOverride: false });
     } else if (phone) {
       const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
-      await sendSms(phone, smsBody);
+      await sendSms(phone, smsBody, { allowTestOverride: false });
       if (!notice.smsFirstSentAt) {
         await prisma.orderReadyNotice.update({
           where: { id: notice.id },

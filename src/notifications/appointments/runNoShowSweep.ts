@@ -86,14 +86,14 @@ async function sendNoShowNotifications(
   if (appointment.emailOptIn) {
     const recipient = appointment.emailOptInEmail || appointment.customerEmail;
     const message = buildNoShowEmail(when, orderList, link);
-    await sendEmail(recipient, message.subject, message.body);
+    await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
   }
 
   if (appointment.smsOptIn) {
     const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
     if (smsTo) {
       const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP. Manage: ${link}`;
-      await sendSms(smsTo, smsBody);
+      await sendSms(smsTo, smsBody, { allowTestOverride: false });
     }
   }
 }

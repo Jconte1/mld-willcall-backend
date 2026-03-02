@@ -12,7 +12,6 @@ import { applySmsCompliance } from "../templates/sms/buildSms";
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
 const RESEND_DAYS = 1;
-const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
 const RUN_WINDOW_MINUTES = 12 * 60;
@@ -52,6 +51,10 @@ function getDenverParts(date: Date) {
 
 function addDays(date: Date, days: number) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function getAttemptDateKey(date: Date) {
+  return getDenverParts(date).date;
 }
 
 async function shouldRun(prisma: PrismaClient, now: Date) {
@@ -101,7 +104,6 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
   const grouped = groupOrderReadyRows(rows);
   const seenOrderNbrs = new Set<string>(Array.from(grouped.keys()));
-  let sentCount = 0;
   for (const [orderNbr, bucket] of grouped.entries()) {
     const row = bucket.row;
     const contactEmail = (row.attributeEmailNoty || "").trim() || null;
@@ -121,6 +123,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeEmailNoty: true,
         attributeSmsOptIn: true,
         attributeEmailOptIn: true,
+        notifyAttemptCount: true,
+        lastNotifyAttemptOn: true,
         lastNotifiedAt: true,
         nextEligibleNotifyAt: true,
         scheduledAppointmentId: true,
@@ -129,14 +133,43 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     const prevEmail = (existingNotice?.attributeEmailNoty || "").trim() || null;
     const prevPhone = normalizePhone(existingNotice?.attributeSmsTxt);
-    const contactChanged =
-      Boolean(existingNotice) &&
-      (prevEmail !== contactEmail ||
-        prevPhone !== contactPhone ||
-        existingNotice?.attributeSmsOptIn !== row.attributeSmsOptIn ||
-        existingNotice?.attributeEmailOptIn !== row.attributeEmailOptIn);
+    const channelDestinationChanged =
+      Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
+    const bothOptedOut = row.attributeSmsOptIn === false && row.attributeEmailOptIn === false;
+
+    if (channelDestinationChanged) {
+      console.log("[order-ready] attempt counter reset (contact change)", {
+        orderNbr,
+        prevEmail,
+        nextEmail: contactEmail,
+        prevPhone,
+        nextPhone: contactPhone,
+      });
+    }
+
+    if (bothOptedOut) {
+      console.log("[order-ready] attempt counter primed (both channels opted out)", {
+        orderNbr,
+      });
+    }
+
+    const attemptResetData = channelDestinationChanged
+      ? {
+          notifyAttemptCount: 0,
+          lastNotifyAttemptOn: null,
+          escalationCount: 0,
+          lastEscalatedAt: null,
+        }
+      : {};
+    const bothOptedOutData = bothOptedOut
+      ? {
+          notifyAttemptCount: Math.max(existingNotice?.notifyAttemptCount ?? 0, 5),
+          lastNotifyAttemptOn: null,
+        }
+      : {};
+
     const nextEligibleOverride =
-      contactChanged && existingNotice?.lastNotifiedAt ? now : undefined;
+      channelDestinationChanged && existingNotice?.lastNotifiedAt ? now : undefined;
 
     const updateData = {
       baid: row.customerId ?? null,
@@ -155,13 +188,15 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeEmailNoty: row.attributeEmailNoty ?? null,
       attributeSmsOptIn: row.attributeSmsOptIn ?? null,
       attributeEmailOptIn: row.attributeEmailOptIn ?? null,
-      contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+      contactName: row.attributeOsContact ?? null,
       contactPhone, // TODO: replace with actual contact phone field
       contactEmail,
       locationId,
       smsOptIn: smsEligible,
       emailOptIn: emailEligible,
       lastReadyAt: now,
+      ...attemptResetData,
+      ...bothOptedOutData,
       ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
     };
 
@@ -203,13 +238,17 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeEmailNoty: row.attributeEmailNoty ?? null,
       attributeSmsOptIn: row.attributeSmsOptIn ?? null,
       attributeEmailOptIn: row.attributeEmailOptIn ?? null,
-      contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+      contactName: row.attributeOsContact ?? null,
       contactPhone, // TODO: replace with actual contact phone field
       contactEmail,
       locationId,
       smsOptIn: smsEligible,
       emailOptIn: emailEligible,
       lastReadyAt: now,
+      notifyAttemptCount: bothOptedOut ? 5 : 0,
+      lastNotifyAttemptOn: null,
+      escalationCount: 0,
+      lastEscalatedAt: null,
     };
 
     const notice = await prisma.orderReadyNotice.upsert({
@@ -242,6 +281,19 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
     const normalizedStatus = (notice.status || "").toLowerCase();
     if (normalizedStatus === "scheduled" || normalizedStatus === "completed") {
+      await prisma.orderReadyNotice.update({
+        where: { id: notice.id },
+        data: {
+          notifyAttemptCount: 0,
+          lastNotifyAttemptOn: null,
+          escalationCount: 0,
+          lastEscalatedAt: null,
+        },
+      });
+      console.log("[order-ready] attempt counter reset (order status)", {
+        orderNbr,
+        status: normalizedStatus,
+      });
       continue;
     }
 
@@ -259,7 +311,17 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     if (scheduledAppointment?.appointmentId) {
       await prisma.orderReadyNotice.update({
         where: { id: notice.id },
-        data: { scheduledAppointmentId: scheduledAppointment.appointmentId },
+        data: {
+          scheduledAppointmentId: scheduledAppointment.appointmentId,
+          notifyAttemptCount: 0,
+          lastNotifyAttemptOn: null,
+          escalationCount: 0,
+          lastEscalatedAt: null,
+        },
+      });
+      console.log("[order-ready] attempt counter reset (active appointment)", {
+        orderNbr,
+        appointmentId: scheduledAppointment.appointmentId,
       });
       continue;
     }
@@ -286,16 +348,17 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       continue;
     }
 
+    let sentEmail = false;
+    let sentSms = false;
+
     if (notice.emailOptIn) {
       const message = buildOrderReadyEmail(orderNbr, link);
-      const recipient = notice.contactEmail || process.env.NOTIFICATIONS_TEST_EMAIL || "";
+      const recipient = notice.contactEmail || "";
       if (!recipient) {
         console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
-      } else if (sentCount >= MAX_SEND_PER_RUN) {
-        console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
       } else {
         await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
-        sentCount += 1;
+        sentEmail = true;
       }
     } else {
       console.log("[order-ready] email skipped (email opt-in false)", { orderNbr });
@@ -306,6 +369,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });
+      sentSms = true;
       if (!notice.smsFirstSentAt) {
         await prisma.orderReadyNotice.update({
           where: { id: notice.id },
@@ -316,16 +380,35 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       console.log("[order-ready] sms skipped (sms opt-in false)", { orderNbr });
     }
 
-    // TODO: After 5 consecutive daily sends, escalate to the salesperson for follow-up.
+    const sentAny = sentEmail || sentSms;
+    if (!sentAny) {
+      console.log("[order-ready] no customer notification sent", { orderNbr });
+      continue;
+    }
+
+    const attemptDay = getAttemptDateKey(now);
+    const alreadyCountedToday = notice.lastNotifyAttemptOn === attemptDay;
+    const currentAttempts = notice.notifyAttemptCount ?? 0;
+    const nextAttempts = alreadyCountedToday ? currentAttempts : currentAttempts + 1;
+
     await prisma.orderReadyNotice.update({
       where: { id: notice.id },
       data: {
         lastNotifiedAt: now,
         nextEligibleNotifyAt: addDays(now, RESEND_DAYS),
+        lastNotifyAttemptOn: attemptDay,
+        notifyAttemptCount: nextAttempts,
       },
     });
 
-    console.log("[order-ready] notified", { orderNbr });
+    console.log("[order-ready] notified", {
+      orderNbr,
+      sentEmail,
+      sentSms,
+      attemptDay,
+      alreadyCountedToday,
+      notifyAttemptCount: nextAttempts,
+    });
   }
 
   const staleNotices = await prisma.orderReadyNotice.findMany({
@@ -339,6 +422,11 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       data: {
         status: "NotReady",
         nextEligibleNotifyAt: null,
+        scheduledAppointmentId: null,
+        notifyAttemptCount: 0,
+        lastNotifyAttemptOn: null,
+        escalationCount: 0,
+        lastEscalatedAt: null,
       },
     });
 

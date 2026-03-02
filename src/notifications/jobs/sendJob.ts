@@ -84,7 +84,7 @@ export async function sendJob(
         const includeStopLine = !appointment.smsFirstSentAt;
         const smsBody = applySmsCompliance(sms, includeStopLine);
         const smsTo = appointment.smsOptInPhone || appointment.customerPhone;
-        await sendSms(smsTo as string, smsBody);
+        await sendSms(smsTo as string, smsBody, { allowTestOverride: false });
         if (!appointment.smsFirstSentAt) {
           await prisma.pickupAppointment.update({
             where: { id: appointment.id },
@@ -98,7 +98,7 @@ export async function sendJob(
       if (appointment.emailOptIn && (appointment.emailOptInEmail || appointment.customerEmail)) {
         const email = buildEmailMessage(job.type as AppointmentNotificationType, payload);
         const emailTo = appointment.emailOptInEmail || appointment.customerEmail;
-        await sendEmail(emailTo as string, email.subject, email.body);
+        await sendEmail(emailTo as string, email.subject, email.body, { allowTestOverride: false });
       }
     }
 

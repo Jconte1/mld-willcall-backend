@@ -19,7 +19,6 @@ export async function handleAppointmentReady(
   prisma: PrismaClient,
   input: ReadyInput
 ) {
-  // TODO: Ready-for-pickup notifications still honor NOTIFICATIONS_TEST_EMAIL; switch to live recipients before production.
   const now = new Date();
   const { appointment, orderNbrs, ignoreCap, staffInitiated } = input;
 

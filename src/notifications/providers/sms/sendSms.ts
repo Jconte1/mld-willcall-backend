@@ -2,8 +2,9 @@ type SmsResult = { ok: boolean; skipped?: boolean };
 type SendSmsOptions = { allowTestOverride?: boolean };
 
 function resolveRecipient(phone: string, { allowTestOverride = true }: SendSmsOptions = {}) {
-  const testPhone = process.env.NOTIFICATIONS_TEST_PHONE || "";
-  if (allowTestOverride && testPhone) {
+  const isProduction = process.env.NODE_ENV === "production";
+  const testPhone = process.env.NOTIFICATIONS_TEST_PHONE?.trim();
+  if (!isProduction && allowTestOverride && testPhone) {
     return testPhone;
   }
   return phone;

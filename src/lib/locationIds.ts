@@ -39,7 +39,11 @@ export function normalizeWarehouseToLocationId(warehouse?: string | null) {
   else if (normalized.includes("BOISE")) legacy = "boise";
   else if (normalized.includes("SALT LAKE") || normalized.includes("SLC")) legacy = "slc";
 
-  // TODO: Add any missing warehouse mappings once identified in Acumatica.
+  // TODO: Keep this mapping focused on pickup-site canonical IDs only (slc-hq/slc-outlet/boise-willcall).
+  // Acumatica has multiple "location" concepts: warehouse text (pickup context) vs SalesOrder LocationID
+  // (often job/site/customer context like MAIN, LOT 20, etc.). This function must only translate warehouse
+  // labels to pickup-site IDs. If new warehouse labels appear in ERP logs, add explicit mappings here rather
+  // than letting raw values propagate into downstream pickup location fields.
   return normalizeLocationId(legacy ?? normalized);
 }
 
