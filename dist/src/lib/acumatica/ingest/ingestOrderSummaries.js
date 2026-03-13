@@ -8,6 +8,7 @@ const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchOrderSummaries_1 = __importDefault(require("../fetch/fetchOrderSummaries"));
 const filterOrders_1 = __importDefault(require("../filter/filterOrders"));
 const writeOrderSummaries_1 = require("../write/writeOrderSummaries");
+const erpClient_1 = require("../../queue/erpClient");
 function nowMs() {
     return Number(process.hrtime.bigint() / 1000000n);
 }
@@ -40,7 +41,9 @@ async function handleOne(restService, baid) {
 }
 async function ingestOrderSummaries(baid) {
     const restService = (0, createAcumaticaService_1.createAcumaticaService)();
-    await restService.getToken();
+    if (!(0, erpClient_1.shouldUseQueueErp)()) {
+        await restService.getToken();
+    }
     const result = await handleOne(restService, baid);
     return { count: 1, results: [result] };
 }

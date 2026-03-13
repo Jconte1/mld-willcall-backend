@@ -39,28 +39,47 @@ function normalizeZip(value) {
 function requireInternalAuth(req, res, next) {
     const auth = String(req.headers.authorization || "");
     if (!INTERNAL_TOKEN || auth !== `Bearer ${INTERNAL_TOKEN}`) {
+        console.info("[internal-invites] unauthorized", {
+            hasToken: Boolean(INTERNAL_TOKEN),
+            hasAuthHeader: Boolean(auth),
+            authPrefix: auth ? auth.slice(0, 8) : "",
+        });
         return res.status(401).json({ message: "Unauthorized" });
     }
     return next();
 }
 exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) => {
     const parsed = DISPATCH_BODY.safeParse(req.body);
-    if (!parsed.success)
+    if (!parsed.success) {
+        console.info("[internal-invites] invalid body", {
+            issues: parsed.error.issues.map((issue) => issue.message),
+        });
         return res.status(400).json({ message: "Invalid request body" });
+    }
     const baid = normalizeBaid(parsed.data.customerId);
     const zip = normalizeZip(parsed.data.billingZip);
     const email = parsed.data.email.toLowerCase().trim();
     const shouldSendEmail = Boolean(parsed.data.sendEmail);
     if (!BAID_REGEX.test(baid) || zip.length !== 5) {
+        console.info("[internal-invites] invalid inputs", {
+            hasBaid: Boolean(baid),
+            hasZip: Boolean(zip),
+            zipLen: zip.length,
+        });
         return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
     }
     try {
         const verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
         if (!verified) {
+            console.info("[internal-invites] verify failed", { baid });
             return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
         }
     }
     catch (err) {
+        console.info("[internal-invites] verify error", {
+            baid,
+            message: String(err?.message || err),
+        });
         return res.status(502).json({ message: "Unable to verify right now" });
     }
     const now = new Date();
@@ -77,6 +96,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
     let inviteId = existing?.id || null;
     let expiresAt = existing?.expiresAt || null;
     if (!code) {
+        console.info("[internal-invites] issuing new code", { baid, hasExisting: Boolean(existing) });
         code = generateInviteCode();
         const codeHash = hashInviteCode(code);
         const nextExpiresAt = new Date(now.getTime() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);

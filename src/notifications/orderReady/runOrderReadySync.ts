@@ -8,6 +8,7 @@ import { sendSms } from "../providers/sms/sendSms";
 import { buildOrderReadyEmail } from "../templates/email/buildOrderReadyEmail";
 import { nextAllowedTime } from "../rules/quietHours";
 import { applySmsCompliance } from "../templates/sms/buildSms";
+import { resolveOrderReadyJobDisplay } from "./orderDisplay";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
@@ -57,6 +58,10 @@ function getAttemptDateKey(date: Date) {
   return getDenverParts(date).date;
 }
 
+function buildSummaryKey(baid: string | null | undefined, orderNbr: string) {
+  return `${String(baid ?? "").trim().toUpperCase()}::${orderNbr.trim().toUpperCase()}`;
+}
+
 async function shouldRun(prisma: PrismaClient, now: Date) {
   const existing = await prisma.orderReadyJobState.findUnique({
     where: { name: JOB_NAME },
@@ -104,12 +109,43 @@ export async function runOrderReadySync(prisma: PrismaClient) {
 
   const grouped = groupOrderReadyRows(rows);
   const seenOrderNbrs = new Set<string>(Array.from(grouped.keys()));
+  const summaryRows = await prisma.erpOrderSummary.findMany({
+    where: {
+      orderNbr: { in: Array.from(grouped.keys()) },
+    },
+    select: {
+      baid: true,
+      orderNbr: true,
+      locationId: true,
+      jobName: true,
+      updatedAt: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  const summaryByBaidAndOrder = new Map<string, (typeof summaryRows)[number]>();
+  const summaryByOrder = new Map<string, (typeof summaryRows)[number]>();
+  for (const summary of summaryRows) {
+    const key = buildSummaryKey(summary.baid, summary.orderNbr);
+    if (!summaryByBaidAndOrder.has(key)) summaryByBaidAndOrder.set(key, summary);
+    const orderKey = summary.orderNbr.trim().toUpperCase();
+    if (!summaryByOrder.has(orderKey)) summaryByOrder.set(orderKey, summary);
+  }
+
   for (const [orderNbr, bucket] of grouped.entries()) {
     const row = bucket.row;
     const contactEmail = (row.attributeEmailNoty || "").trim() || null;
     const contactPhone = normalizePhone(row.attributeSmsTxt);
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
+    const summaryLookupKey = buildSummaryKey(row.customerId, orderNbr);
+    const summary =
+      summaryByBaidAndOrder.get(summaryLookupKey) ??
+      summaryByOrder.get(orderNbr.trim().toUpperCase()) ??
+      null;
+    const jobDisplay = resolveOrderReadyJobDisplay({
+      locationId: summary?.locationId,
+      jobName: summary?.jobName,
+    });
 
     const smsOptIn = row.attributeSmsOptIn === true;
     const emailOptIn = row.attributeEmailOptIn === true;
@@ -352,11 +388,18 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     let sentSms = false;
 
     if (notice.emailOptIn) {
-      const message = buildOrderReadyEmail(orderNbr, link);
+      const message = buildOrderReadyEmail(orderNbr, link, jobDisplay);
       const recipient = notice.contactEmail || "";
       if (!recipient) {
         console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
       } else {
+        console.log("[order-ready] email context", {
+          orderNbr,
+          summaryLocationId: summary?.locationId ?? null,
+          summaryJobName: summary?.jobName ?? null,
+          resolvedJobDisplay: jobDisplay,
+          subject: message.subject,
+        });
         await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
         sentEmail = true;
       }
@@ -365,7 +408,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     }
 
     if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
-      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+      const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
+      const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchOrderSummariesSince;
 const denver_1 = require("../../time/denver");
+const erpClient_1 = require("../../queue/erpClient");
 const DEFAULT_PAGE_SIZE = 250;
 const DEFAULT_MAX_PAGES = 50;
 function normalizeDatetimeOffsetLiteral(input) {
@@ -23,11 +24,24 @@ function normalizeDatetimeOffsetLiteral(input) {
     return `datetimeoffset'${base}${offset}'`;
 }
 async function fetchOrderSummariesSince(restService, baid, { sinceLiteral, pageSize: pageSizeArg, maxPages: maxPagesArg, useOrderBy = false, } = {}) {
-    const token = await restService.getToken();
     const envPage = Number(process.env.ACU_PAGE_SIZE || "");
     const pageSize = Number.isFinite(envPage) && envPage > 0 ? envPage : pageSizeArg || DEFAULT_PAGE_SIZE;
     const envMax = Number(process.env.ACU_MAX_PAGES || "");
     const maxPages = Number.isFinite(envMax) && envMax > 0 ? envMax : maxPagesArg || DEFAULT_MAX_PAGES;
+    const since = normalizeDatetimeOffsetLiteral(sinceLiteral ?? (0, denver_1.denver3amWindowStartLiteral)(new Date()));
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/summaries/delta", {
+            baid,
+            since,
+            pageSize,
+            maxPages,
+            useOrderBy: Boolean(useOrderBy),
+        });
+        const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+        console.log(`[fetchOrderSummariesSince][queue] baid=${baid} totalRows=${rows.length}`);
+        return rows;
+    }
+    const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
     const select = [
         "OrderNbr",
@@ -42,8 +56,6 @@ async function fetchOrderSummariesSince(restService, baid, { sinceLiteral, pageS
         "LastModified",
     ].join(",");
     const custom = "Document.AttributeBUYERGROUP";
-    // TODO: Confirm the ERP last-modified field name if this ever errors.
-    const since = normalizeDatetimeOffsetLiteral(sinceLiteral ?? (0, denver_1.denver3amWindowStartLiteral)(new Date()));
     const all = [];
     for (let page = 0; page < maxPages; page++) {
         const params = new URLSearchParams();

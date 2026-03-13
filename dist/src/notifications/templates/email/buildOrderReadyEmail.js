@@ -5,7 +5,7 @@ const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
 const OUTER_BG = "#f8f2e9";
-function renderOrderReadyTemplate({ title, preheader, message, orderNbr, link, logoUrl, }) {
+function renderOrderReadyTemplate({ title, preheader, message, orderNbr, jobDisplay, link, logoUrl, }) {
     return `<!doctype html>
 <html>
   <head>
@@ -40,6 +40,14 @@ function renderOrderReadyTemplate({ title, preheader, message, orderNbr, link, l
                   <tr>
                     <td style="font-size:16px;font-weight:600;color:${BRAND_COLOR};">${orderNbr}</td>
                   </tr>
+                  ${jobDisplay
+        ? `<tr>
+                    <td style="font-size:13px;color:#6b7280;padding-top:12px;padding-bottom:6px;">Job</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:16px;font-weight:600;color:${BRAND_COLOR};">${jobDisplay}</td>
+                  </tr>`
+        : ""}
                 </table>
 
                 <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Schedule pickup</a>
@@ -61,16 +69,19 @@ function renderOrderReadyTemplate({ title, preheader, message, orderNbr, link, l
   </body>
 </html>`;
 }
-function buildOrderReadyEmail(orderNbr, link) {
+function buildOrderReadyEmail(orderNbr, link, jobDisplay) {
     const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
     const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
+    const trimmedJob = (jobDisplay || "").trim();
+    const jobPart = trimmedJob ? ` - ${trimmedJob}` : "";
     return {
-        subject: `Order ${orderNbr} is ready to schedule pickup`,
+        subject: `Order ${orderNbr}${jobPart} is ready to schedule pickup`,
         body: renderOrderReadyTemplate({
             title: "Your order is ready for pickup",
-            preheader: `Order ${orderNbr} is ready for pickup.`,
-            message: `Your order ${orderNbr} is ready for pickup. Schedule a pickup time when it works best for you.`,
+            preheader: `Order ${orderNbr}${jobPart} is ready for pickup.`,
+            message: `Your order ${orderNbr}${jobPart} is ready for pickup. Schedule a pickup time when it works best for you.`,
             orderNbr,
+            jobDisplay: trimmedJob || null,
             link,
             logoUrl,
         }),

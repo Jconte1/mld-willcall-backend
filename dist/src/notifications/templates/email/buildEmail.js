@@ -12,6 +12,19 @@ function formatOrderList(orderNbrs = []) {
         return "(none)";
     return orderNbrs.join(", ");
 }
+function formatOrderDisplayList(payload) {
+    if (Array.isArray(payload.orderDisplays) && payload.orderDisplays.length) {
+        return payload.orderDisplays
+            .map((entry) => {
+            const orderNbr = String(entry.orderNbr || "").trim();
+            const label = String(entry.jobDisplay || "").trim();
+            return label ? `${orderNbr} - ${label}` : orderNbr;
+        })
+            .filter(Boolean)
+            .join(", ");
+    }
+    return formatOrderList(payload.orderNbrs);
+}
 function renderTemplate({ title, preheader, message, when, orders, location, link, unsubscribeLink, staffNote, logoUrl, }) {
     const locationBlock = location
         ? `<tr>
@@ -87,7 +100,7 @@ function renderTemplate({ title, preheader, message, when, orders, location, lin
 }
 function buildEmailMessage(type, payload) {
     const when = (0, format_1.formatDenverDateTime)(payload.startAt);
-    const orders = formatOrderList(payload.orderNbrs);
+    const orders = formatOrderDisplayList(payload);
     const staffNote = payload.staffInitiated
         ? "This update was made by our staff to keep your pickup on track."
         : undefined;

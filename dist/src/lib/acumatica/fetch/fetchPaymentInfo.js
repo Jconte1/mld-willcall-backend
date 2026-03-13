@@ -5,10 +5,20 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchPaymentInfo;
 const node_https_1 = __importDefault(require("node:https"));
+const erpClient_1 = require("../../queue/erpClient");
 async function fetchPaymentInfo(restService, baid, { orderNbrs = [], chunkSize = Number(process.env.PAYMENTS_CHUNK_SIZE || 20), pageSize = 500, } = {}) {
     if (!Array.isArray(orderNbrs) || !orderNbrs.length) {
         console.log(`[fetchPaymentInfo] baid=${baid} no orderNbrs provided`);
         return [];
+    }
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/payment-info", {
+            baid,
+            orderNbrs,
+        });
+        const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+        console.log(`[fetchPaymentInfo][queue] baid=${baid} totalRows=${rows.length}`);
+        return rows;
     }
     const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;

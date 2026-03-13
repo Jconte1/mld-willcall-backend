@@ -2,11 +2,21 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchOrderLastModified = fetchOrderLastModified;
 const createAcumaticaService_1 = require("../createAcumaticaService");
+const erpClient_1 = require("../../queue/erpClient");
 function normalizeRowArray(text) {
     const arr = text ? JSON.parse(text) : [];
     return Array.isArray(arr) ? arr : Array.isArray(arr?.value) ? arr.value : [];
 }
 async function fetchOrderLastModified(baid, orderNbr, restService) {
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/last-modified", {
+            baid,
+            orderNbr,
+        });
+        const raw = resp?.lastModified ?? null;
+        const parsed = raw ? new Date(raw) : null;
+        return { lastModified: parsed && !Number.isNaN(parsed.getTime()) ? parsed : null, raw };
+    }
     const service = restService ?? (0, createAcumaticaService_1.createAcumaticaService)();
     const token = await service.getToken();
     const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;

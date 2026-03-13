@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchOrderReadyReport = fetchOrderReadyReport;
+const erpClient_1 = require("../../queue/erpClient");
 let loggedKeys = false;
 function pickField(row, keys) {
     for (const key of keys) {
@@ -9,11 +10,45 @@ function pickField(row, keys) {
     }
     return null;
 }
+function pickCanonicalField(row, key) {
+    return Object.prototype.hasOwnProperty.call(row, key) ? row[key] : undefined;
+}
 function parseNumber(value) {
-    const num = Number(value);
+    const raw = unwrapValue(value);
+    const num = Number(raw);
     return Number.isFinite(num) ? num : null;
 }
-async function fetchOrderReadyReport() {
+function unwrapValue(value) {
+    if (value == null)
+        return null;
+    if (typeof value === "object") {
+        if ("value" in value)
+            return value.value ?? null;
+        if ("Value" in value)
+            return value.Value ?? null;
+        if ("#text" in value)
+            return value["#text"] ?? null;
+    }
+    return value;
+}
+function parseBoolean(value) {
+    const raw = unwrapValue(value);
+    if (raw == null)
+        return null;
+    if (typeof raw === "boolean")
+        return raw;
+    const s = String(raw).trim().toLowerCase();
+    if (["true", "1", "yes", "y"].includes(s))
+        return true;
+    if (["false", "0", "no", "n"].includes(s))
+        return false;
+    return null;
+}
+async function fetchRawRows() {
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/reports/order-ready", {});
+        return Array.isArray(resp?.rows) ? resp.rows : [];
+    }
     const url = process.env.ACUMATICA_ORDER_READY_ODATA_URL ||
         "https://acumatica.mld.com/OData/MLD/Ready%20for%20Willcall";
     const username = process.env.ACUMATICA_USERNAME;
@@ -36,67 +71,100 @@ async function fetchOrderReadyReport() {
         throw new Error(`Order-ready OData fetch failed: ${res.status} ${res.statusText}`);
     }
     const json = await res.json().catch(() => ({}));
-    const rows = Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
+    return Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
+}
+async function fetchOrderReadyReport() {
+    const rows = await fetchRawRows();
     if (!loggedKeys && rows.length) {
         loggedKeys = true;
         console.log("[order-ready] sample fields", Object.keys(rows[0] || {}).slice(0, 50));
     }
     return rows.map((row) => ({
-        orderType: pickField(row, ["OrderType", "SOOrder_OrderType", "SOOrder.OrderType"]),
-        orderNbr: pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]),
-        qtyUnallocated: parseNumber(String(pickField(row, ["QtyUnallocated", "willcallNotAllocated_QtyUnallocated"]) ?? "")),
-        qtyAllocated: parseNumber(String(pickField(row, ["QtyAllocated", "willcallAllocated_QtyAllocated"]) ?? "")),
-        shipVia: pickField(row, ["ShipVia", "SOOrder_ShipVia", "SOOrder.ShipVia"]),
-        status: pickField(row, ["Status", "SOOrder_Status", "SOOrder.Status"]),
-        customerId: pickField(row, [
-            "Customer",
-            "CustomerID",
-            "SOOrder_CustomerID",
-            "SOOrder.CustomerID",
-        ]),
-        attributeBuyerGroup: pickField(row, [
-            "BuyerGroup",
-            "AttributeBUYERGROUP",
-            "SOOrder_AttributeBUYERGROUP",
-            "SOOrder.AttributeBUYERGROUP",
-        ]),
-        customerLocationId: pickField(row, [
-            "Location",
-            "CustomerLocationID",
-            "SOOrder_CustomerLocationID",
-            "SOOrder.CustomerLocationID",
-        ]),
-        attributeOsContact: pickField(row, ["DeliveryContact", "AttributeOSCONTACT", "SOOrder_AttributeOSCONTACT"]),
-        attributeSiteNumber: pickField(row, [
-            "DeliveryContactNumber",
-            "AttributeSITENUMBER",
-            "SOOrder_AttributeSITENUMBER",
-        ]),
-        attributeDelEmail: pickField(row, [
-            "DeliveryEmail",
-            "AttributeDELEMAIL",
-            "SOOrder_AttributeDELEMAIL",
-        ]),
-        attributeSmsTxt: pickField(row, [
-            "TextNotification",
-            "AttributeSMSTXT",
-            "SOOrder_AttributeSMSTXT",
-            "SOOrder.AttributeSMSTXT",
-        ]),
-        attributeEmailNoty: pickField(row, [
-            "EmailNotification",
-            "AttributeEMAILNOTY",
-            "SOOrder_AttributeEMAILNOTY",
-            "SOOrder.AttributeEMAILNOTY",
-        ]),
-        warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
-        inventoryId: pickField(row, [
-            "InventoryID",
-            "InventoryCD",
-            "SOLine_InventoryID",
-            "SOLine.InventoryID",
-            "InventoryItem_InventoryID",
-            "INItem_InventoryID",
-        ]),
+        ...(function () {
+            const orderNbr = pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]);
+            const smsOptInRaw = pickCanonicalField(row, "SMSOptin");
+            const emailOptInRaw = pickCanonicalField(row, "EmailOptin");
+            const smsOptInParsed = parseBoolean(smsOptInRaw);
+            const emailOptInParsed = parseBoolean(emailOptInRaw);
+            if (smsOptInRaw === undefined || emailOptInRaw === undefined) {
+                const optInKeys = Object.keys(row).filter((k) => k.toLowerCase().includes("optin"));
+                console.error("[order-ready] opt-in fetch shape mismatch", {
+                    orderNbr,
+                    expectedKeys: ["SMSOptin", "EmailOptin"],
+                    foundOptInKeys: optInKeys,
+                    smsOptInRaw,
+                    emailOptInRaw,
+                });
+            }
+            if (smsOptInParsed == null || emailOptInParsed == null) {
+                console.warn("[order-ready] opt-in parse mismatch", {
+                    orderNbr,
+                    smsOptInRaw,
+                    emailOptInRaw,
+                    smsOptInParsed,
+                    emailOptInParsed,
+                });
+            }
+            return {
+                orderType: pickField(row, ["OrderType", "SOOrder_OrderType", "SOOrder.OrderType"]),
+                orderNbr: pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]),
+                qtyUnallocated: parseNumber(String(pickField(row, ["QtyUnallocated", "willcallNotAllocated_QtyUnallocated"]) ?? "")),
+                qtyAllocated: parseNumber(String(pickField(row, ["QtyAllocated", "willcallAllocated_QtyAllocated"]) ?? "")),
+                shipVia: pickField(row, ["ShipVia", "SOOrder_ShipVia", "SOOrder.ShipVia"]),
+                status: pickField(row, ["Status", "SOOrder_Status", "SOOrder.Status"]),
+                customerId: pickField(row, [
+                    "Customer",
+                    "CustomerID",
+                    "SOOrder_CustomerID",
+                    "SOOrder.CustomerID",
+                ]),
+                attributeBuyerGroup: pickField(row, [
+                    "BuyerGroup",
+                    "AttributeBUYERGROUP",
+                    "SOOrder_AttributeBUYERGROUP",
+                    "SOOrder.AttributeBUYERGROUP",
+                ]),
+                customerLocationId: pickField(row, [
+                    "Location",
+                    "CustomerLocationID",
+                    "SOOrder_CustomerLocationID",
+                    "SOOrder.CustomerLocationID",
+                ]),
+                attributeOsContact: pickField(row, ["DeliveryContact", "AttributeOSCONTACT", "SOOrder_AttributeOSCONTACT"]),
+                attributeSiteNumber: pickField(row, [
+                    "DeliveryContactNumber",
+                    "AttributeSITENUMBER",
+                    "SOOrder_AttributeSITENUMBER",
+                ]),
+                attributeDelEmail: pickField(row, [
+                    "DeliveryEmail",
+                    "AttributeDELEMAIL",
+                    "SOOrder_AttributeDELEMAIL",
+                ]),
+                attributeSmsTxt: pickField(row, [
+                    "TextNotification",
+                    "AttributeSMSTXT",
+                    "SOOrder_AttributeSMSTXT",
+                    "SOOrder.AttributeSMSTXT",
+                ]),
+                attributeEmailNoty: pickField(row, [
+                    "EmailNotification",
+                    "AttributeEMAILNOTY",
+                    "SOOrder_AttributeEMAILNOTY",
+                    "SOOrder.AttributeEMAILNOTY",
+                ]),
+                attributeSmsOptIn: smsOptInParsed,
+                attributeEmailOptIn: emailOptInParsed,
+                warehouse: pickField(row, ["Warehouse", "Warehouse_2", "Warehouse_3", "Warehouse_4"]),
+                inventoryId: pickField(row, [
+                    "InventoryID",
+                    "InventoryCD",
+                    "SOLine_InventoryID",
+                    "SOLine.InventoryID",
+                    "InventoryItem_InventoryID",
+                    "INItem_InventoryID",
+                ]),
+            };
+        })(),
     }));
 }

@@ -79,8 +79,8 @@ function generateInviteCode() {
     return String(digits).padStart(6, "0");
 }
 function resolveInviteRecipient(email, { allowTestOverride = true } = {}) {
-    if (allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
-        // TODO: Remove test override for production invites.
+    const isProduction = process.env.NODE_ENV === "production";
+    if (!isProduction && allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
         return process.env.NOTIFICATIONS_TEST_EMAIL;
     }
     return email || "";
@@ -278,7 +278,7 @@ exports.customerInvitesRouter.post("/request", async (req, res) => {
     const code = generateInviteCode();
     const codeHash = hashInviteCode(code);
     const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
-    const recipient = resolveInviteRecipient(process.env.NOTIFICATIONS_TEST_EMAIL || "", {
+    const recipient = resolveInviteRecipient(process.env.NOTIFICATIONS_TEST_EMAIL, {
         allowTestOverride: true,
     });
     await prisma.inviteCode.create({
@@ -347,13 +347,6 @@ exports.customerInvitesRouter.post("/invitations", async (req, res) => {
     const codeHash = hashInviteCode(code);
     const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
     const recipient = resolveInviteRecipient(parsed.data.email, { allowTestOverride: false });
-    // TODO: Remove this log once production-ready.
-    console.log("[invites][member] recipient resolved", {
-        inputEmail: parsed.data.email,
-        resolved: recipient,
-        allowTestOverride: false,
-        hasTestOverride: Boolean(process.env.NOTIFICATIONS_TEST_EMAIL),
-    });
     const invite = await prisma.inviteCode.create({
         data: {
             baid: parsed.data.baid,

@@ -8,12 +8,14 @@ const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderReadyDetails");
 const fetchOrderLastModified_1 = require("../lib/acumatica/fetch/fetchOrderLastModified");
 const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaService");
+const erpClient_1 = require("../lib/queue/erpClient");
 const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const sendSms_1 = require("../notifications/providers/sms/sendSms");
 const buildOrderReadyEmail_1 = require("../notifications/templates/email/buildOrderReadyEmail");
 const buildSms_1 = require("../notifications/templates/sms/buildSms");
+const orderDisplay_1 = require("../notifications/orderReady/orderDisplay");
 const prisma = new client_1.PrismaClient();
 exports.publicOrderReadyRouter = (0, express_1.Router)();
 const tokenSchema = zod_1.z.object({
@@ -53,6 +55,16 @@ const LOCKOUT_WINDOW_MS = 60 * 60 * 1000;
 function normalizePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
     return digits || null;
+}
+function normalizeEmail(value) {
+    const email = String(value || "").trim().toLowerCase();
+    return email || null;
+}
+function resolveNoticePhone(notice) {
+    return normalizePhone(notice.attributeSmsTxt) || normalizePhone(notice.contactPhone);
+}
+function resolveNoticeEmail(notice) {
+    return normalizeEmail(notice.attributeEmailNoty) || normalizeEmail(notice.contactEmail);
 }
 function getClientIp(req) {
     const xf = req.headers["x-forwarded-for"] || "";
@@ -174,7 +186,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         let lastModifiedCheckFailed = false;
         if (notice.baid) {
             try {
-                const restService = (0, createAcumaticaService_1.createAcumaticaService)();
+                const restService = (0, erpClient_1.shouldUseQueueErp)() ? undefined : (0, createAcumaticaService_1.createAcumaticaService)();
                 const result = await (0, fetchOrderLastModified_1.fetchOrderLastModified)(notice.baid, orderNbr, restService);
                 acuLastModified = result.lastModified;
             }
@@ -240,7 +252,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         usingOrderReadyLine: readyInventoryIds.size > 0,
         sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "OrderReadyLine (empty)",
     });
-    const lines = readyInventoryIds.size === 0
+    let lines = readyInventoryIds.size === 0
         ? []
         : await prisma.erpOrderLine.findMany({
             where: {
@@ -261,6 +273,44 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             },
             orderBy: { inventoryId: "asc" },
         });
+    if (readyInventoryIds.size > 0 && lines.length === 0 && notice.baid) {
+        console.log("[order-ready] forcing detail refresh because lines are missing", {
+            orderNbr,
+            baid: notice.baid,
+            readyInventoryIds: Array.from(readyInventoryIds),
+        });
+        try {
+            await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
+                baid: notice.baid,
+                orderNbr,
+                status: notice.status,
+                locationId: notice.locationId,
+                shipVia: notice.shipVia,
+            });
+            lines = await prisma.erpOrderLine.findMany({
+                where: {
+                    orderNbr,
+                    inventoryId: { in: Array.from(readyInventoryIds) },
+                },
+                select: {
+                    id: true,
+                    inventoryId: true,
+                    lineDescription: true,
+                    warehouse: true,
+                    openQty: true,
+                    orderQty: true,
+                    allocatedQty: true,
+                    isAllocated: true,
+                    amount: true,
+                    taxRate: true,
+                },
+                orderBy: { inventoryId: "asc" },
+            });
+        }
+        catch (err) {
+            console.error("[order-ready] forced refresh failed", { orderNbr, err });
+        }
+    }
     mark("orderLinesDb");
     const orderLines = lines.map((line) => ({
         id: line.id,
@@ -299,6 +349,8 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         : null;
     mark("paymentDb");
     finalizeTiming();
+    const resolvedContactPhone = resolveNoticePhone(notice);
+    const resolvedContactEmail = resolveNoticeEmail(notice);
     return res.json({
         orderReady: {
             orderNbr: notice.orderNbr,
@@ -310,8 +362,8 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             customerId: notice.customerId,
             customerLocationId: notice.customerLocationId,
             contactName: notice.contactName,
-            contactPhone: notice.contactPhone,
-            contactEmail: notice.contactEmail,
+            contactPhone: resolvedContactPhone,
+            contactEmail: resolvedContactEmail,
             locationId: notice.locationId,
             smsOptIn: notice.smsOptIn,
             salesPersonNumber,
@@ -383,8 +435,8 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
     const notice = await prisma.orderReadyNotice.findUnique({
         where: { orderNbr },
     });
-    const contactEmail = (notice?.contactEmail || "").toLowerCase().trim() || null;
-    const contactPhone = normalizePhone(notice?.contactPhone);
+    const contactEmail = notice ? resolveNoticeEmail(notice) : null;
+    const contactPhone = notice ? resolveNoticePhone(notice) : null;
     const match = (email && contactEmail && email === contactEmail) ||
         (phone && contactPhone && phone === contactPhone);
     const matched = Boolean(match);
@@ -394,15 +446,31 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
     if (match && notice) {
         const tokenRow = await (0, tokens_1.rotateOrderReadyToken)(prisma, notice.id);
         const link = (0, buildLink_1.buildOrderReadyLink)(orderNbr, tokenRow.token);
+        const summary = await prisma.erpOrderSummary.findFirst({
+            where: {
+                orderNbr,
+                ...(notice.baid ? { baid: notice.baid } : {}),
+            },
+            select: {
+                locationId: true,
+                jobName: true,
+            },
+            orderBy: { updatedAt: "desc" },
+        });
+        const jobDisplay = (0, orderDisplay_1.resolveOrderReadyJobDisplay)({
+            locationId: summary?.locationId,
+            jobName: summary?.jobName,
+        });
         if (email) {
-            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link);
-            await (0, sendEmail_1.sendEmail)(email, message.subject, message.body);
+            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, jobDisplay);
+            await (0, sendEmail_1.sendEmail)(email, message.subject, message.body, { allowTestOverride: false });
         }
         else if (phone) {
-            const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+            const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
+            const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
             const includeStopLine = !notice.smsFirstSentAt;
             const smsBody = (0, buildSms_1.applySmsCompliance)(smsBase, includeStopLine);
-            await (0, sendSms_1.sendSms)(phone, smsBody);
+            await (0, sendSms_1.sendSms)(phone, smsBody, { allowTestOverride: false });
             if (!notice.smsFirstSentAt) {
                 await prisma.orderReadyNotice.update({
                     where: { id: notice.id },

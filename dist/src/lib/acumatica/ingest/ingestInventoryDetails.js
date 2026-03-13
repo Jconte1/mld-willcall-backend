@@ -8,6 +8,7 @@ const client_1 = require("@prisma/client");
 const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchInventoryDetails_1 = __importDefault(require("../fetch/fetchInventoryDetails"));
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
+const erpClient_1 = require("../../queue/erpClient");
 const prisma = new client_1.PrismaClient();
 function nowMs() {
     return Number(process.hrtime.bigint() / 1000000n);
@@ -89,7 +90,9 @@ async function handleOne(restService, baid) {
 }
 async function ingestInventoryDetails(baid) {
     const restService = (0, createAcumaticaService_1.createAcumaticaService)();
-    await restService.getToken();
+    if (!(0, erpClient_1.shouldUseQueueErp)()) {
+        await restService.getToken();
+    }
     const result = await handleOne(restService, baid);
     return { count: 1, results: [result] };
 }

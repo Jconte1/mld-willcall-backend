@@ -9,6 +9,11 @@ export type NotificationType = AppointmentNotificationType;
 export type NotificationChannelType = NotificationChannel;
 export type NotificationStatusType = NotificationJobStatus;
 
+export type NotificationOrderDisplay = {
+  orderNbr: string;
+  jobDisplay?: string | null;
+};
+
 export type AppointmentWithContact = Pick<
   PickupAppointment,
   | "id"
@@ -42,6 +47,7 @@ export type NotificationPayload = {
   startAt: Date;
   endAt: Date;
   orderNbrs?: string[];
+  orderDisplays?: NotificationOrderDisplay[];
   link: string;
   smsLink?: string;
   unsubscribeLink?: string;

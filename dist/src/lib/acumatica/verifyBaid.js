@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifyBaidInAcumatica = verifyBaidInAcumatica;
 const node_https_1 = __importDefault(require("node:https"));
 const acumaticaService_1 = __importDefault(require("./auth/acumaticaService"));
+const erpClient_1 = require("../queue/erpClient");
 function requireEnv(name) {
     const v = process.env[name]?.trim();
     if (!v) {
@@ -17,7 +18,6 @@ function createErpClient() {
     return new acumaticaService_1.default(requireEnv("ACUMATICA_BASE_URL"), requireEnv("ACUMATICA_CLIENT_ID"), requireEnv("ACUMATICA_CLIENT_SECRET"), requireEnv("ACUMATICA_USERNAME"), requireEnv("ACUMATICA_PASSWORD"));
 }
 function odataEscape(value) {
-    // OData escapes single quotes by doubling them.
     return value.replace(/'/g, "''");
 }
 const LOG_PREFIX = "[willcall][verify-baid][acumatica]";
@@ -33,7 +33,7 @@ function safeJsonParse(text) {
 function truncate(str, max = 2000) {
     if (!str)
         return "";
-    return str.length > max ? str.slice(0, max) + `… (truncated, ${str.length} chars)` : str;
+    return str.length > max ? str.slice(0, max) + `... (truncated, ${str.length} chars)` : str;
 }
 async function fetchCustomerRowsByBaid(restService, baid, zip) {
     const t0 = Date.now();
@@ -65,9 +65,7 @@ async function fetchCustomerRowsByBaid(restService, baid, zip) {
             ms,
             bytes: text.length,
         });
-        // ✅ This is the raw Acumatica response body (capped)
         console.log(`${LOG_PREFIX} raw`, truncate(text, 2000));
-        // ✅ Pretty JSON (capped)
         const json = safeJsonParse(text);
         if (json != null) {
             console.log(`${LOG_PREFIX} json`, truncate(JSON.stringify(json, null, 2), 4000));
@@ -77,7 +75,6 @@ async function fetchCustomerRowsByBaid(restService, baid, zip) {
         }
     }
     if (!resp.ok) {
-        // Surface the ERP response body for debugging, but keep it bounded.
         throw new Error(truncate(text, 500) || `ERP error (${resp.status})`);
     }
     const json = safeJsonParse(text);
@@ -87,9 +84,13 @@ async function fetchCustomerRowsByBaid(restService, baid, zip) {
         return json.value;
     return [];
 }
-/**
- * Returns true if the BAID exists in Acumatica.
- */
+async function verifyBaidViaQueue(baid, zip) {
+    const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/customers/verify", {
+        customerId: baid,
+        zip5: zip,
+    });
+    return Boolean(resp?.matched);
+}
 async function verifyBaidInAcumatica(baid, zip) {
     const cleaned = String(baid || "").trim().toUpperCase();
     const cleanedZip = String(zip || "").replace(/\D/g, "").slice(0, 5);
@@ -99,6 +100,12 @@ async function verifyBaidInAcumatica(baid, zip) {
         return false;
     if (IS_DEV)
         console.log(`${LOG_PREFIX} start`, { baid: cleaned });
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const ok = await verifyBaidViaQueue(cleaned, cleanedZip);
+        if (IS_DEV)
+            console.log("[willcall][verify-baid][queue] result", { baid: cleaned, ok });
+        return ok;
+    }
     const restService = createErpClient();
     const rows = await fetchCustomerRowsByBaid(restService, cleaned, cleanedZip);
     const ok = Array.isArray(rows) && rows.length > 0;

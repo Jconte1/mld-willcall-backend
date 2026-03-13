@@ -4,9 +4,28 @@ import { NotificationPayload } from "../../types";
 
 const BRAND_PREFIX = "MLD Will Call:";
 
+function formatSmsOrderList(payload: NotificationPayload) {
+  if (!Array.isArray(payload.orderDisplays) || !payload.orderDisplays.length) {
+    return formatOrderList(payload.orderNbrs);
+  }
+
+  const labels = payload.orderDisplays
+    .map((entry) => {
+      const orderNbr = String(entry.orderNbr || "").trim();
+      const jobDisplay = String(entry.jobDisplay || "").trim();
+      if (!orderNbr) return "";
+      return jobDisplay ? `${orderNbr} (${jobDisplay})` : orderNbr;
+    })
+    .filter(Boolean);
+
+  if (!labels.length) return formatOrderList(payload.orderNbrs);
+  if (labels.length <= 2) return `Orders: ${labels.join(", ")}`;
+  return `Orders: ${labels.slice(0, 2).join(", ")} +${labels.length - 2} more`;
+}
+
 export function buildSmsMessage(type: AppointmentNotificationType, payload: NotificationPayload) {
   const when = formatDenverDateTime(payload.startAt);
-  const orderLine = formatOrderList(payload.orderNbrs);
+  const orderLine = formatSmsOrderList(payload);
   const manageLink = payload.link;
   const locationLine =
     payload.locationAddress && payload.locationName

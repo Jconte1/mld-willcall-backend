@@ -3,11 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendEmail = sendEmail;
 const graphClient_1 = require("./graphClient");
 function resolveRecipient(email, { allowTestOverride = true, allowNonProdSend = false } = {}) {
-    // TODO: Revisit this behavior before production; allowNonProdSend is intended for local testing only.
-    if (allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
+    const isProduction = process.env.NODE_ENV === "production";
+    if (!isProduction && allowTestOverride && process.env.NOTIFICATIONS_TEST_EMAIL) {
         return process.env.NOTIFICATIONS_TEST_EMAIL;
     }
-    if (process.env.NODE_ENV !== "production" && !allowNonProdSend) {
+    if (!isProduction && !allowNonProdSend) {
         return "";
     }
     return email;

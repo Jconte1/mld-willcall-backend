@@ -12,6 +12,7 @@ import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { sendSms } from "../notifications/providers/sms/sendSms";
 import { buildOrderReadyEmail } from "../notifications/templates/email/buildOrderReadyEmail";
 import { applySmsCompliance } from "../notifications/templates/sms/buildSms";
+import { resolveOrderReadyJobDisplay } from "../notifications/orderReady/orderDisplay";
 
 const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
@@ -486,12 +487,28 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
   if (match && notice) {
     const tokenRow = await rotateOrderReadyToken(prisma, notice.id);
     const link = buildOrderReadyLink(orderNbr, tokenRow.token);
+    const summary = await prisma.erpOrderSummary.findFirst({
+      where: {
+        orderNbr,
+        ...(notice.baid ? { baid: notice.baid } : {}),
+      },
+      select: {
+        locationId: true,
+        jobName: true,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    const jobDisplay = resolveOrderReadyJobDisplay({
+      locationId: summary?.locationId,
+      jobName: summary?.jobName,
+    });
 
     if (email) {
-      const message = buildOrderReadyEmail(orderNbr, link);
+      const message = buildOrderReadyEmail(orderNbr, link, jobDisplay);
       await sendEmail(email, message.subject, message.body, { allowTestOverride: false });
     } else if (phone) {
-      const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+      const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
+      const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(phone, smsBody, { allowTestOverride: false });

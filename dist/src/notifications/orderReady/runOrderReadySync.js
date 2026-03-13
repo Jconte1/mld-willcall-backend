@@ -11,10 +11,10 @@ const sendSms_1 = require("../providers/sms/sendSms");
 const buildOrderReadyEmail_1 = require("../templates/email/buildOrderReadyEmail");
 const quietHours_1 = require("../rules/quietHours");
 const buildSms_1 = require("../templates/sms/buildSms");
+const orderDisplay_1 = require("./orderDisplay");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
 const RESEND_DAYS = 1;
-const MAX_SEND_PER_RUN = 3; // TODO: Remove send restriction for live production.
 const RUN_HOUR = 9;
 const RUN_MINUTE = 30;
 const RUN_WINDOW_MINUTES = 12 * 60;
@@ -48,6 +48,12 @@ function getDenverParts(date) {
 }
 function addDays(date, days) {
     return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+function getAttemptDateKey(date) {
+    return getDenverParts(date).date;
+}
+function buildSummaryKey(baid, orderNbr) {
+    return `${String(baid ?? "").trim().toUpperCase()}::${orderNbr.trim().toUpperCase()}`;
 }
 async function shouldRun(prisma, now) {
     const existing = await prisma.orderReadyJobState.findUnique({
@@ -88,25 +94,64 @@ async function runOrderReadySync(prisma) {
             status: rows[0]?.status,
             textNotification: rows[0]?.attributeSmsTxt,
             emailNotification: rows[0]?.attributeEmailNoty,
+            textOptIn: rows[0]?.attributeSmsOptIn,
+            emailOptIn: rows[0]?.attributeEmailOptIn,
             warehouse: rows[0]?.warehouse,
         });
     }
     const grouped = groupOrderReadyRows(rows);
     const seenOrderNbrs = new Set(Array.from(grouped.keys()));
-    let sentCount = 0;
+    const summaryRows = await prisma.erpOrderSummary.findMany({
+        where: {
+            orderNbr: { in: Array.from(grouped.keys()) },
+        },
+        select: {
+            baid: true,
+            orderNbr: true,
+            locationId: true,
+            jobName: true,
+            updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+    });
+    const summaryByBaidAndOrder = new Map();
+    const summaryByOrder = new Map();
+    for (const summary of summaryRows) {
+        const key = buildSummaryKey(summary.baid, summary.orderNbr);
+        if (!summaryByBaidAndOrder.has(key))
+            summaryByBaidAndOrder.set(key, summary);
+        const orderKey = summary.orderNbr.trim().toUpperCase();
+        if (!summaryByOrder.has(orderKey))
+            summaryByOrder.set(orderKey, summary);
+    }
     for (const [orderNbr, bucket] of grouped.entries()) {
         const row = bucket.row;
         const contactEmail = (row.attributeEmailNoty || "").trim() || null;
         const contactPhone = normalizePhone(row.attributeSmsTxt);
         const mappedLocationId = (0, locationIds_1.normalizeWarehouseToLocationId)(row.warehouse);
         const locationId = mappedLocationId ?? "slc-hq";
-        const smsOptIn = Boolean(contactPhone);
+        const summaryLookupKey = buildSummaryKey(row.customerId, orderNbr);
+        const summary = summaryByBaidAndOrder.get(summaryLookupKey) ??
+            summaryByOrder.get(orderNbr.trim().toUpperCase()) ??
+            null;
+        const jobDisplay = (0, orderDisplay_1.resolveOrderReadyJobDisplay)({
+            locationId: summary?.locationId,
+            jobName: summary?.jobName,
+        });
+        const smsOptIn = row.attributeSmsOptIn === true;
+        const emailOptIn = row.attributeEmailOptIn === true;
+        const smsEligible = smsOptIn && Boolean(contactPhone);
+        const emailEligible = emailOptIn && Boolean(contactEmail);
         const existingNotice = await prisma.orderReadyNotice.findUnique({
             where: { orderNbr },
             select: {
                 id: true,
                 attributeSmsTxt: true,
                 attributeEmailNoty: true,
+                attributeSmsOptIn: true,
+                attributeEmailOptIn: true,
+                notifyAttemptCount: true,
+                lastNotifyAttemptOn: true,
                 lastNotifiedAt: true,
                 nextEligibleNotifyAt: true,
                 scheduledAppointmentId: true,
@@ -114,8 +159,37 @@ async function runOrderReadySync(prisma) {
         });
         const prevEmail = (existingNotice?.attributeEmailNoty || "").trim() || null;
         const prevPhone = normalizePhone(existingNotice?.attributeSmsTxt);
-        const contactChanged = Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
-        const nextEligibleOverride = contactChanged && existingNotice?.lastNotifiedAt ? now : undefined;
+        const channelDestinationChanged = Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
+        const bothOptedOut = row.attributeSmsOptIn === false && row.attributeEmailOptIn === false;
+        if (channelDestinationChanged) {
+            console.log("[order-ready] attempt counter reset (contact change)", {
+                orderNbr,
+                prevEmail,
+                nextEmail: contactEmail,
+                prevPhone,
+                nextPhone: contactPhone,
+            });
+        }
+        if (bothOptedOut) {
+            console.log("[order-ready] attempt counter primed (both channels opted out)", {
+                orderNbr,
+            });
+        }
+        const attemptResetData = channelDestinationChanged
+            ? {
+                notifyAttemptCount: 0,
+                lastNotifyAttemptOn: null,
+                escalationCount: 0,
+                lastEscalatedAt: null,
+            }
+            : {};
+        const bothOptedOutData = bothOptedOut
+            ? {
+                notifyAttemptCount: Math.max(existingNotice?.notifyAttemptCount ?? 0, 5),
+                lastNotifyAttemptOn: null,
+            }
+            : {};
+        const nextEligibleOverride = channelDestinationChanged && existingNotice?.lastNotifiedAt ? now : undefined;
         const updateData = {
             baid: row.customerId ?? null,
             status: row.status ?? null,
@@ -131,14 +205,38 @@ async function runOrderReadySync(prisma) {
             attributeDelEmail: row.attributeDelEmail ?? null,
             attributeSmsTxt: row.attributeSmsTxt ?? null,
             attributeEmailNoty: row.attributeEmailNoty ?? null,
-            contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+            attributeSmsOptIn: row.attributeSmsOptIn ?? null,
+            attributeEmailOptIn: row.attributeEmailOptIn ?? null,
+            contactName: row.attributeOsContact ?? null,
             contactPhone, // TODO: replace with actual contact phone field
             contactEmail,
             locationId,
-            smsOptIn,
+            smsOptIn: smsEligible,
+            emailOptIn: emailEligible,
             lastReadyAt: now,
+            ...attemptResetData,
+            ...bothOptedOutData,
             ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
         };
+        console.log("[order-ready] opt-in write attempt", {
+            orderNbr,
+            fetched: {
+                attributeSmsOptIn: row.attributeSmsOptIn,
+                attributeEmailOptIn: row.attributeEmailOptIn,
+                attributeSmsTxt: row.attributeSmsTxt ?? null,
+                attributeEmailNoty: row.attributeEmailNoty ?? null,
+            },
+            computed: {
+                smsEligible,
+                emailEligible,
+            },
+            writePayload: {
+                attributeSmsOptIn: updateData.attributeSmsOptIn,
+                attributeEmailOptIn: updateData.attributeEmailOptIn,
+                smsOptIn: updateData.smsOptIn,
+                emailOptIn: updateData.emailOptIn,
+            },
+        });
         const createData = {
             orderNbr,
             baid: row.customerId ?? null,
@@ -155,17 +253,33 @@ async function runOrderReadySync(prisma) {
             attributeDelEmail: row.attributeDelEmail ?? null,
             attributeSmsTxt: row.attributeSmsTxt ?? null,
             attributeEmailNoty: row.attributeEmailNoty ?? null,
-            contactName: row.attributeSiteNumber ?? null, // TODO: replace with actual contact name field
+            attributeSmsOptIn: row.attributeSmsOptIn ?? null,
+            attributeEmailOptIn: row.attributeEmailOptIn ?? null,
+            contactName: row.attributeOsContact ?? null,
             contactPhone, // TODO: replace with actual contact phone field
             contactEmail,
             locationId,
-            smsOptIn,
+            smsOptIn: smsEligible,
+            emailOptIn: emailEligible,
             lastReadyAt: now,
+            notifyAttemptCount: bothOptedOut ? 5 : 0,
+            lastNotifyAttemptOn: null,
+            escalationCount: 0,
+            lastEscalatedAt: null,
         };
         const notice = await prisma.orderReadyNotice.upsert({
             where: { orderNbr },
             update: updateData,
             create: createData,
+        });
+        console.log("[order-ready] opt-in write result", {
+            orderNbr,
+            written: {
+                attributeSmsOptIn: notice.attributeSmsOptIn,
+                attributeEmailOptIn: notice.attributeEmailOptIn,
+                smsOptIn: notice.smsOptIn,
+                emailOptIn: notice.emailOptIn,
+            },
         });
         await prisma.orderReadyLine.deleteMany({ where: { orderReadyId: notice.id } });
         if (bucket.inventoryIds.size) {
@@ -180,6 +294,19 @@ async function runOrderReadySync(prisma) {
         }
         const normalizedStatus = (notice.status || "").toLowerCase();
         if (normalizedStatus === "scheduled" || normalizedStatus === "completed") {
+            await prisma.orderReadyNotice.update({
+                where: { id: notice.id },
+                data: {
+                    notifyAttemptCount: 0,
+                    lastNotifyAttemptOn: null,
+                    escalationCount: 0,
+                    lastEscalatedAt: null,
+                },
+            });
+            console.log("[order-ready] attempt counter reset (order status)", {
+                orderNbr,
+                status: normalizedStatus,
+            });
             continue;
         }
         const scheduledAppointment = await prisma.pickupAppointmentOrder.findFirst({
@@ -195,7 +322,17 @@ async function runOrderReadySync(prisma) {
         if (scheduledAppointment?.appointmentId) {
             await prisma.orderReadyNotice.update({
                 where: { id: notice.id },
-                data: { scheduledAppointmentId: scheduledAppointment.appointmentId },
+                data: {
+                    scheduledAppointmentId: scheduledAppointment.appointmentId,
+                    notifyAttemptCount: 0,
+                    lastNotifyAttemptOn: null,
+                    escalationCount: 0,
+                    lastEscalatedAt: null,
+                },
+            });
+            console.log("[order-ready] attempt counter reset (active appointment)", {
+                orderNbr,
+                appointmentId: scheduledAppointment.appointmentId,
             });
             continue;
         }
@@ -209,38 +346,44 @@ async function runOrderReadySync(prisma) {
             (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
         if (!eligible)
             continue;
-        if (!notice.contactEmail && !process.env.NOTIFICATIONS_TEST_EMAIL) {
-            // TODO: When production-ready, require a real contactEmail before sending.
-            // TODO: If the email is invalid or bounces, notify the salesperson for this order.
-            console.log("[order-ready] skipped (missing email)", { orderNbr });
-            continue;
-        }
         const activeToken = await (0, tokens_1.getActiveOrderReadyToken)(prisma, notice.id);
         const tokenRow = activeToken ?? (await (0, tokens_1.createOrderReadyToken)(prisma, notice.id));
         const link = (0, buildLink_1.buildOrderReadyLink)(orderNbr, tokenRow.token);
-        const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link);
-        const recipient = notice.contactEmail || process.env.NOTIFICATIONS_TEST_EMAIL || "";
-        if (!recipient) {
-            console.log("[order-ready] skipped (missing recipient)", { orderNbr });
-            continue;
-        }
-        if (sentCount >= MAX_SEND_PER_RUN) {
-            console.log("[order-ready] email suppressed (limit reached)", { orderNbr });
-            continue;
-        }
         const sendAt = (0, quietHours_1.nextAllowedTime)(now);
         if (sendAt.getTime() > now.getTime()) {
             console.log("[order-ready] deferred (quiet hours)", { orderNbr, sendAt: sendAt.toISOString() });
             continue;
         }
-        await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body, { allowTestOverride: false });
-        sentCount += 1;
+        let sentEmail = false;
+        let sentSms = false;
+        if (notice.emailOptIn) {
+            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, jobDisplay);
+            const recipient = notice.contactEmail || "";
+            if (!recipient) {
+                console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
+            }
+            else {
+                console.log("[order-ready] email context", {
+                    orderNbr,
+                    summaryLocationId: summary?.locationId ?? null,
+                    summaryJobName: summary?.jobName ?? null,
+                    resolvedJobDisplay: jobDisplay,
+                    subject: message.subject,
+                });
+                await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body, { allowTestOverride: false });
+                sentEmail = true;
+            }
+        }
+        else {
+            console.log("[order-ready] email skipped (email opt-in false)", { orderNbr });
+        }
         if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
-            // TODO: switch to real opt-in + phone source when available in production.
-            const smsBase = `MLD Will Call: Order ${orderNbr} is ready for pickup. Schedule here: ${link}`;
+            const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
+            const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
             const includeStopLine = !notice.smsFirstSentAt;
             const smsBody = (0, buildSms_1.applySmsCompliance)(smsBase, includeStopLine);
             await (0, sendSms_1.sendSms)(notice.contactPhone, smsBody, { allowTestOverride: false });
+            sentSms = true;
             if (!notice.smsFirstSentAt) {
                 await prisma.orderReadyNotice.update({
                     where: { id: notice.id },
@@ -248,15 +391,35 @@ async function runOrderReadySync(prisma) {
                 });
             }
         }
-        // TODO: After 5 consecutive daily sends, escalate to the salesperson for follow-up.
+        else if (!notice.smsOptIn) {
+            console.log("[order-ready] sms skipped (sms opt-in false)", { orderNbr });
+        }
+        const sentAny = sentEmail || sentSms;
+        if (!sentAny) {
+            console.log("[order-ready] no customer notification sent", { orderNbr });
+            continue;
+        }
+        const attemptDay = getAttemptDateKey(now);
+        const alreadyCountedToday = notice.lastNotifyAttemptOn === attemptDay;
+        const currentAttempts = notice.notifyAttemptCount ?? 0;
+        const nextAttempts = alreadyCountedToday ? currentAttempts : currentAttempts + 1;
         await prisma.orderReadyNotice.update({
             where: { id: notice.id },
             data: {
                 lastNotifiedAt: now,
                 nextEligibleNotifyAt: addDays(now, RESEND_DAYS),
+                lastNotifyAttemptOn: attemptDay,
+                notifyAttemptCount: nextAttempts,
             },
         });
-        console.log("[order-ready] notified", { orderNbr });
+        console.log("[order-ready] notified", {
+            orderNbr,
+            sentEmail,
+            sentSms,
+            attemptDay,
+            alreadyCountedToday,
+            notifyAttemptCount: nextAttempts,
+        });
     }
     const staleNotices = await prisma.orderReadyNotice.findMany({
         where: { orderNbr: { notIn: Array.from(seenOrderNbrs) } },
@@ -268,6 +431,11 @@ async function runOrderReadySync(prisma) {
             data: {
                 status: "NotReady",
                 nextEligibleNotifyAt: null,
+                scheduledAppointmentId: null,
+                notifyAttemptCount: 0,
+                lastNotifyAttemptOn: null,
+                escalationCount: 0,
+                lastEscalatedAt: null,
             },
         });
         await prisma.orderReadyLine.deleteMany({

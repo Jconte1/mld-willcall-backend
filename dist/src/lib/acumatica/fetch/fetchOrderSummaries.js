@@ -6,12 +6,24 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchOrderSummaries;
 const node_https_1 = __importDefault(require("node:https"));
 const denver_1 = require("../../time/denver");
+const erpClient_1 = require("../../queue/erpClient");
 async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, maxPages: maxPagesArg, useOrderBy = false, } = {}) {
-    const token = await restService.getToken();
     const envPage = Number(process.env.ACU_PAGE_SIZE || "");
     const pageSize = Number.isFinite(envPage) && envPage > 0 ? envPage : (pageSizeArg || 250);
     const envMax = Number(process.env.ACU_MAX_PAGES || "");
     const maxPages = Number.isFinite(envMax) && envMax > 0 ? envMax : (maxPagesArg || 50);
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/summaries", {
+            baid,
+            pageSize,
+            maxPages,
+            useOrderBy: Boolean(useOrderBy),
+        });
+        const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+        console.log(`[fetchOrderSummaries][queue] baid=${baid} totalRows=${rows.length}`);
+        return rows;
+    }
+    const token = await restService.getToken();
     const cutoffDenver = (0, denver_1.oneYearAgoDenver)(new Date());
     const cutoffLiteral = (0, denver_1.toDenverDateTimeOffsetLiteral)(cutoffDenver);
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;

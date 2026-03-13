@@ -8,7 +8,6 @@ const eligibility_1 = require("../rules/eligibility");
 const cancelJobs_1 = require("./cancelJobs");
 const sendImmediate_1 = require("./sendImmediate");
 async function handleAppointmentCompleted(prisma, input) {
-    // TODO: Completed notifications still honor NOTIFICATIONS_TEST_EMAIL; switch to live recipients before production.
     const now = new Date();
     const { appointment, orderNbrs, ignoreCap, staffInitiated } = input;
     console.log("[notifications] completed", {

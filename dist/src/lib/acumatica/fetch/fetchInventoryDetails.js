@@ -5,9 +5,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchInventoryDetails;
 const node_https_1 = __importDefault(require("node:https"));
+const erpClient_1 = require("../../queue/erpClient");
 async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize = Number(process.env.LINES_BATCH_SIZE || 16), pool = Number(process.env.LINES_POOL || 4), maxSockets = Number(process.env.LINES_MAX_SOCKETS || 8), retries = Number(process.env.LINES_RETRIES || 4), maxUrl = Number(process.env.ACUMATICA_MAX_URL || 7000), timeoutMs = Number(process.env.LINES_TIMEOUT_MS || 25000), minDelayMs = Number(process.env.LINES_MIN_DELAY_MS || 150), } = {}) {
     if (!Array.isArray(orderNbrs) || orderNbrs.length === 0)
         return [];
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/inventory-details", {
+            baid,
+            orderNbrs,
+        });
+        const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+        console.log(`[fetchInventoryDetails][queue] baid=${baid} totalRows=${rows.length}`);
+        return rows;
+    }
     const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
     const agent = new node_https_1.default.Agent({ keepAlive: true, maxSockets });
@@ -49,7 +59,6 @@ async function fetchInventoryDetails(restService, baid, orderNbrs, { batchSize =
             "Pending Approval",
             "Rejected",
             "Pending Processing",
-            "Awaiting Payment",
             "Credit Hold",
             "Completed",
             "Invoiced",

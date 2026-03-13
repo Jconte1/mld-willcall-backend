@@ -6,6 +6,9 @@ const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const auth_1 = require("../middleware/auth");
 const locationIds_1 = require("../lib/locationIds");
+const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderReadyDetails");
+const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaService");
+const erpClient_1 = require("../lib/queue/erpClient");
 const notifications_1 = require("../notifications");
 const prisma = new client_1.PrismaClient();
 exports.pickupsRouter = (0, express_1.Router)();
@@ -35,6 +38,13 @@ const selectedItemsSchema = zod_1.z.object({
     items: zod_1.z.array(selectedItemSchema),
 });
 const SHIPMENT_FORMAT = /^SMT\d{7}$/;
+const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const ACTIVE_APPOINTMENT_STATUSES = [
+    client_1.PickupAppointmentStatus.Scheduled,
+    client_1.PickupAppointmentStatus.Confirmed,
+    client_1.PickupAppointmentStatus.InProgress,
+    client_1.PickupAppointmentStatus.Ready,
+];
 const shipmentUpdateSchema = zod_1.z.object({
     orderNbr: zod_1.z.string().min(1),
     shipmentNbrs: zod_1.z.array(zod_1.z.string().min(1)).default([]),
@@ -46,6 +56,295 @@ function canAccessLocation(req, locationId) {
 }
 function canWritePickups(req) {
     return req.auth?.role !== "VIEWER" && req.auth?.role !== "SALESPERSON";
+}
+function normalizeOrderNbr(value) {
+    return value.trim().toUpperCase();
+}
+function uniqueOrderNbrs(values) {
+    if (!values?.length)
+        return [];
+    return Array.from(new Set(values.map(normalizeOrderNbr).filter(Boolean)));
+}
+function toNumber(value) {
+    if (value == null)
+        return 0;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+function formatDenverDateTime(input) {
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Denver",
+        month: "2-digit",
+        day: "2-digit",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+    }).format(input);
+}
+async function findActiveOrderConflicts(orderNbrs) {
+    if (!orderNbrs.length)
+        return [];
+    const rows = await prisma.pickupAppointmentOrder.findMany({
+        where: {
+            orderNbr: { in: orderNbrs },
+            appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
+        },
+        include: {
+            appointment: {
+                select: {
+                    id: true,
+                    status: true,
+                    startAt: true,
+                    endAt: true,
+                },
+            },
+        },
+        orderBy: [{ appointment: { startAt: "asc" } }],
+    });
+    return rows.map((row) => ({
+        orderNbr: row.orderNbr,
+        appointmentId: row.appointmentId,
+        status: row.appointment.status,
+        startAt: row.appointment.startAt,
+        endAt: row.appointment.endAt,
+        displayAt: formatDenverDateTime(row.appointment.startAt),
+    }));
+}
+async function findOrderSummary(orderNbr) {
+    return prisma.erpOrderSummary.findFirst({
+        where: { orderNbr, isActive: true },
+        orderBy: [{ updatedAt: "desc" }],
+        include: {
+            ErpOrderPayment: true,
+            ErpOrderLine: true,
+        },
+    });
+}
+async function refreshOrderFromSalesOrderEndpoint(orderNbrInput) {
+    const orderNbr = normalizeOrderNbr(orderNbrInput);
+    console.info("[staff-pickups][lookup] salesorder fallback start", { orderNbr });
+    let row = null;
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/header", { orderNbr });
+        if (!resp?.found || !resp.row) {
+            console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
+            return false;
+        }
+        row = resp.row;
+    }
+    else {
+        const service = (0, createAcumaticaService_1.createAcumaticaService)();
+        const token = await service.getToken();
+        const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
+        const safeOrderNbr = orderNbr.replace(/'/g, "''");
+        const params = new URLSearchParams();
+        params.set("$filter", `OrderNbr eq '${safeOrderNbr}'`);
+        params.set("$select", [
+            "OrderNbr",
+            "Status",
+            "LocationID",
+            "ShipVia",
+            "CustomerID",
+            "LastModified",
+        ].join(","));
+        params.set("$top", "1");
+        const url = `${base}?${params.toString()}`;
+        const res = await fetch(url, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                Authorization: `Bearer ${token}`,
+            },
+        });
+        const text = await res.text();
+        if (!res.ok) {
+            throw new Error(text || `SalesOrder lookup failed (${res.status})`);
+        }
+        const parsed = text ? JSON.parse(text) : [];
+        const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.value) ? parsed.value : [];
+        if (!rows.length) {
+            console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
+            return false;
+        }
+        row = rows[0] ?? {};
+    }
+    const baid = String(row?.CustomerID?.value ?? row?.CustomerID ?? "").trim();
+    if (!baid) {
+        console.warn("[staff-pickups][lookup] salesorder fallback missing baid", { orderNbr });
+        return false;
+    }
+    const status = String(row?.Status?.value ?? row?.Status ?? "Open");
+    const shipVia = String(row?.ShipVia?.value ?? row?.ShipVia ?? "").trim() || null;
+    const locationId = String(row?.LocationID?.value ?? row?.LocationID ?? "").trim() || null;
+    const lastModifiedRaw = row?.LastModified?.value ?? row?.LastModified ?? null;
+    const lastModified = lastModifiedRaw && !Number.isNaN(new Date(lastModifiedRaw).getTime())
+        ? new Date(lastModifiedRaw)
+        : null;
+    await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
+        baid,
+        orderNbr,
+        status,
+        shipVia,
+        locationId,
+        lastModified,
+    });
+    console.info("[staff-pickups][lookup] salesorder fallback complete", {
+        orderNbr,
+        baid,
+        status,
+        shipVia,
+        locationId,
+    });
+    return true;
+}
+async function getOrRefreshOrderDetail(orderNbrInput) {
+    const orderNbr = normalizeOrderNbr(orderNbrInput);
+    console.info("[staff-pickups][lookup] start", { orderNbr });
+    let summary = await findOrderSummary(orderNbr);
+    if (summary) {
+        console.info("[staff-pickups][lookup] db hit", {
+            orderNbr,
+            baid: summary.baid,
+            status: summary.status,
+            lineCount: summary.ErpOrderLine.length,
+            hasPayment: Boolean(summary.ErpOrderPayment),
+        });
+    }
+    else {
+        console.info("[staff-pickups][lookup] db miss", { orderNbr });
+    }
+    if (!summary) {
+        const notice = await prisma.orderReadyNotice.findUnique({
+            where: { orderNbr },
+            select: {
+                baid: true,
+                status: true,
+                shipVia: true,
+                locationId: true,
+            },
+        });
+        if (notice?.baid) {
+            console.info("[staff-pickups][lookup] orderReadyNotice fallback start", {
+                orderNbr,
+                baid: notice.baid,
+            });
+            try {
+                await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
+                    baid: notice.baid,
+                    orderNbr,
+                    status: notice.status,
+                    shipVia: notice.shipVia,
+                    locationId: notice.locationId,
+                });
+            }
+            catch (err) {
+                console.error("[staff-pickups] refresh from orderReadyNotice failed", {
+                    orderNbr,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+            summary = await findOrderSummary(orderNbr);
+            console.info("[staff-pickups][lookup] orderReadyNotice fallback result", {
+                orderNbr,
+                found: Boolean(summary),
+            });
+        }
+    }
+    if (!summary) {
+        try {
+            const refreshed = await refreshOrderFromSalesOrderEndpoint(orderNbr);
+            console.info("[staff-pickups][lookup] salesorder fallback result", {
+                orderNbr,
+                refreshed,
+            });
+            if (refreshed) {
+                summary = await findOrderSummary(orderNbr);
+            }
+        }
+        catch (err) {
+            console.error("[staff-pickups] refresh from order-ready report failed", {
+                orderNbr,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
+    if (!summary) {
+        console.warn("[staff-pickups][lookup] not found after all fallbacks", { orderNbr });
+        return null;
+    }
+    const payment = {
+        orderTotal: toNumber(summary.ErpOrderPayment?.orderTotal),
+        unpaidBalance: toNumber(summary.ErpOrderPayment?.unpaidBalance),
+        terms: summary.ErpOrderPayment?.terms ?? null,
+        status: summary.ErpOrderPayment?.status ?? null,
+    };
+    const salesPerson = summary.salesPersonNumber
+        ? await prisma.staffUser.findFirst({
+            where: { salespersonNumber: summary.salesPersonNumber },
+            select: {
+                salespersonNumber: true,
+                salespersonName: true,
+                salespersonPhone: true,
+                salespersonEmail: true,
+            },
+        })
+        : null;
+    const lines = summary.ErpOrderLine.map((line) => ({
+        id: line.id,
+        inventoryId: line.inventoryId,
+        lineDescription: line.lineDescription,
+        warehouse: line.warehouse,
+        openQty: toNumber(line.openQty),
+        orderQty: toNumber(line.orderQty),
+        allocatedQty: toNumber(line.allocatedQty),
+        isAllocated: line.isAllocated,
+        amount: toNumber(line.amount),
+        taxRate: toNumber(line.taxRate),
+    })).sort((a, b) => (a.inventoryId ?? "").localeCompare(b.inventoryId ?? ""));
+    return {
+        orderNbr,
+        baid: summary.baid,
+        status: summary.status,
+        shipVia: summary.shipVia ?? null,
+        payment,
+        salesPerson: salesPerson
+            ? {
+                number: salesPerson.salespersonNumber,
+                name: salesPerson.salespersonName,
+                phone: salesPerson.salespersonPhone,
+                email: salesPerson.salespersonEmail,
+            }
+            : null,
+        lines,
+    };
+}
+function findPrepayBlock(detail, selectedItems) {
+    const terms = (detail.payment.terms ?? "").trim().toUpperCase();
+    if (!PREPAY_TERMS.has(terms))
+        return null;
+    const selectedMap = new Map((selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item]));
+    const unpaidBalance = detail.payment.unpaidBalance;
+    const remainingGoodsPreTax = detail.lines.reduce((sum, line) => {
+        const key = line.id || line.inventoryId || "";
+        const selected = selectedMap.get(key);
+        const selectedQty = selected ? selected.qty : 0;
+        const remainingQty = Math.max(0, line.openQty - selectedQty);
+        const orderQty = line.orderQty;
+        if (orderQty <= 0 || remainingQty <= 0)
+            return sum;
+        const perUnitPreTax = line.amount / orderQty;
+        return sum + remainingQty * perUnitPreTax;
+    }, 0);
+    const retainRequired = remainingGoodsPreTax * 0.5;
+    const amountOwed = Math.max(0, unpaidBalance - retainRequired);
+    if (amountOwed <= 0)
+        return null;
+    return {
+        orderNbr: detail.orderNbr,
+        amountOwed: Math.round(amountOwed * 100) / 100,
+    };
 }
 function normalizeSelections(selectedItems, allowedOrders) {
     if (!selectedItems?.length)
@@ -193,6 +492,61 @@ exports.pickupsRouter.get("/", async (req, res) => {
     return res.json({ pickups: normalized });
 });
 /**
+ * POST /api/staff/pickups/orders/lookup
+ * Body: { orderNbr }
+ */
+exports.pickupsRouter.post("/orders/lookup", async (req, res) => {
+    if (!canWritePickups(req)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const body = zod_1.z
+        .object({
+        orderNbr: zod_1.z.string().min(1),
+    })
+        .safeParse(req.body);
+    if (!body.success) {
+        console.warn("[staff-pickups][lookup] invalid request body", { body: req.body });
+        return res.status(400).json({ message: "Invalid request body" });
+    }
+    console.info("[staff-pickups][lookup] endpoint hit", {
+        orderNbr: body.data.orderNbr,
+        userId: req.auth?.id,
+        role: req.auth?.role,
+    });
+    const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
+    const activeConflicts = await findActiveOrderConflicts([normalizedOrderNbr]);
+    if (activeConflicts.length) {
+        const conflict = activeConflicts[0];
+        const message = `${normalizedOrderNbr} is already scheduled on ${conflict.displayAt}`;
+        console.warn("[staff-pickups][lookup] endpoint conflict", {
+            orderNbr: normalizedOrderNbr,
+            appointmentId: conflict.appointmentId,
+            status: conflict.status,
+            at: conflict.displayAt,
+        });
+        return res.status(409).json({
+            message,
+            code: "ORDER_ALREADY_SCHEDULED",
+            conflict,
+        });
+    }
+    const detail = await getOrRefreshOrderDetail(body.data.orderNbr);
+    if (!detail) {
+        console.warn("[staff-pickups][lookup] endpoint not found", {
+            orderNbr: body.data.orderNbr,
+        });
+        return res.status(404).json({ message: "Order not found." });
+    }
+    console.info("[staff-pickups][lookup] endpoint success", {
+        orderNbr: detail.orderNbr,
+        baid: detail.baid,
+        lineCount: detail.lines.length,
+        terms: detail.payment.terms,
+        unpaidBalance: detail.payment.unpaidBalance,
+    });
+    return res.json({ order: detail });
+});
+/**
  * POST /api/staff/pickups
  * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
  */
@@ -213,22 +567,68 @@ exports.pickupsRouter.post("/", async (req, res) => {
         status: STATUS.optional(),
         orderNbrs: zod_1.z.array(zod_1.z.string()).optional(),
         selectedItems: zod_1.z.array(selectedItemsSchema).optional(),
-        notifyCustomer: zod_1.z.boolean().optional(),
+        prepayOverride: zod_1.z.boolean().optional(),
     }).safeParse(req.body);
     if (!body.success)
         return res.status(400).json({ message: "Invalid request body" });
+    console.info("[staff-pickups][create] start", {
+        userId: req.auth?.id,
+        role: req.auth?.role,
+        locationId: req.body?.locationId,
+        customerEmail: req.body?.customerEmail,
+        orderCount: Array.isArray(req.body?.orderNbrs) ? req.body.orderNbrs.length : 0,
+        selectedItemsCount: Array.isArray(req.body?.selectedItems) ? req.body.selectedItems.length : 0,
+        prepayOverride: Boolean(req.body?.prepayOverride),
+    });
     if (!canAccessLocation(req, body.data.locationId)) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const customerEmail = body.data.customerEmail.toLowerCase();
-    const user = await prisma.users.findUnique({ where: { email: customerEmail } });
-    if (!user) {
-        return res.status(404).json({ message: "Customer not found" });
+    const startAt = new Date(body.data.startAt);
+    const endAt = new Date(body.data.endAt);
+    if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
+        console.warn("[staff-pickups][create] invalid time range", {
+            startAt: body.data.startAt,
+            endAt: body.data.endAt,
+        });
+        return res.status(400).json({ message: "Invalid appointment time range." });
     }
-    const orderNbrs = body.data.orderNbrs ?? [];
+    const user = await prisma.users.findUnique({ where: { email: customerEmail } });
+    const orderNbrs = uniqueOrderNbrs(body.data.orderNbrs);
+    if (!orderNbrs.length) {
+        console.warn("[staff-pickups][create] blocked: no orders");
+        return res.status(400).json({ message: "At least one order is required." });
+    }
+    const activeConflicts = await findActiveOrderConflicts(orderNbrs);
+    if (activeConflicts.length) {
+        const first = activeConflicts[0];
+        const message = `${first.orderNbr} is already scheduled on ${first.displayAt}`;
+        console.warn("[staff-pickups][create] blocked: active order conflict", {
+            orderNbrs,
+            conflicts: activeConflicts.map((c) => ({
+                orderNbr: c.orderNbr,
+                appointmentId: c.appointmentId,
+                status: c.status,
+                at: c.displayAt,
+            })),
+        });
+        return res.status(409).json({
+            message,
+            code: "ORDER_ALREADY_SCHEDULED",
+            conflicts: activeConflicts,
+        });
+    }
     const normalizedSelections = normalizeSelections(body.data.selectedItems, orderNbrs);
+    const totalSelectedCount = normalizedSelections.reduce((sum, selection) => sum + selection.items.length, 0);
+    if (totalSelectedCount === 0) {
+        console.warn("[staff-pickups][create] blocked: no selected items", {
+            orderNbrs,
+        });
+        return res.status(400).json({ message: "Select at least one item." });
+    }
     const invalidQty = await validateSelectedItemQty(normalizedSelections);
     if (invalidQty) {
+        console.warn("[staff-pickups][create] blocked: selected qty exceeds open qty", invalidQty);
         return res.status(400).json({
             message: "Selected quantity exceeds open quantity.",
             orderNbr: invalidQty.orderNbr,
@@ -236,20 +636,100 @@ exports.pickupsRouter.post("/", async (req, res) => {
             maxQty: invalidQty.maxQty,
         });
     }
+    const details = await Promise.all(orderNbrs.map((orderNbr) => getOrRefreshOrderDetail(orderNbr)));
+    const missingOrder = details.find((detail) => !detail);
+    if (missingOrder) {
+        console.warn("[staff-pickups][create] blocked: missing order detail", { orderNbrs });
+        return res.status(404).json({ message: "One or more orders were not found." });
+    }
+    const detailMap = new Map(details.filter(Boolean).map((detail) => [detail.orderNbr, detail]));
+    for (const selection of normalizedSelections) {
+        const detail = detailMap.get(selection.orderNbr);
+        if (!detail) {
+            return res.status(404).json({ message: `Order ${selection.orderNbr} was not found.` });
+        }
+        const lineMap = new Map(detail.lines.map((line) => [line.id, line]));
+        const inventoryMap = new Map(detail.lines
+            .filter((line) => line.inventoryId)
+            .map((line) => [String(line.inventoryId), line]));
+        for (const item of selection.items) {
+            const lineId = item.lineId ?? "";
+            const line = lineMap.get(lineId) ?? inventoryMap.get(item.inventoryId);
+            if (!line) {
+                console.warn("[staff-pickups][create] blocked: selected line missing", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: item.inventoryId,
+                    lineId: item.lineId ?? null,
+                });
+                return res.status(400).json({
+                    message: `Selected line is not available on order ${selection.orderNbr}.`,
+                });
+            }
+            if (!line.isAllocated || line.allocatedQty <= 0) {
+                console.warn("[staff-pickups][create] blocked: item not allocated", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: line.inventoryId,
+                    lineId: line.id,
+                    allocatedQty: line.allocatedQty,
+                    isAllocated: line.isAllocated,
+                });
+                return res.status(400).json({
+                    message: `Item ${line.inventoryId ?? "line"} is not ready for pickup on ${selection.orderNbr}.`,
+                });
+            }
+            if (item.qty > line.openQty) {
+                console.warn("[staff-pickups][create] blocked: item qty exceeds open qty", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: line.inventoryId,
+                    requestedQty: item.qty,
+                    openQty: line.openQty,
+                });
+                return res.status(400).json({
+                    message: `Selected quantity exceeds open quantity for ${selection.orderNbr}.`,
+                });
+            }
+        }
+    }
+    if (!body.data.prepayOverride) {
+        for (const orderNbr of orderNbrs) {
+            const detail = detailMap.get(orderNbr);
+            if (!detail)
+                continue;
+            const selection = normalizedSelections.find((row) => row.orderNbr === orderNbr);
+            const block = findPrepayBlock(detail, selection);
+            if (block) {
+                console.warn("[staff-pickups][create] blocked: prepay required", block);
+                return res.status(409).json({
+                    message: "Payment required before pickup.",
+                    code: "PREPAY_BLOCKED",
+                    orderNbr: block.orderNbr,
+                    amountOwed: block.amountOwed,
+                });
+            }
+        }
+    }
     const created = await prisma.$transaction(async (tx) => {
         const appointment = await tx.pickupAppointment.create({
             data: {
-                userId: user.id,
+                userId: user?.id ?? null,
                 email: customerEmail,
                 pickupReference: orderNbrs.join(", "),
                 locationId: body.data.locationId,
-                startAt: new Date(body.data.startAt),
-                endAt: new Date(body.data.endAt),
+                startAt,
+                endAt,
                 status: body.data.status ? body.data.status : undefined,
                 customerFirstName: body.data.customerFirstName,
                 customerLastName: body.data.customerLastName ?? null,
                 customerEmail: customerEmail,
                 customerPhone: body.data.customerPhone ?? null,
+                smsOptIn: Boolean(body.data.customerPhone),
+                smsOptInAt: body.data.customerPhone ? new Date() : null,
+                smsOptInSource: body.data.customerPhone ? "staff-create-appointment" : null,
+                smsOptInPhone: body.data.customerPhone ?? null,
+                emailOptIn: true,
+                emailOptInAt: new Date(),
+                emailOptInSource: "staff-create-appointment",
+                emailOptInEmail: customerEmail,
                 vehicleInfo: body.data.vehicleInfo ?? null,
                 customerNotes: body.data.customerNotes ?? null,
             },
@@ -276,14 +756,19 @@ exports.pickupsRouter.post("/", async (req, res) => {
         }
         return appointment;
     });
-    if (body.data.notifyCustomer) {
-        try {
-            await (0, notifications_1.notifyStaffScheduled)(prisma, created, body.data.orderNbrs ?? []);
-        }
-        catch (err) {
-            console.error("[notifications] staff schedule failed", err);
-        }
+    try {
+        await (0, notifications_1.notifyStaffScheduled)(prisma, created, orderNbrs);
     }
+    catch (err) {
+        console.error("[notifications] staff schedule failed", err);
+    }
+    console.info("[staff-pickups][create] success", {
+        appointmentId: created.id,
+        orderNbrs,
+        locationId: created.locationId,
+        status: created.status,
+        customerEmail: created.customerEmail,
+    });
     return res.status(201).json({ pickup: created });
 });
 /**
@@ -328,6 +813,10 @@ exports.pickupsRouter.get("/:id/items", async (req, res) => {
             openQty: true,
             orderQty: true,
             warehouse: true,
+            allocatedQty: true,
+            isAllocated: true,
+            amount: true,
+            taxRate: true,
         },
         orderBy: [{ orderNbr: "asc" }],
     });

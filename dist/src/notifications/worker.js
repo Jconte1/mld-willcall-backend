@@ -4,11 +4,13 @@ const client_1 = require("@prisma/client");
 const runPendingJobs_1 = require("./jobs/runPendingJobs");
 const runNoShowSweep_1 = require("./appointments/runNoShowSweep");
 const runOrderReadySync_1 = require("./orderReady/runOrderReadySync");
+const runOrderReadyEscalations_1 = require("./orderReady/runOrderReadyEscalations");
 const prisma = new client_1.PrismaClient();
 const intervalMs = Number(process.env.NOTIFICATIONS_WORKER_INTERVAL_MS || 60000);
 async function tick() {
     try {
         await (0, runOrderReadySync_1.runOrderReadySync)(prisma);
+        await (0, runOrderReadyEscalations_1.runOrderReadyEscalations)(prisma);
         await (0, runNoShowSweep_1.runNoShowSweep)(prisma);
         await (0, runPendingJobs_1.runPendingJobs)(prisma);
     }

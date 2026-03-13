@@ -9,6 +9,7 @@ const fetchOrderSummariesSince_1 = __importDefault(require("../fetch/fetchOrderS
 const fetchAddressContact_1 = __importDefault(require("../fetch/fetchAddressContact"));
 const fetchPaymentInfo_1 = __importDefault(require("../fetch/fetchPaymentInfo"));
 const fetchInventoryDetails_1 = __importDefault(require("../fetch/fetchInventoryDetails"));
+const erpClient_1 = require("../../queue/erpClient");
 const filterOrders_1 = __importDefault(require("../filter/filterOrders"));
 const writeOrderSummaries_1 = require("../write/writeOrderSummaries");
 const writeAddressContact_1 = __importDefault(require("../write/writeAddressContact"));
@@ -33,7 +34,9 @@ const INACTIVE_STATUSES = new Set([
 ]);
 async function runCustomerDeltaSync(baid, { sinceLiteral } = {}) {
     const restService = (0, createAcumaticaService_1.createAcumaticaService)();
-    await restService.getToken();
+    if (!(0, erpClient_1.shouldUseQueueErp)()) {
+        await restService.getToken();
+    }
     const since = sinceLiteral ?? (0, denver_1.denver3amWindowStartLiteral)(new Date());
     console.log("[customer-sync][delta] fetch headers", { baid, since });
     const headerRows = await (0, fetchOrderSummariesSince_1.default)(restService, baid, {

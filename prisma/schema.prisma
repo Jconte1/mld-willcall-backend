@@ -361,6 +361,7 @@ model users {
   accounts           accounts[]
   sessions           sessions[]
   pickupAppointments PickupAppointment[]
+  resetTokens        PasswordResetToken[]
 }
 
 model CustomerCredential {
@@ -406,16 +407,31 @@ model StaffUser {
 }
 
 model PasswordResetToken {
-  id          String    @id @default(cuid())
-  staffUserId String
-  tokenHash   String    @unique
+  id          String                @id @default(cuid())
+  staffUserId String?
+  userId      String?
+  principal   PasswordResetPrincipal @default(STAFF)
+  tokenHash   String                @unique
   expiresAt   DateTime
   usedAt      DateTime?
-  createdAt   DateTime  @default(now())
-  staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  createdAt   DateTime              @default(now())
+  staffUser   StaffUser?            @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  user        users?                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([staffUserId])
+  @@index([userId])
   @@index([expiresAt])
+}
+
+model PasswordResetThrottle {
+  key         String   @id @db.VarChar(256)
+  count       Int      @default(0)
+  windowStart DateTime
+  lockedUntil DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([lockedUntil])
 }
 
 model PickupAppointment {
@@ -542,6 +558,11 @@ enum StaffRole {
   STAFF
   VIEWER
   SALESPERSON
+}
+
+enum PasswordResetPrincipal {
+  STAFF
+  CUSTOMER
 }
 
 enum PickupStatus {

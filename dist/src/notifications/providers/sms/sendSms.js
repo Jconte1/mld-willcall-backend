@@ -2,8 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendSms = sendSms;
 function resolveRecipient(phone, { allowTestOverride = true } = {}) {
-    const testPhone = process.env.NOTIFICATIONS_TEST_PHONE || "";
-    if (allowTestOverride && testPhone) {
+    const isProduction = process.env.NODE_ENV === "production";
+    const testPhone = process.env.NOTIFICATIONS_TEST_PHONE?.trim();
+    if (!isProduction && allowTestOverride && testPhone) {
         return testPhone;
     }
     return phone;

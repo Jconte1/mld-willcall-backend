@@ -8,6 +8,8 @@ const sendSms_1 = require("../providers/sms/sendSms");
 const cancelJobs_1 = require("../scheduler/cancelJobs");
 const buildNoShowEmail_1 = require("../templates/email/buildNoShowEmail");
 const denver_1 = require("../../lib/time/denver");
+const buildLink_1 = require("../links/buildLink");
+const tokens_1 = require("../links/tokens");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
 const RUN_HOUR = 17;
@@ -59,21 +61,21 @@ async function markRun(prisma, now) {
         create: { name: JOB_NAME, lastRunAt: now },
     });
 }
-async function sendNoShowNotifications(appointment) {
+async function sendNoShowNotifications(prisma, appointment) {
     const when = (0, format_1.formatDenverDateTime)(appointment.startAt);
     const orderList = (0, format_1.formatOrderList)(appointment.orders.map((o) => o.orderNbr));
+    const token = await (0, tokens_1.rotateAppointmentToken)(prisma, appointment.id, appointment.endAt);
+    const link = (0, buildLink_1.buildAppointmentLink)(appointment.id, token.token);
     if (appointment.emailOptIn) {
         const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-        const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
-        const link = frontendUrl ? `${frontendUrl}/` : "https://mld-willcall.vercel.app";
         const message = (0, buildNoShowEmail_1.buildNoShowEmail)(when, orderList, link);
-        await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body);
+        await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body, { allowTestOverride: false });
     }
     if (appointment.smsOptIn) {
         const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
         if (smsTo) {
-            const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP.`;
-            await (0, sendSms_1.sendSms)(smsTo, smsBody);
+            const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP. Manage: ${link}`;
+            await (0, sendSms_1.sendSms)(smsTo, smsBody, { allowTestOverride: false });
         }
     }
 }
@@ -107,7 +109,7 @@ async function runNoShowSweep(prisma) {
                 data: { scheduledAppointmentId: null },
             });
         }
-        await sendNoShowNotifications({
+        await sendNoShowNotifications(prisma, {
             id: updated.id,
             startAt: updated.startAt,
             endAt: updated.endAt,

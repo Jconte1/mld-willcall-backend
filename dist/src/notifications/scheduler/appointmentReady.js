@@ -9,7 +9,6 @@ const quietHours_1 = require("../rules/quietHours");
 const enqueueJob_1 = require("../jobs/enqueueJob");
 const READY_WINDOW_MS = 24 * 60 * 60 * 1000;
 async function handleAppointmentReady(prisma, input) {
-    // TODO: Ready-for-pickup notifications still honor NOTIFICATIONS_TEST_EMAIL; switch to live recipients before production.
     const now = new Date();
     const { appointment, orderNbrs, ignoreCap, staffInitiated } = input;
     if (!ignoreCap && (await (0, eligibility_1.hasReachedNotificationCap)(prisma, appointment.id)))

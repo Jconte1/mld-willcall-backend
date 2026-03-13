@@ -5,7 +5,21 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = fetchAddressContact;
 const node_https_1 = __importDefault(require("node:https"));
+const erpClient_1 = require("../../queue/erpClient");
 async function fetchAddressContact(restService, baid, { orderNbrs = [], chunkSize = 40, pageSize = 500, useOrderBy = false, cutoffLiteral = null, } = {}) {
+    if ((0, erpClient_1.shouldUseQueueErp)()) {
+        const resp = await (0, erpClient_1.queueErpJobRequest)("/api/erp/jobs/orders/address-contact", {
+            baid,
+            orderNbrs,
+            cutoffLiteral,
+            pageSize,
+            chunkSize,
+            useOrderBy,
+        });
+        const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+        console.log(`[fetchAddressContact][queue] baid=${baid} totalRows=${rows.length}`);
+        return rows;
+    }
     const token = await restService.getToken();
     const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
     const agent = new node_https_1.default.Agent({ keepAlive: true, maxSockets: 8 });

@@ -93,102 +93,130 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
   });
 
   console.log("[order-ready][escalation] candidates", { count: candidates.length });
+  let resetByAppointment = 0;
+  let skippedNoRecipient = 0;
+  let sentCount = 0;
+  let fallbackRecipientCount = 0;
+  let failedCount = 0;
 
   for (const notice of candidates) {
-    const scheduled = await prisma.pickupAppointmentOrder.findFirst({
-      where: {
-        orderNbr: notice.orderNbr,
-        appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
-      },
-      select: { appointmentId: true },
-    });
+    try {
+      const scheduled = await prisma.pickupAppointmentOrder.findFirst({
+        where: {
+          orderNbr: notice.orderNbr,
+          appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
+        },
+        select: { appointmentId: true },
+      });
 
-    if (scheduled?.appointmentId) {
+      if (scheduled?.appointmentId) {
+        await prisma.orderReadyNotice.update({
+          where: { id: notice.id },
+          data: {
+            scheduledAppointmentId: scheduled.appointmentId,
+            notifyAttemptCount: 0,
+            lastNotifyAttemptOn: null,
+            escalationCount: 0,
+            lastEscalatedAt: null,
+          },
+        });
+        resetByAppointment += 1;
+        console.log("[order-ready][escalation] reset due to active appointment", {
+          orderNbr: notice.orderNbr,
+          appointmentId: scheduled.appointmentId,
+        });
+        continue;
+      }
+
+      const summary =
+        notice.baid
+          ? await prisma.erpOrderSummary.findUnique({
+              where: { baid_orderNbr: { baid: notice.baid, orderNbr: notice.orderNbr } },
+              select: { salesPersonNumber: true, customerName: true },
+            })
+          : await prisma.erpOrderSummary.findFirst({
+              where: { orderNbr: notice.orderNbr, isActive: true },
+              select: { salesPersonNumber: true, customerName: true },
+              orderBy: { updatedAt: "desc" },
+            });
+
+      const salesperson = summary?.salesPersonNumber
+        ? await prisma.staffUser.findFirst({
+            where: {
+              salespersonNumber: summary.salesPersonNumber,
+              isActive: true,
+            },
+            select: { email: true, salespersonName: true },
+          })
+        : null;
+
+      const fallback = (process.env.NOTIFICATIONS_TEST_EMAIL || "").trim();
+      const to = (salesperson?.email || "").trim() || fallback;
+      const usedFallback = !salesperson?.email;
+
+      if (!to) {
+        skippedNoRecipient += 1;
+        console.error("[order-ready][escalation] skipped (no recipient)", {
+          orderNbr: notice.orderNbr,
+          salesPersonNumber: summary?.salesPersonNumber ?? null,
+        });
+        continue;
+      }
+
+      const message = buildOrderReadyEscalationEmail({
+        orderNbr: notice.orderNbr,
+        customerId: notice.customerId ?? notice.baid ?? null,
+        customerName: summary?.customerName ?? null,
+        contactName: notice.contactName ?? null,
+        contactEmail: notice.contactEmail ?? null,
+        contactPhone: notice.contactPhone ?? null,
+        locationId: notice.locationId ?? null,
+        status: notice.status ?? null,
+        smsOptIn: notice.smsOptIn,
+        emailOptIn: notice.emailOptIn,
+        smsOptOutAt: notice.smsOptOutAt,
+        smsOptOutReason: notice.smsOptOutReason ?? null,
+        notifyAttemptCount: notice.notifyAttemptCount,
+        lastNotifiedAt: notice.lastNotifiedAt ?? null,
+      });
+
+      await sendEmail(to, message.subject, message.body, { allowTestOverride: false });
+
       await prisma.orderReadyNotice.update({
         where: { id: notice.id },
         data: {
-          scheduledAppointmentId: scheduled.appointmentId,
-          notifyAttemptCount: 0,
-          lastNotifyAttemptOn: null,
-          escalationCount: 0,
-          lastEscalatedAt: null,
+          lastEscalatedAt: now,
+          escalationCount: { increment: 1 },
         },
       });
-      console.log("[order-ready][escalation] reset due to active appointment", {
+
+      sentCount += 1;
+      if (usedFallback) fallbackRecipientCount += 1;
+      console.log("[order-ready][escalation] sent", {
         orderNbr: notice.orderNbr,
-        appointmentId: scheduled.appointmentId,
+        to,
+        usedFallback,
+        salesperson: salesperson?.salespersonName ?? null,
+        notifyAttemptCount: notice.notifyAttemptCount,
+      });
+    } catch (error) {
+      failedCount += 1;
+      console.error("[order-ready][escalation] failed", {
+        orderNbr: notice.orderNbr,
+        error: error instanceof Error ? error.message : String(error),
       });
       continue;
     }
-
-    const summary =
-      notice.baid
-        ? await prisma.erpOrderSummary.findUnique({
-            where: { baid_orderNbr: { baid: notice.baid, orderNbr: notice.orderNbr } },
-            select: { salesPersonNumber: true, customerName: true },
-          })
-        : await prisma.erpOrderSummary.findFirst({
-            where: { orderNbr: notice.orderNbr, isActive: true },
-            select: { salesPersonNumber: true, customerName: true },
-            orderBy: { updatedAt: "desc" },
-          });
-
-    const salesperson = summary?.salesPersonNumber
-      ? await prisma.staffUser.findFirst({
-          where: {
-            salespersonNumber: summary.salesPersonNumber,
-            isActive: true,
-          },
-          select: { email: true, salespersonName: true },
-        })
-      : null;
-
-    const fallback = (process.env.NOTIFICATIONS_TEST_EMAIL || "").trim();
-    const to = (salesperson?.email || "").trim() || fallback;
-
-    if (!to) {
-      console.error("[order-ready][escalation] skipped (no recipient)", {
-        orderNbr: notice.orderNbr,
-        salesPersonNumber: summary?.salesPersonNumber ?? null,
-      });
-      continue;
-    }
-
-    const message = buildOrderReadyEscalationEmail({
-      orderNbr: notice.orderNbr,
-      customerId: notice.customerId ?? notice.baid ?? null,
-      customerName: summary?.customerName ?? null,
-      contactName: notice.contactName ?? null,
-      contactEmail: notice.contactEmail ?? null,
-      contactPhone: notice.contactPhone ?? null,
-      locationId: notice.locationId ?? null,
-      status: notice.status ?? null,
-      smsOptIn: notice.smsOptIn,
-      emailOptIn: notice.emailOptIn,
-      smsOptOutAt: notice.smsOptOutAt,
-      smsOptOutReason: notice.smsOptOutReason ?? null,
-      notifyAttemptCount: notice.notifyAttemptCount,
-      lastNotifiedAt: notice.lastNotifiedAt ?? null,
-    });
-
-    await sendEmail(to, message.subject, message.body, { allowTestOverride: false });
-
-    await prisma.orderReadyNotice.update({
-      where: { id: notice.id },
-      data: {
-        lastEscalatedAt: now,
-        escalationCount: { increment: 1 },
-      },
-    });
-
-    console.log("[order-ready][escalation] sent", {
-      orderNbr: notice.orderNbr,
-      to,
-      usedFallback: !salesperson?.email,
-      salesperson: salesperson?.salespersonName ?? null,
-      notifyAttemptCount: notice.notifyAttemptCount,
-    });
   }
+
+  console.log("[order-ready][escalation] summary", {
+    candidates: candidates.length,
+    sent: sentCount,
+    resetByAppointment,
+    skippedNoRecipient,
+    fallbackRecipientCount,
+    failed: failedCount,
+  });
 
   await markRun(prisma, now);
 }

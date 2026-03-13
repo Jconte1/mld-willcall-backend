@@ -8,9 +8,48 @@ const sendSms_1 = require("../providers/sms/sendSms");
 const sendEmail_1 = require("../providers/email/sendEmail");
 const buildLink_1 = require("../links/buildLink");
 const pickupLocations_1 = require("../../lib/pickupLocations");
-function buildPayload(appointment, job, link) {
+const orderDisplay_1 = require("../orderReady/orderDisplay");
+function normalizeOrderNbrs(input) {
+    if (!Array.isArray(input))
+        return [];
+    return Array.from(new Set(input.map((v) => String(v || "").trim()).filter(Boolean)));
+}
+async function buildPayload(prisma, appointment, job, link) {
     const snapshot = (job.payloadSnapshot || {});
-    const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
+    const fallbackOrderNbrs = appointment.orders?.map((o) => o.orderNbr) ?? [];
+    const normalizedOrderNbrs = normalizeOrderNbrs(snapshot.orderNbrs ?? fallbackOrderNbrs);
+    const summaries = normalizedOrderNbrs.length
+        ? await prisma.erpOrderSummary.findMany({
+            where: {
+                orderNbr: { in: normalizedOrderNbrs },
+                isActive: true,
+            },
+            select: {
+                orderNbr: true,
+                locationId: true,
+                jobName: true,
+                updatedAt: true,
+            },
+            orderBy: { updatedAt: "desc" },
+        })
+        : [];
+    const summaryByOrderNbr = new Map();
+    for (const summary of summaries) {
+        const key = summary.orderNbr.trim().toUpperCase();
+        if (!summaryByOrderNbr.has(key))
+            summaryByOrderNbr.set(key, summary);
+    }
+    const orderDisplays = normalizedOrderNbrs.map((orderNbr) => {
+        const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
+        const jobDisplay = (0, orderDisplay_1.resolveOrderReadyJobDisplay)({
+            locationId: summary?.locationId,
+            jobName: summary?.jobName,
+        });
+        return {
+            orderNbr,
+            jobDisplay,
+        };
+    });
     const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
     const location = (0, pickupLocations_1.getPickupLocation)(appointment.locationId);
     const locationName = location?.name ?? appointment.locationId;
@@ -22,7 +61,8 @@ function buildPayload(appointment, job, link) {
         locationInstructions: location?.instructions,
         startAt: appointment.startAt,
         endAt: appointment.endAt,
-        orderNbrs,
+        orderNbrs: normalizedOrderNbrs,
+        orderDisplays,
         link,
         unsubscribeLink: unsubscribeLink || undefined,
         oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
@@ -49,7 +89,7 @@ async function sendJob(prisma, job, appointment) {
     if (!link) {
         throw new Error(`Missing secure link for notification job ${job.id}`);
     }
-    const payload = buildPayload(appointment, job, link);
+    const payload = await buildPayload(prisma, appointment, job, link);
     try {
         console.log("[notifications] sendJob", {
             id: job.id,
@@ -65,7 +105,7 @@ async function sendJob(prisma, job, appointment) {
                 const includeStopLine = !appointment.smsFirstSentAt;
                 const smsBody = (0, buildSms_1.applySmsCompliance)(sms, includeStopLine);
                 const smsTo = appointment.smsOptInPhone || appointment.customerPhone;
-                await (0, sendSms_1.sendSms)(smsTo, smsBody);
+                await (0, sendSms_1.sendSms)(smsTo, smsBody, { allowTestOverride: false });
                 if (!appointment.smsFirstSentAt) {
                     await prisma.pickupAppointment.update({
                         where: { id: appointment.id },
@@ -78,7 +118,7 @@ async function sendJob(prisma, job, appointment) {
             if (appointment.emailOptIn && (appointment.emailOptInEmail || appointment.customerEmail)) {
                 const email = (0, buildEmail_1.buildEmailMessage)(job.type, payload);
                 const emailTo = appointment.emailOptInEmail || appointment.customerEmail;
-                await (0, sendEmail_1.sendEmail)(emailTo, email.subject, email.body);
+                await (0, sendEmail_1.sendEmail)(emailTo, email.subject, email.body, { allowTestOverride: false });
             }
         }
         await prisma.appointmentNotificationJob.update({

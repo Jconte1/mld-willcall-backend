@@ -13,11 +13,14 @@ const fetchInventoryDetails_1 = __importDefault(require("../fetch/fetchInventory
 const writeAddressContact_1 = __importDefault(require("../write/writeAddressContact"));
 const writePaymentInfo_1 = __importDefault(require("../write/writePaymentInfo"));
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
+const erpClient_1 = require("../../queue/erpClient");
 const prisma = new client_1.PrismaClient();
 async function refreshOrderReadyDetails(input) {
     const { baid, orderNbr, status, locationId, shipVia, lastModified } = input;
     const restService = (0, createAcumaticaService_1.createAcumaticaService)();
-    await restService.getToken();
+    if (!(0, erpClient_1.shouldUseQueueErp)()) {
+        await restService.getToken();
+    }
     const now = new Date();
     const summaryUpdate = {
         status: status ?? "Ready",

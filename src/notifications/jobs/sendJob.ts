@@ -12,14 +12,55 @@ import { sendEmail } from "../providers/email/sendEmail";
 import { AppointmentWithContact, NotificationPayload } from "../types";
 import { buildUnsubscribeLink } from "../links/buildLink";
 import { getPickupLocation } from "../../lib/pickupLocations";
+import { resolveOrderReadyJobDisplay } from "../orderReady/orderDisplay";
 
-function buildPayload(
+function normalizeOrderNbrs(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return Array.from(new Set(input.map((v) => String(v || "").trim()).filter(Boolean)));
+}
+
+async function buildPayload(
+  prisma: PrismaClient,
   appointment: AppointmentWithContact & { orders?: { orderNbr: string }[] },
   job: AppointmentNotificationJob,
   link: string
-): NotificationPayload {
+): Promise<NotificationPayload> {
   const snapshot = (job.payloadSnapshot || {}) as Record<string, any>;
-  const orderNbrs = snapshot.orderNbrs || appointment.orders?.map((o) => o.orderNbr) || [];
+  const fallbackOrderNbrs = appointment.orders?.map((o) => o.orderNbr) ?? [];
+  const normalizedOrderNbrs = normalizeOrderNbrs(snapshot.orderNbrs ?? fallbackOrderNbrs);
+  const summaries = normalizedOrderNbrs.length
+    ? await prisma.erpOrderSummary.findMany({
+        where: {
+          orderNbr: { in: normalizedOrderNbrs },
+          isActive: true,
+        },
+        select: {
+          orderNbr: true,
+          locationId: true,
+          jobName: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+  const summaryByOrderNbr = new Map<string, (typeof summaries)[number]>();
+  for (const summary of summaries) {
+    const key = summary.orderNbr.trim().toUpperCase();
+    if (!summaryByOrderNbr.has(key)) summaryByOrderNbr.set(key, summary);
+  }
+
+  const orderDisplays = normalizedOrderNbrs.map((orderNbr) => {
+    const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
+    const jobDisplay = resolveOrderReadyJobDisplay({
+      locationId: summary?.locationId,
+      jobName: summary?.jobName,
+    });
+    return {
+      orderNbr,
+      jobDisplay,
+    };
+  });
+
   const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
   const location = getPickupLocation(appointment.locationId);
   const locationName = location?.name ?? appointment.locationId;
@@ -32,7 +73,8 @@ function buildPayload(
     locationInstructions: location?.instructions,
     startAt: appointment.startAt,
     endAt: appointment.endAt,
-    orderNbrs,
+    orderNbrs: normalizedOrderNbrs,
+    orderDisplays,
     link,
     unsubscribeLink: unsubscribeLink || undefined,
     oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
@@ -65,7 +107,7 @@ export async function sendJob(
     throw new Error(`Missing secure link for notification job ${job.id}`);
   }
 
-  const payload = buildPayload(appointment, job, link);
+  const payload = await buildPayload(prisma, appointment, job, link);
 
   try {
     console.log("[notifications] sendJob", {

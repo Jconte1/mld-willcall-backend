@@ -12,6 +12,21 @@ function formatOrderList(orderNbrs: string[] = []) {
   return orderNbrs.join(", ");
 }
 
+function formatOrderDisplayList(payload: NotificationPayload) {
+  if (Array.isArray(payload.orderDisplays) && payload.orderDisplays.length) {
+    return payload.orderDisplays
+      .map((entry) => {
+        const orderNbr = String(entry.orderNbr || "").trim();
+        const label = String(entry.jobDisplay || "").trim();
+        return label ? `${orderNbr} - ${label}` : orderNbr;
+      })
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return formatOrderList(payload.orderNbrs);
+}
+
 function renderTemplate({
   title,
   preheader,
@@ -111,7 +126,7 @@ function renderTemplate({
 
 export function buildEmailMessage(type: AppointmentNotificationType, payload: NotificationPayload) {
   const when = formatDenverDateTime(payload.startAt);
-  const orders = formatOrderList(payload.orderNbrs);
+  const orders = formatOrderDisplayList(payload);
   const staffNote = payload.staffInitiated
     ? "This update was made by our staff to keep your pickup on track."
     : undefined;

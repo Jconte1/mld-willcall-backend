@@ -5,9 +5,28 @@ exports.applySmsCompliance = applySmsCompliance;
 const client_1 = require("@prisma/client");
 const format_1 = require("../../format");
 const BRAND_PREFIX = "MLD Will Call:";
+function formatSmsOrderList(payload) {
+    if (!Array.isArray(payload.orderDisplays) || !payload.orderDisplays.length) {
+        return (0, format_1.formatOrderList)(payload.orderNbrs);
+    }
+    const labels = payload.orderDisplays
+        .map((entry) => {
+        const orderNbr = String(entry.orderNbr || "").trim();
+        const jobDisplay = String(entry.jobDisplay || "").trim();
+        if (!orderNbr)
+            return "";
+        return jobDisplay ? `${orderNbr} (${jobDisplay})` : orderNbr;
+    })
+        .filter(Boolean);
+    if (!labels.length)
+        return (0, format_1.formatOrderList)(payload.orderNbrs);
+    if (labels.length <= 2)
+        return `Orders: ${labels.join(", ")}`;
+    return `Orders: ${labels.slice(0, 2).join(", ")} +${labels.length - 2} more`;
+}
 function buildSmsMessage(type, payload) {
     const when = (0, format_1.formatDenverDateTime)(payload.startAt);
-    const orderLine = (0, format_1.formatOrderList)(payload.orderNbrs);
+    const orderLine = formatSmsOrderList(payload);
     const manageLink = payload.link;
     const locationLine = payload.locationAddress && payload.locationName
         ? `${payload.locationName} - ${payload.locationAddress}`
