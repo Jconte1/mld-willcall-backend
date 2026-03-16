@@ -54,7 +54,7 @@ export default async function fetchOrderSummaries(
     "DefaultSalesperson",
     "NoteID",
   ].join(",");
-  const custom = "Document.AttributeBUYERGROUP";
+  const custom = "Document.AttributeBUYERGROUP,Document.AttributeSALESNEW";
 
   const excludedShipVia = [
     "DELIVERY SLC",

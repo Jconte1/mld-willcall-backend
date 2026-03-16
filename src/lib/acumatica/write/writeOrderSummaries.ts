@@ -37,7 +37,13 @@ function mapOrderSummaryRows(rawRows: AnyRow[]) {
     const shipVia = firstVal(row, ["ShipVia", "shipVia"]);
     const jobName = firstVal(row, ["JobName", "jobName"]);
     const customerName = firstVal(row, ["CustomerName", "customerName"]);
-    const salesPersonNumber = firstVal(row, ["DefaultSalesperson", "defaultSalesperson"]);
+    const salesPersonNumber = firstVal(row, [
+      "custom.Document.AttributeSALESNEW",
+      "Document.AttributeSALESNEW",
+      "AttributeSALESNEW",
+      "DefaultSalesperson",
+      "defaultSalesperson",
+    ]);
     const buyerGroup = firstVal(row, [
       "custom.Document.AttributeBUYERGROUP",
       "Document.AttributeBUYERGROUP",
