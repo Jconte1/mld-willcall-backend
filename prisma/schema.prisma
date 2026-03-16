@@ -653,6 +653,8 @@ model OrderReadyNotice {
   qtyUnallocated       Decimal?                 @db.Decimal(18, 4)
   qtyAllocated         Decimal?                 @db.Decimal(18, 4)
   customerId           String?                  @db.VarChar(128)
+  customerIdDescription String?                 @db.VarChar(256)
+  salspersonnumber     String?                  @db.VarChar(32)
   customerLocationId   String?                  @db.VarChar(128)
   attributeBuyerGroup  String?                  @db.VarChar(256)
   attributeOsContact   String?                  @db.VarChar(256)

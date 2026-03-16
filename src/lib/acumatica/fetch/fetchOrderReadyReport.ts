@@ -9,6 +9,8 @@ export type OrderReadyRow = {
   shipVia: string | null;
   status: string | null;
   customerId: string | null;
+  customerIdDescription: string | null;
+  salspersonnumber: string | null;
   attributeBuyerGroup: string | null;
   customerLocationId: string | null;
   attributeOsContact: string | null;
@@ -157,6 +159,16 @@ export async function fetchOrderReadyReport() {
       "CustomerID",
       "SOOrder_CustomerID",
       "SOOrder.CustomerID",
+    ]),
+    customerIdDescription: pickField(row, [
+      "CustomerID_Description",
+      "Customer_Description",
+      "CustomerDescription",
+    ]),
+    salspersonnumber: pickField(row, [
+      "AttributeSALESNEW",
+      "SOOrder_AttributeSALESNEW",
+      "SOOrder.AttributeSALESNEW",
     ]),
     attributeBuyerGroup: pickField(row, [
       "BuyerGroup",

@@ -76,6 +76,8 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
       orderNbr: true,
       baid: true,
       customerId: true,
+      customerIdDescription: true,
+      salspersonnumber: true,
       contactName: true,
       contactEmail: true,
       contactPhone: true,
@@ -140,10 +142,15 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
               orderBy: { updatedAt: "desc" },
             });
 
-      const salesperson = summary?.salesPersonNumber
+      const resolvedSalespersonNumber =
+        String(notice.salspersonnumber || "").trim() ||
+        String(summary?.salesPersonNumber || "").trim() ||
+        null;
+
+      const salesperson = resolvedSalespersonNumber
         ? await prisma.staffUser.findFirst({
             where: {
-              salespersonNumber: summary.salesPersonNumber,
+              salespersonNumber: resolvedSalespersonNumber,
               isActive: true,
             },
             select: { email: true, salespersonName: true },
@@ -158,7 +165,8 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
         skippedNoRecipient += 1;
         console.error("[order-ready][escalation] skipped (no recipient)", {
           orderNbr: notice.orderNbr,
-          salesPersonNumber: summary?.salesPersonNumber ?? null,
+          salspersonnumber: notice.salspersonnumber ?? null,
+          resolvedSalespersonNumber,
         });
         continue;
       }
@@ -166,7 +174,7 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
       const message = buildOrderReadyEscalationEmail({
         orderNbr: notice.orderNbr,
         customerId: notice.customerId ?? notice.baid ?? null,
-        customerName: summary?.customerName ?? null,
+        customerName: summary?.customerName ?? notice.customerIdDescription ?? null,
         contactName: notice.contactName ?? null,
         contactEmail: notice.contactEmail ?? null,
         contactPhone: notice.contactPhone ?? null,
@@ -197,6 +205,8 @@ export async function runOrderReadyEscalations(prisma: PrismaClient) {
         to,
         usedFallback,
         salesperson: salesperson?.salespersonName ?? null,
+        salspersonnumber: notice.salspersonnumber ?? null,
+        resolvedSalespersonNumber,
         notifyAttemptCount: notice.notifyAttemptCount,
       });
     } catch (error) {

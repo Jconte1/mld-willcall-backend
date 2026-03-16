@@ -13,6 +13,7 @@ import { AppointmentWithContact, NotificationPayload } from "../types";
 import { buildUnsubscribeLink } from "../links/buildLink";
 import { getPickupLocation } from "../../lib/pickupLocations";
 import { resolveOrderReadyJobDisplay } from "../orderReady/orderDisplay";
+import { buildOrderNotificationLabel } from "../orderReady/orderNotificationLabel";
 
 function normalizeOrderNbrs(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
@@ -43,20 +44,47 @@ async function buildPayload(
         orderBy: { updatedAt: "desc" },
       })
     : [];
+  const orderReadyNotices = normalizedOrderNbrs.length
+    ? await prisma.orderReadyNotice.findMany({
+        where: {
+          orderNbr: { in: normalizedOrderNbrs },
+        },
+        select: {
+          orderNbr: true,
+          attributeBuyerGroup: true,
+          customerLocationId: true,
+          customerIdDescription: true,
+        },
+      })
+    : [];
   const summaryByOrderNbr = new Map<string, (typeof summaries)[number]>();
   for (const summary of summaries) {
     const key = summary.orderNbr.trim().toUpperCase();
     if (!summaryByOrderNbr.has(key)) summaryByOrderNbr.set(key, summary);
   }
+  const noticeByOrderNbr = new Map<string, (typeof orderReadyNotices)[number]>();
+  for (const notice of orderReadyNotices) {
+    const key = notice.orderNbr.trim().toUpperCase();
+    if (!noticeByOrderNbr.has(key)) noticeByOrderNbr.set(key, notice);
+  }
 
   const orderDisplays = normalizedOrderNbrs.map((orderNbr) => {
+    const notice = noticeByOrderNbr.get(orderNbr.trim().toUpperCase());
     const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
     const jobDisplay = resolveOrderReadyJobDisplay({
       locationId: summary?.locationId,
       jobName: summary?.jobName,
     });
+    const label = buildOrderNotificationLabel({
+      orderNbr,
+      buyerGroup: notice?.attributeBuyerGroup,
+      customerLocationId: notice?.customerLocationId,
+      customerIdDescription: notice?.customerIdDescription,
+      jobDisplay,
+    });
     return {
       orderNbr,
+      label,
       jobDisplay,
     };
   });

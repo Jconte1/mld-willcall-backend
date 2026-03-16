@@ -9,6 +9,7 @@ import { buildOrderReadyEmail } from "../templates/email/buildOrderReadyEmail";
 import { nextAllowedTime } from "../rules/quietHours";
 import { applySmsCompliance } from "../templates/sms/buildSms";
 import { resolveOrderReadyJobDisplay } from "./orderDisplay";
+import { buildOrderNotificationLabel } from "./orderNotificationLabel";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
@@ -103,6 +104,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       emailNotification: rows[0]?.attributeEmailNoty,
       textOptIn: rows[0]?.attributeSmsOptIn,
       emailOptIn: rows[0]?.attributeEmailOptIn,
+      salspersonnumber: rows[0]?.salspersonnumber,
       warehouse: rows[0]?.warehouse,
     });
   }
@@ -215,6 +217,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       qtyUnallocated: row.qtyUnallocated ?? null,
       qtyAllocated: row.qtyAllocated ?? null,
       customerId: row.customerId ?? null,
+      customerIdDescription: row.customerIdDescription ?? null,
+      salspersonnumber: row.salspersonnumber ?? null,
       customerLocationId: row.customerLocationId ?? null,
       attributeBuyerGroup: row.attributeBuyerGroup ?? null,
       attributeOsContact: row.attributeOsContact ?? null,
@@ -243,6 +247,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeEmailOptIn: row.attributeEmailOptIn,
         attributeSmsTxt: row.attributeSmsTxt ?? null,
         attributeEmailNoty: row.attributeEmailNoty ?? null,
+        salspersonnumber: row.salspersonnumber ?? null,
       },
       computed: {
         smsEligible,
@@ -253,6 +258,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeEmailOptIn: updateData.attributeEmailOptIn,
         smsOptIn: updateData.smsOptIn,
         emailOptIn: updateData.emailOptIn,
+        salspersonnumber: updateData.salspersonnumber,
       },
     });
 
@@ -265,6 +271,8 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       qtyUnallocated: row.qtyUnallocated ?? null,
       qtyAllocated: row.qtyAllocated ?? null,
       customerId: row.customerId ?? null,
+      customerIdDescription: row.customerIdDescription ?? null,
+      salspersonnumber: row.salspersonnumber ?? null,
       customerLocationId: row.customerLocationId ?? null,
       attributeBuyerGroup: row.attributeBuyerGroup ?? null,
       attributeOsContact: row.attributeOsContact ?? null,
@@ -300,6 +308,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
         attributeEmailOptIn: notice.attributeEmailOptIn,
         smsOptIn: notice.smsOptIn,
         emailOptIn: notice.emailOptIn,
+        salspersonnumber: notice.salspersonnumber,
       },
     });
 
@@ -388,7 +397,17 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     let sentSms = false;
 
     if (notice.emailOptIn) {
-      const message = buildOrderReadyEmail(orderNbr, link, jobDisplay);
+      const orderLabel = buildOrderNotificationLabel({
+        orderNbr,
+        buyerGroup: notice.attributeBuyerGroup,
+        customerLocationId: notice.customerLocationId,
+        customerIdDescription: notice.customerIdDescription,
+        jobDisplay,
+      });
+      const message = buildOrderReadyEmail(orderNbr, link, {
+        orderLabel,
+        jobDisplay,
+      });
       const recipient = notice.contactEmail || "";
       if (!recipient) {
         console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
@@ -408,8 +427,14 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     }
 
     if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
-      const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
-      const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
+      const orderLabel = buildOrderNotificationLabel({
+        orderNbr,
+        buyerGroup: notice.attributeBuyerGroup,
+        customerLocationId: notice.customerLocationId,
+        customerIdDescription: notice.customerIdDescription,
+        jobDisplay,
+      });
+      const smsBase = `MLD Will Call: ${orderLabel} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });

@@ -16,9 +16,11 @@ function formatOrderDisplayList(payload: NotificationPayload) {
   if (Array.isArray(payload.orderDisplays) && payload.orderDisplays.length) {
     return payload.orderDisplays
       .map((entry) => {
+        const fullLabel = String(entry.label || "").trim();
+        if (fullLabel) return fullLabel;
         const orderNbr = String(entry.orderNbr || "").trim();
-        const label = String(entry.jobDisplay || "").trim();
-        return label ? `${orderNbr} - ${label}` : orderNbr;
+        const jobLabel = String(entry.jobDisplay || "").trim();
+        return jobLabel ? `${orderNbr} - ${jobLabel}` : orderNbr;
       })
       .filter(Boolean)
       .join(", ");
@@ -31,6 +33,8 @@ function formatSubjectOrderSummary(payload: NotificationPayload) {
   const items = Array.isArray(payload.orderDisplays) && payload.orderDisplays.length
     ? payload.orderDisplays
         .map((entry) => {
+          const fullLabel = String(entry.label || "").trim();
+          if (fullLabel) return fullLabel;
           const orderNbr = String(entry.orderNbr || "").trim();
           const label = String(entry.jobDisplay || "").trim();
           if (!orderNbr) return "";

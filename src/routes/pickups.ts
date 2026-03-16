@@ -51,6 +51,11 @@ const selectedItemsSchema = z.object({
 
 const SHIPMENT_FORMAT = /^SMT\d{7}$/;
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const SLOT_MINUTES = 15;
+const DENVER_TZ = "America/Denver";
+const OPEN_HOUR = 7;
+const CLOSE_HOUR = 17;
+const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
   PickupAppointmentStatus.Confirmed,
@@ -95,12 +100,16 @@ const shipmentUpdateSchema = z.object({
 });
 
 function canAccessLocation(req: any, locationId: string): boolean {
-  if (req.auth.role === "ADMIN") return true;
+  if (req.auth.role === "ADMIN" || req.auth.role === "SALESPERSON") return true;
   return expandLocationIds(req.auth.locationAccess ?? []).includes(locationId);
 }
 
-function canWritePickups(req: any): boolean {
-  return req.auth?.role !== "VIEWER" && req.auth?.role !== "SALESPERSON";
+function canCreatePickups(req: any): boolean {
+  return req.auth?.role !== "VIEWER";
+}
+
+function canModifyPickups(req: any): boolean {
+  return req.auth?.role === "ADMIN" || req.auth?.role === "STAFF";
 }
 
 function normalizeOrderNbr(value: string) {
@@ -120,7 +129,7 @@ function toNumber(value: Prisma.Decimal | number | string | null | undefined) {
 
 function formatDenverDateTime(input: Date) {
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Denver",
+    timeZone: DENVER_TZ,
     month: "2-digit",
     day: "2-digit",
     year: "numeric",
@@ -130,12 +139,120 @@ function formatDenverDateTime(input: Date) {
   }).format(input);
 }
 
-async function findActiveOrderConflicts(orderNbrs: string[]) {
+function formatDateInDenver(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: DENVER_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const y = parts.find((p) => p.type === "year")?.value ?? "0000";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
+function formatTimeInDenver(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: DENVER_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${hh}:${mm}`;
+}
+
+function parseDateOnly(dateStr: string) {
+  return new Date(`${dateStr}T12:00:00-07:00`);
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60_000);
+}
+
+function timeToMinutes(time: string) {
+  const [hh, mm] = time.split(":").map((part) => Number(part));
+  return hh * 60 + mm;
+}
+
+function isWeekend(dateStr: string) {
+  const date = parseDateOnly(dateStr);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: DENVER_TZ,
+    weekday: "short",
+  }).format(date);
+  return weekday === "Sat" || weekday === "Sun";
+}
+
+function nextBusinessDateStr(dateStr: string) {
+  let cursor = parseDateOnly(dateStr);
+  while (true) {
+    cursor = addMinutes(cursor, 24 * 60);
+    const next = formatDateInDenver(cursor);
+    if (!isWeekend(next)) return next;
+  }
+}
+
+function ceilToSlot(minutes: number) {
+  return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+}
+
+function getMinAllowedSlot(now: Date) {
+  const todayStr = formatDateInDenver(now);
+  const nowMinutes = timeToMinutes(formatTimeInDenver(now));
+  const closeMinutes = CLOSE_HOUR * 60;
+  const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+
+  if (isWeekend(todayStr)) {
+    return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+  }
+
+  let minDateStr = todayStr;
+  let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
+
+  if (minMinutes > closeMinutes) {
+    const remaining = minMinutes - closeMinutes;
+    minDateStr = nextBusinessDateStr(todayStr);
+    minMinutes = OPEN_HOUR * 60 + remaining;
+  }
+
+  if (minMinutes < OPEN_HOUR * 60) minMinutes = OPEN_HOUR * 60;
+  if (minMinutes > lastStartMinutes) {
+    minDateStr = nextBusinessDateStr(minDateStr);
+    minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+  }
+
+  return { dateStr: minDateStr, minutes: ceilToSlot(minMinutes) };
+}
+
+function isBeforeMinAdvance(startAt: Date, now: Date) {
+  const minAllowed = getMinAllowedSlot(now);
+  const startDateStr = formatDateInDenver(startAt);
+  const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
+  return (
+    startDateStr < minAllowed.dateStr ||
+    (startDateStr === minAllowed.dateStr && startMinutes < minAllowed.minutes)
+  );
+}
+
+async function findActiveOrderConflicts(orderNbrs: string[], startAt?: Date, endAt?: Date) {
   if (!orderNbrs.length) return [];
+  const appointmentWhere: Prisma.PickupAppointmentWhereInput = {
+    status: { in: ACTIVE_APPOINTMENT_STATUSES },
+  };
+  if (startAt && endAt) {
+    appointmentWhere.startAt = { lt: endAt };
+    appointmentWhere.endAt = { gt: startAt };
+  }
+
   const rows = await prisma.pickupAppointmentOrder.findMany({
     where: {
       orderNbr: { in: orderNbrs },
-      appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
+      appointment: appointmentWhere,
     },
     include: {
       appointment: {
@@ -608,7 +725,7 @@ pickupsRouter.get("/", async (req, res) => {
  * Body: { orderNbr }
  */
 pickupsRouter.post("/orders/lookup", async (req, res) => {
-  if (!canWritePickups(req)) {
+  if (!canCreatePickups(req)) {
     return res.status(403).json({ message: "Forbidden" });
   }
 
@@ -628,23 +745,6 @@ pickupsRouter.post("/orders/lookup", async (req, res) => {
     role: req.auth?.role,
   });
   const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
-  const activeConflicts = await findActiveOrderConflicts([normalizedOrderNbr]);
-  if (activeConflicts.length) {
-    const conflict = activeConflicts[0];
-    const message = `${normalizedOrderNbr} is already scheduled on ${conflict.displayAt}`;
-    console.warn("[staff-pickups][lookup] endpoint conflict", {
-      orderNbr: normalizedOrderNbr,
-      appointmentId: conflict.appointmentId,
-      status: conflict.status,
-      at: conflict.displayAt,
-    });
-    return res.status(409).json({
-      message,
-      code: "ORDER_ALREADY_SCHEDULED",
-      conflict,
-    });
-  }
-
   const detail = await getOrRefreshOrderDetail(body.data.orderNbr);
   if (!detail) {
     console.warn("[staff-pickups][lookup] endpoint not found", {
@@ -668,7 +768,7 @@ pickupsRouter.post("/orders/lookup", async (req, res) => {
  * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
  */
 pickupsRouter.post("/", async (req, res) => {
-  if (!canWritePickups(req)) {
+  if (!canCreatePickups(req)) {
     return res.status(403).json({ message: "Forbidden" });
   }
 
@@ -681,7 +781,7 @@ pickupsRouter.post("/", async (req, res) => {
     vehicleInfo: z.string().optional(),
     customerNotes: z.string().optional(),
     startAt: z.string().datetime(),
-    endAt: z.string().datetime(),
+    endAt: z.string().datetime().optional(),
     status: STATUS.optional(),
     orderNbrs: z.array(z.string()).optional(),
     selectedItems: z.array(selectedItemsSchema).optional(),
@@ -704,14 +804,50 @@ pickupsRouter.post("/", async (req, res) => {
   }
 
   const customerEmail = body.data.customerEmail.toLowerCase();
+  const isSalesperson = req.auth?.role === "SALESPERSON";
+  const canUsePrepayOverride = req.auth?.role === "ADMIN" || req.auth?.role === "STAFF";
+  const prepayOverride = canUsePrepayOverride && Boolean(body.data.prepayOverride);
+  if (body.data.prepayOverride && !canUsePrepayOverride) {
+    return res.status(403).json({ message: "Prepay override is only available to staff/admin." });
+  }
   const startAt = new Date(body.data.startAt);
-  const endAt = new Date(body.data.endAt);
-  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
+  const endAt = new Date(startAt.getTime() + SLOT_MINUTES * 60_000);
+  if (Number.isNaN(startAt.getTime())) {
     console.warn("[staff-pickups][create] invalid time range", {
       startAt: body.data.startAt,
-      endAt: body.data.endAt,
+      endAt: body.data.endAt ?? null,
     });
     return res.status(400).json({ message: "Invalid appointment time range." });
+  }
+  if (startAt.getSeconds() !== 0 || startAt.getMilliseconds() !== 0 || startAt.getMinutes() % SLOT_MINUTES !== 0) {
+    return res.status(400).json({ message: "Start time must be on a 15-minute interval." });
+  }
+  if (startAt <= new Date()) {
+    return res.status(400).json({ message: "Appointment start time must be in the future." });
+  }
+  if (isSalesperson && isBeforeMinAdvance(startAt, new Date())) {
+    return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
+  }
+
+  const slotConflict = await prisma.pickupAppointment.findFirst({
+    where: {
+      locationId: body.data.locationId,
+      status: { in: ACTIVE_APPOINTMENT_STATUSES },
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+    },
+    select: { id: true, startAt: true, endAt: true },
+  });
+  if (slotConflict) {
+    return res.status(409).json({
+      message: "Time slot no longer available.",
+      code: "SLOT_UNAVAILABLE",
+      conflict: {
+        appointmentId: slotConflict.id,
+        startAt: slotConflict.startAt,
+        endAt: slotConflict.endAt,
+      },
+    });
   }
 
   const user = await prisma.users.findUnique({ where: { email: customerEmail } });
@@ -721,7 +857,7 @@ pickupsRouter.post("/", async (req, res) => {
     return res.status(400).json({ message: "At least one order is required." });
   }
 
-  const activeConflicts = await findActiveOrderConflicts(orderNbrs);
+  const activeConflicts = await findActiveOrderConflicts(orderNbrs, startAt, endAt);
   if (activeConflicts.length) {
     const first = activeConflicts[0];
     const message = `${first.orderNbr} is already scheduled on ${first.displayAt}`;
@@ -821,7 +957,7 @@ pickupsRouter.post("/", async (req, res) => {
     }
   }
 
-  if (!body.data.prepayOverride) {
+  if (!prepayOverride) {
     for (const orderNbr of orderNbrs) {
       const detail = detailMap.get(orderNbr);
       if (!detail) continue;
@@ -848,7 +984,11 @@ pickupsRouter.post("/", async (req, res) => {
         locationId: body.data.locationId,
         startAt,
         endAt,
-        status: body.data.status ? (body.data.status as PickupAppointmentStatus) : undefined,
+        status: isSalesperson
+          ? PickupAppointmentStatus.Scheduled
+          : body.data.status
+            ? (body.data.status as PickupAppointmentStatus)
+            : undefined,
         customerFirstName: body.data.customerFirstName,
         customerLastName: body.data.customerLastName ?? null,
         customerEmail: customerEmail,
@@ -975,7 +1115,7 @@ pickupsRouter.get("/:id/items", async (req, res) => {
  * Body: { shipments: [{ orderNbr, shipmentNbrs: string[] }] }
  */
 pickupsRouter.patch("/:id/shipments", async (req, res) => {
-  if (!canWritePickups(req)) {
+  if (!canModifyPickups(req)) {
     return res.status(403).json({ message: "Forbidden" });
   }
 
@@ -1068,7 +1208,7 @@ pickupsRouter.patch("/:id/shipments", async (req, res) => {
  * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
 pickupsRouter.patch("/:id", async (req, res) => {
-  if (!canWritePickups(req)) {
+  if (!canModifyPickups(req)) {
     return res.status(403).json({ message: "Forbidden" });
   }
 

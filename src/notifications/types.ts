@@ -11,6 +11,7 @@ export type NotificationStatusType = NotificationJobStatus;
 
 export type NotificationOrderDisplay = {
   orderNbr: string;
+  label?: string | null;
   jobDisplay?: string | null;
 };
 

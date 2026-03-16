@@ -13,6 +13,7 @@ import { sendSms } from "../notifications/providers/sms/sendSms";
 import { buildOrderReadyEmail } from "../notifications/templates/email/buildOrderReadyEmail";
 import { applySmsCompliance } from "../notifications/templates/sms/buildSms";
 import { resolveOrderReadyJobDisplay } from "../notifications/orderReady/orderDisplay";
+import { buildOrderNotificationLabel } from "../notifications/orderReady/orderNotificationLabel";
 
 const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
@@ -389,6 +390,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       qtyUnallocated: toNumber(notice.qtyUnallocated),
       qtyAllocated: toNumber(notice.qtyAllocated),
       customerId: notice.customerId,
+      customerIdDescription: notice.customerIdDescription,
       customerLocationId: notice.customerLocationId,
       contactName: notice.contactName,
       contactPhone: resolvedContactPhone,
@@ -502,13 +504,22 @@ publicOrderReadyRouter.post("/resend", async (req, res) => {
       locationId: summary?.locationId,
       jobName: summary?.jobName,
     });
+    const orderLabel = buildOrderNotificationLabel({
+      orderNbr,
+      buyerGroup: notice.attributeBuyerGroup,
+      customerLocationId: notice.customerLocationId,
+      customerIdDescription: notice.customerIdDescription,
+      jobDisplay,
+    });
 
     if (email) {
-      const message = buildOrderReadyEmail(orderNbr, link, jobDisplay);
+      const message = buildOrderReadyEmail(orderNbr, link, {
+        orderLabel,
+        jobDisplay,
+      });
       await sendEmail(email, message.subject, message.body, { allowTestOverride: false });
     } else if (phone) {
-      const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
-      const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
+      const smsBase = `MLD Will Call: ${orderLabel} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
       await sendSms(phone, smsBody, { allowTestOverride: false });
