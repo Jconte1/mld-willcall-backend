@@ -41,7 +41,9 @@ function mapOrderSummaryRows(rawRows: AnyRow[]) {
       "custom.Document.AttributeSALESNEW",
       "Document.AttributeSALESNEW",
       "AttributeSALESNEW",
+      "DefaultSalesperson.value",
       "DefaultSalesperson",
+      "defaultSalesperson.value",
       "defaultSalesperson",
     ]);
     const buyerGroup = firstVal(row, [
