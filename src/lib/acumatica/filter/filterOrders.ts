@@ -40,6 +40,12 @@ export default function filterOrders(rawRows: AnyRow[]) {
       row?.custom?.Document?.AttributeBUYERGROUP?.value ??
       row?.buyerGroup ??
       null;
+    const salesPersonNumber =
+      row?.custom?.Document?.AttributeSALESNEW?.value ??
+      val(row, "DefaultSalesperson") ??
+      val(row, "SalespersonID") ??
+      row?.salesPersonNumber ??
+      null;
     const noteId = val(row, "NoteID") ?? row?.noteId ?? null;
 
     if (!orderNbr || !status || !requestedOnRaw) {
@@ -67,6 +73,7 @@ export default function filterOrders(rawRows: AnyRow[]) {
       jobName: optStr(jobName),
       customerName: optStr(customerName),
       buyerGroup: optStr(buyerGroup),
+      salesPersonNumber: optStr(salesPersonNumber),
       noteId: optStr(noteId),
     });
   }
