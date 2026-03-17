@@ -67,10 +67,15 @@ function normalizeEmail(value: string | null | undefined) {
 }
 
 function resolveNoticePhone(notice: {
+  attributeSiteNumber?: string | null;
   attributeSmsTxt?: string | null;
   contactPhone?: string | null;
 }) {
-  return normalizePhone(notice.attributeSmsTxt) || normalizePhone(notice.contactPhone);
+  return (
+    normalizePhone(notice.attributeSiteNumber) ||
+    normalizePhone(notice.attributeSmsTxt) ||
+    normalizePhone(notice.contactPhone)
+  );
 }
 
 function resolveNoticeEmail(notice: {

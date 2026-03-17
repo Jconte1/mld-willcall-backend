@@ -29,6 +29,10 @@ function normalizePhone(value: string | null | undefined) {
   return digits || null;
 }
 
+function resolveOrderReadySmsPhone(row: OrderReadyRow) {
+  return normalizePhone(row.attributeSiteNumber) || normalizePhone(row.attributeSmsTxt);
+}
+
 function getDenverParts(date: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: DENVER_TZ,
@@ -100,7 +104,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       orderNbr: rows[0]?.orderNbr,
       orderType: rows[0]?.orderType,
       status: rows[0]?.status,
-      textNotification: rows[0]?.attributeSmsTxt,
+      textNotification: rows[0]?.attributeSiteNumber ?? rows[0]?.attributeSmsTxt,
       emailNotification: rows[0]?.attributeEmailNoty,
       textOptIn: rows[0]?.attributeSmsOptIn,
       emailOptIn: rows[0]?.attributeEmailOptIn,
@@ -136,7 +140,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
   for (const [orderNbr, bucket] of grouped.entries()) {
     const row = bucket.row;
     const contactEmail = (row.attributeEmailNoty || "").trim() || null;
-    const contactPhone = normalizePhone(row.attributeSmsTxt);
+    const contactPhone = resolveOrderReadySmsPhone(row);
     const mappedLocationId = normalizeWarehouseToLocationId(row.warehouse);
     const locationId = mappedLocationId ?? "slc-hq";
     const summaryLookupKey = buildSummaryKey(row.customerId, orderNbr);
