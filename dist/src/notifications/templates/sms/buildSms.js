@@ -11,6 +11,9 @@ function formatSmsOrderList(payload) {
     }
     const labels = payload.orderDisplays
         .map((entry) => {
+        const fullLabel = String(entry.label || "").trim();
+        if (fullLabel)
+            return fullLabel;
         const orderNbr = String(entry.orderNbr || "").trim();
         const jobDisplay = String(entry.jobDisplay || "").trim();
         if (!orderNbr)

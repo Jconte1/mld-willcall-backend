@@ -7,6 +7,7 @@ const zod_1 = require("zod");
 const auth_1 = require("../middleware/auth");
 const locationIds_1 = require("../lib/locationIds");
 const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderReadyDetails");
+const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
 const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaService");
 const erpClient_1 = require("../lib/queue/erpClient");
 const notifications_1 = require("../notifications");
@@ -39,6 +40,11 @@ const selectedItemsSchema = zod_1.z.object({
 });
 const SHIPMENT_FORMAT = /^SMT\d{7}$/;
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const SLOT_MINUTES = 15;
+const DENVER_TZ = "America/Denver";
+const OPEN_HOUR = 7;
+const CLOSE_HOUR = 17;
+const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
@@ -50,12 +56,15 @@ const shipmentUpdateSchema = zod_1.z.object({
     shipmentNbrs: zod_1.z.array(zod_1.z.string().min(1)).default([]),
 });
 function canAccessLocation(req, locationId) {
-    if (req.auth.role === "ADMIN")
+    if (req.auth.role === "ADMIN" || req.auth.role === "SALESPERSON")
         return true;
     return (0, locationIds_1.expandLocationIds)(req.auth.locationAccess ?? []).includes(locationId);
 }
-function canWritePickups(req) {
-    return req.auth?.role !== "VIEWER" && req.auth?.role !== "SALESPERSON";
+function canCreatePickups(req) {
+    return req.auth?.role !== "VIEWER";
+}
+function canModifyPickups(req) {
+    return req.auth?.role === "ADMIN" || req.auth?.role === "STAFF";
 }
 function normalizeOrderNbr(value) {
     return value.trim().toUpperCase();
@@ -73,7 +82,7 @@ function toNumber(value) {
 }
 function formatDenverDateTime(input) {
     return new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/Denver",
+        timeZone: DENVER_TZ,
         month: "2-digit",
         day: "2-digit",
         year: "numeric",
@@ -82,13 +91,103 @@ function formatDenverDateTime(input) {
         hour12: true,
     }).format(input);
 }
-async function findActiveOrderConflicts(orderNbrs) {
+function formatDateInDenver(date) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+    const y = parts.find((p) => p.type === "year")?.value ?? "0000";
+    const m = parts.find((p) => p.type === "month")?.value ?? "01";
+    const d = parts.find((p) => p.type === "day")?.value ?? "01";
+    return `${y}-${m}-${d}`;
+}
+function formatTimeInDenver(date) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).formatToParts(date);
+    const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+    const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+    return `${hh}:${mm}`;
+}
+function parseDateOnly(dateStr) {
+    return new Date(`${dateStr}T12:00:00-07:00`);
+}
+function addMinutes(date, minutes) {
+    return new Date(date.getTime() + minutes * 60000);
+}
+function timeToMinutes(time) {
+    const [hh, mm] = time.split(":").map((part) => Number(part));
+    return hh * 60 + mm;
+}
+function isWeekend(dateStr) {
+    const date = parseDateOnly(dateStr);
+    const weekday = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        weekday: "short",
+    }).format(date);
+    return weekday === "Sat" || weekday === "Sun";
+}
+function nextBusinessDateStr(dateStr) {
+    let cursor = parseDateOnly(dateStr);
+    while (true) {
+        cursor = addMinutes(cursor, 24 * 60);
+        const next = formatDateInDenver(cursor);
+        if (!isWeekend(next))
+            return next;
+    }
+}
+function ceilToSlot(minutes) {
+    return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+}
+function getMinAllowedSlot(now) {
+    const todayStr = formatDateInDenver(now);
+    const nowMinutes = timeToMinutes(formatTimeInDenver(now));
+    const closeMinutes = CLOSE_HOUR * 60;
+    const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+    if (isWeekend(todayStr)) {
+        return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+    }
+    let minDateStr = todayStr;
+    let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
+    if (minMinutes > closeMinutes) {
+        const remaining = minMinutes - closeMinutes;
+        minDateStr = nextBusinessDateStr(todayStr);
+        minMinutes = OPEN_HOUR * 60 + remaining;
+    }
+    if (minMinutes < OPEN_HOUR * 60)
+        minMinutes = OPEN_HOUR * 60;
+    if (minMinutes > lastStartMinutes) {
+        minDateStr = nextBusinessDateStr(minDateStr);
+        minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+    }
+    return { dateStr: minDateStr, minutes: ceilToSlot(minMinutes) };
+}
+function isBeforeMinAdvance(startAt, now) {
+    const minAllowed = getMinAllowedSlot(now);
+    const startDateStr = formatDateInDenver(startAt);
+    const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
+    return (startDateStr < minAllowed.dateStr ||
+        (startDateStr === minAllowed.dateStr && startMinutes < minAllowed.minutes));
+}
+async function findActiveOrderConflicts(orderNbrs, startAt, endAt) {
     if (!orderNbrs.length)
         return [];
+    const appointmentWhere = {
+        status: { in: ACTIVE_APPOINTMENT_STATUSES },
+    };
+    if (startAt && endAt) {
+        appointmentWhere.startAt = { lt: endAt };
+        appointmentWhere.endAt = { gt: startAt };
+    }
     const rows = await prisma.pickupAppointmentOrder.findMany({
         where: {
             orderNbr: { in: orderNbrs },
-            appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
+            appointment: appointmentWhere,
         },
         include: {
             appointment: {
@@ -274,11 +373,37 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
         console.warn("[staff-pickups][lookup] not found after all fallbacks", { orderNbr });
         return null;
     }
+    try {
+        await (0, refreshPrepayPayments_1.refreshPrepayPaymentsIfNeeded)({
+            baid: summary.baid,
+            orderNbrs: [orderNbr],
+            context: "staff-pickups-order-lookup",
+        });
+    }
+    catch (err) {
+        console.warn("[payment-refresh][staff-pickups-order-lookup] fallback to DB payment", {
+            baid: summary.baid,
+            orderNbr,
+            error: err instanceof Error ? err.message : String(err),
+        });
+    }
+    const paymentRow = await prisma.erpOrderPayment.findFirst({
+        where: {
+            baid: summary.baid,
+            orderNbr,
+        },
+        select: {
+            orderTotal: true,
+            unpaidBalance: true,
+            terms: true,
+            status: true,
+        },
+    });
     const payment = {
-        orderTotal: toNumber(summary.ErpOrderPayment?.orderTotal),
-        unpaidBalance: toNumber(summary.ErpOrderPayment?.unpaidBalance),
-        terms: summary.ErpOrderPayment?.terms ?? null,
-        status: summary.ErpOrderPayment?.status ?? null,
+        orderTotal: toNumber(paymentRow?.orderTotal),
+        unpaidBalance: toNumber(paymentRow?.unpaidBalance),
+        terms: paymentRow?.terms ?? null,
+        status: paymentRow?.status ?? null,
     };
     const salesPerson = summary.salesPersonNumber
         ? await prisma.staffUser.findFirst({
@@ -496,7 +621,7 @@ exports.pickupsRouter.get("/", async (req, res) => {
  * Body: { orderNbr }
  */
 exports.pickupsRouter.post("/orders/lookup", async (req, res) => {
-    if (!canWritePickups(req)) {
+    if (!canCreatePickups(req)) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const body = zod_1.z
@@ -514,22 +639,6 @@ exports.pickupsRouter.post("/orders/lookup", async (req, res) => {
         role: req.auth?.role,
     });
     const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
-    const activeConflicts = await findActiveOrderConflicts([normalizedOrderNbr]);
-    if (activeConflicts.length) {
-        const conflict = activeConflicts[0];
-        const message = `${normalizedOrderNbr} is already scheduled on ${conflict.displayAt}`;
-        console.warn("[staff-pickups][lookup] endpoint conflict", {
-            orderNbr: normalizedOrderNbr,
-            appointmentId: conflict.appointmentId,
-            status: conflict.status,
-            at: conflict.displayAt,
-        });
-        return res.status(409).json({
-            message,
-            code: "ORDER_ALREADY_SCHEDULED",
-            conflict,
-        });
-    }
     const detail = await getOrRefreshOrderDetail(body.data.orderNbr);
     if (!detail) {
         console.warn("[staff-pickups][lookup] endpoint not found", {
@@ -551,7 +660,7 @@ exports.pickupsRouter.post("/orders/lookup", async (req, res) => {
  * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
  */
 exports.pickupsRouter.post("/", async (req, res) => {
-    if (!canWritePickups(req)) {
+    if (!canCreatePickups(req)) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const body = zod_1.z.object({
@@ -563,7 +672,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
         vehicleInfo: zod_1.z.string().optional(),
         customerNotes: zod_1.z.string().optional(),
         startAt: zod_1.z.string().datetime(),
-        endAt: zod_1.z.string().datetime(),
+        endAt: zod_1.z.string().datetime().optional(),
         status: STATUS.optional(),
         orderNbrs: zod_1.z.array(zod_1.z.string()).optional(),
         selectedItems: zod_1.z.array(selectedItemsSchema).optional(),
@@ -584,14 +693,49 @@ exports.pickupsRouter.post("/", async (req, res) => {
         return res.status(403).json({ message: "Forbidden" });
     }
     const customerEmail = body.data.customerEmail.toLowerCase();
+    const isSalesperson = req.auth?.role === "SALESPERSON";
+    const canUsePrepayOverride = req.auth?.role === "ADMIN" || req.auth?.role === "STAFF";
+    const prepayOverride = canUsePrepayOverride && Boolean(body.data.prepayOverride);
+    if (body.data.prepayOverride && !canUsePrepayOverride) {
+        return res.status(403).json({ message: "Prepay override is only available to staff/admin." });
+    }
     const startAt = new Date(body.data.startAt);
-    const endAt = new Date(body.data.endAt);
-    if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
+    const endAt = new Date(startAt.getTime() + SLOT_MINUTES * 60000);
+    if (Number.isNaN(startAt.getTime())) {
         console.warn("[staff-pickups][create] invalid time range", {
             startAt: body.data.startAt,
-            endAt: body.data.endAt,
+            endAt: body.data.endAt ?? null,
         });
         return res.status(400).json({ message: "Invalid appointment time range." });
+    }
+    if (startAt.getSeconds() !== 0 || startAt.getMilliseconds() !== 0 || startAt.getMinutes() % SLOT_MINUTES !== 0) {
+        return res.status(400).json({ message: "Start time must be on a 15-minute interval." });
+    }
+    if (startAt <= new Date()) {
+        return res.status(400).json({ message: "Appointment start time must be in the future." });
+    }
+    if (isSalesperson && isBeforeMinAdvance(startAt, new Date())) {
+        return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
+    }
+    const slotConflict = await prisma.pickupAppointment.findFirst({
+        where: {
+            locationId: body.data.locationId,
+            status: { in: ACTIVE_APPOINTMENT_STATUSES },
+            startAt: { lt: endAt },
+            endAt: { gt: startAt },
+        },
+        select: { id: true, startAt: true, endAt: true },
+    });
+    if (slotConflict) {
+        return res.status(409).json({
+            message: "Time slot no longer available.",
+            code: "SLOT_UNAVAILABLE",
+            conflict: {
+                appointmentId: slotConflict.id,
+                startAt: slotConflict.startAt,
+                endAt: slotConflict.endAt,
+            },
+        });
     }
     const user = await prisma.users.findUnique({ where: { email: customerEmail } });
     const orderNbrs = uniqueOrderNbrs(body.data.orderNbrs);
@@ -599,7 +743,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
         console.warn("[staff-pickups][create] blocked: no orders");
         return res.status(400).json({ message: "At least one order is required." });
     }
-    const activeConflicts = await findActiveOrderConflicts(orderNbrs);
+    const activeConflicts = await findActiveOrderConflicts(orderNbrs, startAt, endAt);
     if (activeConflicts.length) {
         const first = activeConflicts[0];
         const message = `${first.orderNbr} is already scheduled on ${first.displayAt}`;
@@ -690,7 +834,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
             }
         }
     }
-    if (!body.data.prepayOverride) {
+    if (!prepayOverride) {
         for (const orderNbr of orderNbrs) {
             const detail = detailMap.get(orderNbr);
             if (!detail)
@@ -717,7 +861,11 @@ exports.pickupsRouter.post("/", async (req, res) => {
                 locationId: body.data.locationId,
                 startAt,
                 endAt,
-                status: body.data.status ? body.data.status : undefined,
+                status: isSalesperson
+                    ? client_1.PickupAppointmentStatus.Scheduled
+                    : body.data.status
+                        ? body.data.status
+                        : undefined,
                 customerFirstName: body.data.customerFirstName,
                 customerLastName: body.data.customerLastName ?? null,
                 customerEmail: customerEmail,
@@ -833,7 +981,7 @@ exports.pickupsRouter.get("/:id/items", async (req, res) => {
  * Body: { shipments: [{ orderNbr, shipmentNbrs: string[] }] }
  */
 exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
-    if (!canWritePickups(req)) {
+    if (!canModifyPickups(req)) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const body = zod_1.z
@@ -917,7 +1065,7 @@ exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
  * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
 exports.pickupsRouter.patch("/:id", async (req, res) => {
-    if (!canWritePickups(req)) {
+    if (!canModifyPickups(req)) {
         return res.status(403).json({ message: "Forbidden" });
     }
     const body = zod_1.z.object({

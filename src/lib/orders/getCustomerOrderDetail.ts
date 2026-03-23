@@ -5,6 +5,7 @@ import {
   inferPaymentStatus,
   toNumber,
 } from "./orderHelpers";
+import { refreshPrepayPaymentsIfNeeded } from "../acumatica/sync/refreshPrepayPayments";
 
 const prisma = new PrismaClient();
 
@@ -27,6 +28,33 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
   });
 
   if (!summary) return null;
+
+  try {
+    await refreshPrepayPaymentsIfNeeded({
+      baid,
+      orderNbrs: [orderNbr],
+      context: "customer-order-detail",
+    });
+  } catch (err) {
+    console.warn("[payment-refresh][customer-order-detail] fallback to DB payment", {
+      baid,
+      orderNbr,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const paymentRow = await prisma.erpOrderPayment.findFirst({
+    where: {
+      baid,
+      orderNbr,
+    },
+    select: {
+      orderTotal: true,
+      unpaidBalance: true,
+      terms: true,
+      status: true,
+    },
+  });
 
   const lines = summary.ErpOrderLine.map((line) => ({
     id: line.id,
@@ -61,11 +89,11 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
     shipVia: summary.shipVia,
   });
   const fulfillmentStatus = inferFulfillmentStatus(summary.status, lineSummary);
-  const unpaidBalance = toNumber(summary.ErpOrderPayment?.unpaidBalance ?? null);
+  const unpaidBalance = toNumber(paymentRow?.unpaidBalance ?? null);
   const paymentStatus = inferPaymentStatus(
     unpaidBalance,
-    summary.ErpOrderPayment?.terms ?? null,
-    summary.ErpOrderPayment?.status ?? null
+    paymentRow?.terms ?? null,
+    paymentRow?.status ?? null
   );
 
   const warehouses = Array.from(
@@ -174,12 +202,12 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
           threeDaySent: summary.ErpOrderContact.threeDaySent,
         }
       : null,
-    payment: summary.ErpOrderPayment
+    payment: paymentRow
       ? {
-          orderTotal: toNumber(summary.ErpOrderPayment.orderTotal),
+          orderTotal: toNumber(paymentRow.orderTotal),
           unpaidBalance,
-          terms: summary.ErpOrderPayment.terms,
-          status: summary.ErpOrderPayment.status,
+          terms: paymentRow.terms,
+          status: paymentRow.status,
         }
       : null,
     lines,

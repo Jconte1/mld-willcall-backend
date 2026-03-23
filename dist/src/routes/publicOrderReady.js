@@ -16,6 +16,8 @@ const sendSms_1 = require("../notifications/providers/sms/sendSms");
 const buildOrderReadyEmail_1 = require("../notifications/templates/email/buildOrderReadyEmail");
 const buildSms_1 = require("../notifications/templates/sms/buildSms");
 const orderDisplay_1 = require("../notifications/orderReady/orderDisplay");
+const orderNotificationLabel_1 = require("../notifications/orderReady/orderNotificationLabel");
+const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
 const prisma = new client_1.PrismaClient();
 exports.publicOrderReadyRouter = (0, express_1.Router)();
 const tokenSchema = zod_1.z.object({
@@ -61,7 +63,9 @@ function normalizeEmail(value) {
     return email || null;
 }
 function resolveNoticePhone(notice) {
-    return normalizePhone(notice.attributeSmsTxt) || normalizePhone(notice.contactPhone);
+    return (normalizePhone(notice.attributeSiteNumber) ||
+        normalizePhone(notice.attributeSmsTxt) ||
+        normalizePhone(notice.contactPhone));
 }
 function resolveNoticeEmail(notice) {
     return normalizeEmail(notice.attributeEmailNoty) || normalizeEmail(notice.contactEmail);
@@ -239,6 +243,22 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             }
         }
     }
+    if (notice.baid) {
+        try {
+            await (0, refreshPrepayPayments_1.refreshPrepayPaymentsIfNeeded)({
+                baid: notice.baid,
+                orderNbrs: [orderNbr],
+                context: "public-order-ready",
+            });
+        }
+        catch (err) {
+            console.warn("[payment-refresh][public-order-ready] fallback to DB payment", {
+                baid: notice.baid,
+                orderNbr,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
     const readyLineRows = await prisma.orderReadyLine.findMany({
         where: { orderReadyId: notice.id },
         select: { inventoryId: true },
@@ -360,6 +380,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             qtyUnallocated: (0, orderHelpers_1.toNumber)(notice.qtyUnallocated),
             qtyAllocated: (0, orderHelpers_1.toNumber)(notice.qtyAllocated),
             customerId: notice.customerId,
+            customerIdDescription: notice.customerIdDescription,
             customerLocationId: notice.customerLocationId,
             contactName: notice.contactName,
             contactPhone: resolvedContactPhone,
@@ -461,13 +482,22 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
             locationId: summary?.locationId,
             jobName: summary?.jobName,
         });
+        const orderLabel = (0, orderNotificationLabel_1.buildOrderNotificationLabel)({
+            orderNbr,
+            buyerGroup: notice.attributeBuyerGroup,
+            customerLocationId: notice.customerLocationId,
+            customerIdDescription: notice.customerIdDescription,
+            jobDisplay,
+        });
         if (email) {
-            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, jobDisplay);
+            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, {
+                orderLabel,
+                jobDisplay,
+            });
             await (0, sendEmail_1.sendEmail)(email, message.subject, message.body, { allowTestOverride: false });
         }
         else if (phone) {
-            const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
-            const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
+            const smsBase = `MLD Will Call: ${orderLabel} is ready for pickup. Schedule here: ${link}`;
             const includeStopLine = !notice.smsFirstSentAt;
             const smsBody = (0, buildSms_1.applySmsCompliance)(smsBase, includeStopLine);
             await (0, sendSms_1.sendSms)(phone, smsBody, { allowTestOverride: false });

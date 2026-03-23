@@ -9,6 +9,7 @@ const sendEmail_1 = require("../providers/email/sendEmail");
 const buildLink_1 = require("../links/buildLink");
 const pickupLocations_1 = require("../../lib/pickupLocations");
 const orderDisplay_1 = require("../orderReady/orderDisplay");
+const orderNotificationLabel_1 = require("../orderReady/orderNotificationLabel");
 function normalizeOrderNbrs(input) {
     if (!Array.isArray(input))
         return [];
@@ -33,20 +34,48 @@ async function buildPayload(prisma, appointment, job, link) {
             orderBy: { updatedAt: "desc" },
         })
         : [];
+    const orderReadyNotices = normalizedOrderNbrs.length
+        ? await prisma.orderReadyNotice.findMany({
+            where: {
+                orderNbr: { in: normalizedOrderNbrs },
+            },
+            select: {
+                orderNbr: true,
+                attributeBuyerGroup: true,
+                customerLocationId: true,
+                customerIdDescription: true,
+            },
+        })
+        : [];
     const summaryByOrderNbr = new Map();
     for (const summary of summaries) {
         const key = summary.orderNbr.trim().toUpperCase();
         if (!summaryByOrderNbr.has(key))
             summaryByOrderNbr.set(key, summary);
     }
+    const noticeByOrderNbr = new Map();
+    for (const notice of orderReadyNotices) {
+        const key = notice.orderNbr.trim().toUpperCase();
+        if (!noticeByOrderNbr.has(key))
+            noticeByOrderNbr.set(key, notice);
+    }
     const orderDisplays = normalizedOrderNbrs.map((orderNbr) => {
+        const notice = noticeByOrderNbr.get(orderNbr.trim().toUpperCase());
         const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
         const jobDisplay = (0, orderDisplay_1.resolveOrderReadyJobDisplay)({
             locationId: summary?.locationId,
             jobName: summary?.jobName,
         });
+        const label = (0, orderNotificationLabel_1.buildOrderNotificationLabel)({
+            orderNbr,
+            buyerGroup: notice?.attributeBuyerGroup,
+            customerLocationId: notice?.customerLocationId,
+            customerIdDescription: notice?.customerIdDescription,
+            jobDisplay,
+        });
         return {
             orderNbr,
+            label,
             jobDisplay,
         };
     });

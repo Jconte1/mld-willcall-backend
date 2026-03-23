@@ -37,6 +37,11 @@ function filterOrders(rawRows) {
         const buyerGroup = row?.custom?.Document?.AttributeBUYERGROUP?.value ??
             row?.buyerGroup ??
             null;
+        const salesPersonNumber = row?.custom?.Document?.AttributeSALESNEW?.value ??
+            val(row, "DefaultSalesperson") ??
+            val(row, "SalespersonID") ??
+            row?.salesPersonNumber ??
+            null;
         const noteId = val(row, "NoteID") ?? row?.noteId ?? null;
         if (!orderNbr || !status || !requestedOnRaw) {
             droppedMissing += 1;
@@ -60,6 +65,7 @@ function filterOrders(rawRows) {
             jobName: optStr(jobName),
             customerName: optStr(customerName),
             buyerGroup: optStr(buyerGroup),
+            salesPersonNumber: optStr(salesPersonNumber),
             noteId: optStr(noteId),
         });
     }

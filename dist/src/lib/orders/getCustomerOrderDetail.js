@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerOrderDetail = getCustomerOrderDetail;
 const client_1 = require("@prisma/client");
 const orderHelpers_1 = require("./orderHelpers");
+const refreshPrepayPayments_1 = require("../acumatica/sync/refreshPrepayPayments");
 const prisma = new client_1.PrismaClient();
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
@@ -22,6 +23,32 @@ async function getCustomerOrderDetail(baid, orderNbr) {
     });
     if (!summary)
         return null;
+    try {
+        await (0, refreshPrepayPayments_1.refreshPrepayPaymentsIfNeeded)({
+            baid,
+            orderNbrs: [orderNbr],
+            context: "customer-order-detail",
+        });
+    }
+    catch (err) {
+        console.warn("[payment-refresh][customer-order-detail] fallback to DB payment", {
+            baid,
+            orderNbr,
+            error: err instanceof Error ? err.message : String(err),
+        });
+    }
+    const paymentRow = await prisma.erpOrderPayment.findFirst({
+        where: {
+            baid,
+            orderNbr,
+        },
+        select: {
+            orderTotal: true,
+            unpaidBalance: true,
+            terms: true,
+            status: true,
+        },
+    });
     const lines = summary.ErpOrderLine.map((line) => ({
         id: line.id,
         lineDescription: line.lineDescription,
@@ -51,8 +78,8 @@ async function getCustomerOrderDetail(baid, orderNbr) {
         shipVia: summary.shipVia,
     });
     const fulfillmentStatus = (0, orderHelpers_1.inferFulfillmentStatus)(summary.status, lineSummary);
-    const unpaidBalance = (0, orderHelpers_1.toNumber)(summary.ErpOrderPayment?.unpaidBalance ?? null);
-    const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, summary.ErpOrderPayment?.terms ?? null, summary.ErpOrderPayment?.status ?? null);
+    const unpaidBalance = (0, orderHelpers_1.toNumber)(paymentRow?.unpaidBalance ?? null);
+    const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, paymentRow?.terms ?? null, paymentRow?.status ?? null);
     const warehouses = Array.from(new Set(lines.map((l) => l.warehouse).filter(Boolean))).sort();
     const appointmentOrder = await prisma.pickupAppointmentOrder.findFirst({
         where: {
@@ -149,12 +176,12 @@ async function getCustomerOrderDetail(baid, orderNbr) {
                 threeDaySent: summary.ErpOrderContact.threeDaySent,
             }
             : null,
-        payment: summary.ErpOrderPayment
+        payment: paymentRow
             ? {
-                orderTotal: (0, orderHelpers_1.toNumber)(summary.ErpOrderPayment.orderTotal),
+                orderTotal: (0, orderHelpers_1.toNumber)(paymentRow.orderTotal),
                 unpaidBalance,
-                terms: summary.ErpOrderPayment.terms,
-                status: summary.ErpOrderPayment.status,
+                terms: paymentRow.terms,
+                status: paymentRow.status,
             }
             : null,
         lines,

@@ -29,6 +29,7 @@ function shouldBeActive(status) {
 }
 function mapOrderSummaryRows(rawRows) {
     const incoming = [];
+    const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
     for (const row of Array.isArray(rawRows) ? rawRows : []) {
         const orderNbr = firstVal(row, ["OrderNbr", "orderNbr", "nbr"]);
         const status = firstVal(row, ["Status", "status"]);
@@ -37,7 +38,33 @@ function mapOrderSummaryRows(rawRows) {
         const shipVia = firstVal(row, ["ShipVia", "shipVia"]);
         const jobName = firstVal(row, ["JobName", "jobName"]);
         const customerName = firstVal(row, ["CustomerName", "customerName"]);
-        const salesPersonNumber = firstVal(row, ["DefaultSalesperson", "defaultSalesperson"]);
+        const salesPersonAttr = firstVal(row, [
+            "custom.Document.AttributeSALESNEW",
+            "Document.AttributeSALESNEW",
+            "AttributeSALESNEW",
+            "salesPersonNumber",
+        ]);
+        const defaultSalespersonField = row?.DefaultSalesperson ?? row?.DefaultSalesPerson;
+        const defaultSalesperson = defaultSalespersonField && typeof defaultSalespersonField === "object"
+            ? defaultSalespersonField.value ?? defaultSalespersonField.Value ?? null
+            : defaultSalespersonField ??
+                firstVal(row, [
+                    "DefaultSalesperson.value",
+                    "DefaultSalesperson",
+                    "DefaultSalesPerson.value",
+                    "DefaultSalesPerson",
+                    "defaultSalesperson.value",
+                    "defaultSalesperson",
+                ]);
+        const salesPersonIdField = firstVal(row, ["SalespersonID", "salespersonId"]);
+        const salesPersonNumber = salesPersonAttr ?? defaultSalesperson ?? salesPersonIdField;
+        if (!optStr(salesPersonNumber) && optStr(defaultSalesperson)) {
+            console.warn("[upsertOrderSummaries] salesperson mapping fell through", {
+                orderNbr: String(orderNbr),
+                defaultSalesperson,
+                salesPersonAttr,
+            });
+        }
         const buyerGroup = firstVal(row, [
             "custom.Document.AttributeBUYERGROUP",
             "Document.AttributeBUYERGROUP",
@@ -48,7 +75,7 @@ function mapOrderSummaryRows(rawRows) {
         const requestedOn = toDate(requested);
         if (!orderNbr || !status || !requestedOn)
             continue;
-        incoming.push({
+        const mapped = {
             orderNbr: String(orderNbr),
             status: String(status),
             locationId: locationId != null ? String(locationId) : null,
@@ -59,7 +86,26 @@ function mapOrderSummaryRows(rawRows) {
             buyerGroup: optStr(buyerGroup),
             noteId: optStr(noteId),
             salesPersonNumber: optStr(salesPersonNumber),
-        });
+        };
+        if (debugOrderNbr && mapped.orderNbr.trim().toUpperCase() === debugOrderNbr) {
+            console.log("[upsertOrderSummaries][debug-map]", {
+                orderNbr: mapped.orderNbr,
+                rowKeys: Object.keys(row || {}),
+                fetched: {
+                    defaultSalespersonField: row?.DefaultSalesperson ?? null,
+                    defaultSalespersonFieldAlt: row?.DefaultSalesPerson ?? null,
+                    defaultSalesperson,
+                    salesPersonAttr,
+                    salesPersonIdField,
+                },
+                mapped: {
+                    salesPersonNumber: mapped.salesPersonNumber,
+                    shipVia: mapped.shipVia,
+                    customerName: mapped.customerName,
+                },
+            });
+        }
+        incoming.push(mapped);
     }
     return incoming;
 }
@@ -85,6 +131,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     const byNbr = new Map(existing.map((r) => [r.orderNbr, r]));
     const toInsert = [];
     const toUpdate = [];
+    const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
     for (const r of incoming) {
         const prev = byNbr.get(r.orderNbr);
         if (!prev) {
@@ -106,6 +153,11 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     }
     let inserted = 0;
     if (toInsert.length) {
+        if (debugOrderNbr) {
+            const row = toInsert.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
+            if (row)
+                console.log("[upsertOrderSummaries][debug-insert]", row);
+        }
         const { count } = await prisma.erpOrderSummary.createMany({
             data: toInsert.map((r) => ({
                 id: (0, node_crypto_1.randomUUID)(),
@@ -131,6 +183,11 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     }
     let updated = 0;
     if (toUpdate.length) {
+        if (debugOrderNbr) {
+            const row = toUpdate.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
+            if (row)
+                console.log("[upsertOrderSummaries][debug-update]", row);
+        }
         await runWithConcurrency(toUpdate, concurrency, async (r) => {
             await prisma.erpOrderSummary.update({
                 where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
@@ -162,6 +219,13 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
         },
         data: { isActive: false, updatedAt: now },
     });
+    if (debugOrderNbr) {
+        const persisted = await prisma.erpOrderSummary.findFirst({
+            where: { baid, orderNbr: debugOrderNbr },
+            select: { orderNbr: true, salesPersonNumber: true, shipVia: true, updatedAt: true },
+        });
+        console.log("[upsertOrderSummaries][debug-persisted]", { baid, row: persisted ?? null });
+    }
     return { inserted, updated, inactivated };
 }
 async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {}) {
@@ -274,8 +338,12 @@ async function purgeOldOrders(cutoff) {
 }
 function val(row, key) {
     const v = row?.[key];
-    if (v && typeof v === "object" && "value" in v)
-        return v.value;
+    if (v && typeof v === "object") {
+        if ("value" in v)
+            return v.value;
+        if ("Value" in v)
+            return v.Value;
+    }
     return v;
 }
 function firstVal(row, keys) {
@@ -294,8 +362,12 @@ function getPath(obj, dotted) {
     let cur = obj;
     for (const p of parts) {
         cur = cur?.[p];
-        if (cur && typeof cur === "object" && "value" in cur)
-            cur = cur.value;
+        if (cur && typeof cur === "object") {
+            if ("value" in cur)
+                cur = cur.value;
+            else if ("Value" in cur)
+                cur = cur.Value;
+        }
         if (cur == null)
             break;
     }

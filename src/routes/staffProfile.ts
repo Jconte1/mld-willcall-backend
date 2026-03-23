@@ -17,8 +17,14 @@ const profileSchema = z.object({
     .max(5)
     .regex(/^\d+$/, "Salesperson number must be digits only"),
   salespersonName: z.string().min(1),
-  salespersonPhone: z.string().optional(),
-  salespersonEmail: z.string().email().optional(),
+  salespersonPhone: z
+    .string()
+    .min(1)
+    .refine((value) => value.replace(/\D/g, "").length === 10, "Salesperson phone must be 10 digits"),
+  salespersonEmail: z
+    .string()
+    .email()
+    .refine((value) => value.toLowerCase().endsWith("@mld.com"), "Salesperson email must be @mld.com"),
 });
 
 function normalizePhone(input?: string) {

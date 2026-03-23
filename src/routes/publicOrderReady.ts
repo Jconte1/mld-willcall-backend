@@ -14,6 +14,7 @@ import { buildOrderReadyEmail } from "../notifications/templates/email/buildOrde
 import { applySmsCompliance } from "../notifications/templates/sms/buildSms";
 import { resolveOrderReadyJobDisplay } from "../notifications/orderReady/orderDisplay";
 import { buildOrderNotificationLabel } from "../notifications/orderReady/orderNotificationLabel";
+import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
 
 const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
@@ -264,6 +265,22 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
           console.error("[order-ready] refresh failed", err);
         }
       }
+    }
+  }
+
+  if (notice.baid) {
+    try {
+      await refreshPrepayPaymentsIfNeeded({
+        baid: notice.baid,
+        orderNbrs: [orderNbr],
+        context: "public-order-ready",
+      });
+    } catch (err) {
+      console.warn("[payment-refresh][public-order-ready] fallback to DB payment", {
+        baid: notice.baid,
+        orderNbr,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

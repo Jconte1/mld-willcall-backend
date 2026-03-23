@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } from "../middleware/auth";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
+import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
 import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
 import {
@@ -456,11 +457,38 @@ async function getOrRefreshOrderDetail(orderNbrInput: string): Promise<StaffOrde
     return null;
   }
 
+  try {
+    await refreshPrepayPaymentsIfNeeded({
+      baid: summary.baid,
+      orderNbrs: [orderNbr],
+      context: "staff-pickups-order-lookup",
+    });
+  } catch (err) {
+    console.warn("[payment-refresh][staff-pickups-order-lookup] fallback to DB payment", {
+      baid: summary.baid,
+      orderNbr,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const paymentRow = await prisma.erpOrderPayment.findFirst({
+    where: {
+      baid: summary.baid,
+      orderNbr,
+    },
+    select: {
+      orderTotal: true,
+      unpaidBalance: true,
+      terms: true,
+      status: true,
+    },
+  });
+
   const payment = {
-    orderTotal: toNumber(summary.ErpOrderPayment?.orderTotal),
-    unpaidBalance: toNumber(summary.ErpOrderPayment?.unpaidBalance),
-    terms: summary.ErpOrderPayment?.terms ?? null,
-    status: summary.ErpOrderPayment?.status ?? null,
+    orderTotal: toNumber(paymentRow?.orderTotal),
+    unpaidBalance: toNumber(paymentRow?.unpaidBalance),
+    terms: paymentRow?.terms ?? null,
+    status: paymentRow?.status ?? null,
   };
 
   const salesPerson = summary.salesPersonNumber

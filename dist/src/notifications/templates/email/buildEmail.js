@@ -16,14 +16,40 @@ function formatOrderDisplayList(payload) {
     if (Array.isArray(payload.orderDisplays) && payload.orderDisplays.length) {
         return payload.orderDisplays
             .map((entry) => {
+            const fullLabel = String(entry.label || "").trim();
+            if (fullLabel)
+                return fullLabel;
             const orderNbr = String(entry.orderNbr || "").trim();
-            const label = String(entry.jobDisplay || "").trim();
-            return label ? `${orderNbr} - ${label}` : orderNbr;
+            const jobLabel = String(entry.jobDisplay || "").trim();
+            return jobLabel ? `${orderNbr} - ${jobLabel}` : orderNbr;
         })
             .filter(Boolean)
             .join(", ");
     }
     return formatOrderList(payload.orderNbrs);
+}
+function formatSubjectOrderSummary(payload) {
+    const items = Array.isArray(payload.orderDisplays) && payload.orderDisplays.length
+        ? payload.orderDisplays
+            .map((entry) => {
+            const fullLabel = String(entry.label || "").trim();
+            if (fullLabel)
+                return fullLabel;
+            const orderNbr = String(entry.orderNbr || "").trim();
+            const label = String(entry.jobDisplay || "").trim();
+            if (!orderNbr)
+                return "";
+            return label ? `${orderNbr} - ${label}` : orderNbr;
+        })
+            .filter(Boolean)
+        : (payload.orderNbrs || []).map((orderNbr) => String(orderNbr || "").trim()).filter(Boolean);
+    if (!items.length)
+        return "";
+    if (items.length === 1)
+        return items[0] ?? "";
+    if (items.length === 2)
+        return `${items[0]}, ${items[1]}`;
+    return `${items[0]}, ${items[1]} +${items.length - 2}`;
 }
 function renderTemplate({ title, preheader, message, when, orders, location, link, unsubscribeLink, staffNote, logoUrl, }) {
     const locationBlock = location
@@ -101,6 +127,8 @@ function renderTemplate({ title, preheader, message, when, orders, location, lin
 function buildEmailMessage(type, payload) {
     const when = (0, format_1.formatDenverDateTime)(payload.startAt);
     const orders = formatOrderDisplayList(payload);
+    const subjectOrderSummary = formatSubjectOrderSummary(payload);
+    const subjectSuffix = subjectOrderSummary ? ` | ${subjectOrderSummary}` : "";
     const staffNote = payload.staffInitiated
         ? "This update was made by our staff to keep your pickup on track."
         : undefined;
@@ -112,7 +140,7 @@ function buildEmailMessage(type, payload) {
     switch (type) {
         case client_1.AppointmentNotificationType.ScheduledConfirm:
             return {
-                subject: "Pickup scheduled",
+                subject: `Pickup scheduled${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup scheduled",
                     preheader: `Your pickup is scheduled for ${when}.`,
@@ -128,7 +156,7 @@ function buildEmailMessage(type, payload) {
             };
         case client_1.AppointmentNotificationType.Reminder1Day:
             return {
-                subject: "Pickup reminder (1 day)",
+                subject: `Pickup reminder (1 day)${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup reminder",
                     preheader: `Reminder: your pickup is tomorrow at ${when}.`,
@@ -144,7 +172,7 @@ function buildEmailMessage(type, payload) {
             };
         case client_1.AppointmentNotificationType.Reminder1Hour:
             return {
-                subject: "Pickup reminder (1 hour)",
+                subject: `Pickup reminder (1 hour)${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup reminder",
                     preheader: `Your pickup is in 1 hour at ${when}.`,
@@ -161,7 +189,7 @@ function buildEmailMessage(type, payload) {
         case client_1.AppointmentNotificationType.Rescheduled: {
             const oldWhen = payload.oldStartAt ? (0, format_1.formatDenverDateTime)(payload.oldStartAt) : "previous time";
             return {
-                subject: "Pickup rescheduled",
+                subject: `Pickup rescheduled${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup rescheduled",
                     preheader: `Your pickup moved from ${oldWhen} to ${when}.`,
@@ -179,7 +207,7 @@ function buildEmailMessage(type, payload) {
         case client_1.AppointmentNotificationType.Cancelled: {
             const reason = payload.cancelReason ? `Reason: ${payload.cancelReason}\n` : "";
             return {
-                subject: "Pickup cancelled",
+                subject: `Pickup cancelled${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup cancelled",
                     preheader: `Your pickup on ${when} was cancelled.`,
@@ -195,7 +223,7 @@ function buildEmailMessage(type, payload) {
         }
         case client_1.AppointmentNotificationType.Completed:
             return {
-                subject: `[${orders}] Complete`,
+                subject: `Pickup complete${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Thank you! Your appointment is complete.",
                     preheader: `MLD Will Call: Your appointment is complete. Thank you for picking up with us.`,
@@ -210,7 +238,7 @@ function buildEmailMessage(type, payload) {
             };
         case client_1.AppointmentNotificationType.OrderListChanged:
             return {
-                subject: "Pickup orders updated",
+                subject: `Pickup orders updated${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup orders updated",
                     preheader: "Your pickup order list has been updated.",
@@ -225,7 +253,7 @@ function buildEmailMessage(type, payload) {
             };
         case client_1.AppointmentNotificationType.ReadyForPickup:
             return {
-                subject: "Your pickup is prepared",
+                subject: `Your pickup is prepared${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Your pickup is prepared",
                     preheader: "Our team has pulled your items for pickup.",
@@ -241,7 +269,7 @@ function buildEmailMessage(type, payload) {
             };
         default:
             return {
-                subject: "Pickup update",
+                subject: `Pickup update${subjectSuffix}`,
                 body: renderTemplate({
                     title: "Pickup update",
                     preheader: `Pickup update for ${when}.`,

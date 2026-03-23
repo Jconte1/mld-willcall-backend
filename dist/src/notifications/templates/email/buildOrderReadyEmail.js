@@ -69,17 +69,17 @@ function renderOrderReadyTemplate({ title, preheader, message, orderNbr, jobDisp
   </body>
 </html>`;
 }
-function buildOrderReadyEmail(orderNbr, link, jobDisplay) {
+function buildOrderReadyEmail(orderNbr, link, options) {
     const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
     const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
-    const trimmedJob = (jobDisplay || "").trim();
-    const jobPart = trimmedJob ? ` - ${trimmedJob}` : "";
+    const trimmedJob = (options?.jobDisplay || "").trim();
+    const trimmedLabel = (options?.orderLabel || "").trim() || `Order ${orderNbr}`;
     return {
-        subject: `Order ${orderNbr}${jobPart} is ready to schedule pickup`,
+        subject: `${trimmedLabel} is ready to schedule pickup`,
         body: renderOrderReadyTemplate({
             title: "Your order is ready for pickup",
-            preheader: `Order ${orderNbr}${jobPart} is ready for pickup.`,
-            message: `Your order ${orderNbr}${jobPart} is ready for pickup. Schedule a pickup time when it works best for you.`,
+            preheader: `${trimmedLabel} is ready for pickup.`,
+            message: `Your order ${trimmedLabel} is ready for pickup. Schedule a pickup time when it works best for you.`,
             orderNbr,
             jobDisplay: trimmedJob || null,
             link,

@@ -12,6 +12,7 @@ const buildOrderReadyEmail_1 = require("../templates/email/buildOrderReadyEmail"
 const quietHours_1 = require("../rules/quietHours");
 const buildSms_1 = require("../templates/sms/buildSms");
 const orderDisplay_1 = require("./orderDisplay");
+const orderNotificationLabel_1 = require("./orderNotificationLabel");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
 const RESEND_DAYS = 1;
@@ -27,6 +28,9 @@ const ACTIVE_APPOINTMENT_STATUSES = [
 function normalizePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
     return digits || null;
+}
+function resolveOrderReadySmsPhone(row) {
+    return normalizePhone(row.attributeSiteNumber) || normalizePhone(row.attributeSmsTxt);
 }
 function getDenverParts(date) {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -92,10 +96,11 @@ async function runOrderReadySync(prisma) {
             orderNbr: rows[0]?.orderNbr,
             orderType: rows[0]?.orderType,
             status: rows[0]?.status,
-            textNotification: rows[0]?.attributeSmsTxt,
+            textNotification: rows[0]?.attributeSiteNumber ?? rows[0]?.attributeSmsTxt,
             emailNotification: rows[0]?.attributeEmailNoty,
             textOptIn: rows[0]?.attributeSmsOptIn,
             emailOptIn: rows[0]?.attributeEmailOptIn,
+            salspersonnumber: rows[0]?.salspersonnumber,
             warehouse: rows[0]?.warehouse,
         });
     }
@@ -127,7 +132,7 @@ async function runOrderReadySync(prisma) {
     for (const [orderNbr, bucket] of grouped.entries()) {
         const row = bucket.row;
         const contactEmail = (row.attributeEmailNoty || "").trim() || null;
-        const contactPhone = normalizePhone(row.attributeSmsTxt);
+        const contactPhone = resolveOrderReadySmsPhone(row);
         const mappedLocationId = (0, locationIds_1.normalizeWarehouseToLocationId)(row.warehouse);
         const locationId = mappedLocationId ?? "slc-hq";
         const summaryLookupKey = buildSummaryKey(row.customerId, orderNbr);
@@ -198,6 +203,8 @@ async function runOrderReadySync(prisma) {
             qtyUnallocated: row.qtyUnallocated ?? null,
             qtyAllocated: row.qtyAllocated ?? null,
             customerId: row.customerId ?? null,
+            customerIdDescription: row.customerIdDescription ?? null,
+            salspersonnumber: row.salspersonnumber ?? null,
             customerLocationId: row.customerLocationId ?? null,
             attributeBuyerGroup: row.attributeBuyerGroup ?? null,
             attributeOsContact: row.attributeOsContact ?? null,
@@ -225,6 +232,7 @@ async function runOrderReadySync(prisma) {
                 attributeEmailOptIn: row.attributeEmailOptIn,
                 attributeSmsTxt: row.attributeSmsTxt ?? null,
                 attributeEmailNoty: row.attributeEmailNoty ?? null,
+                salspersonnumber: row.salspersonnumber ?? null,
             },
             computed: {
                 smsEligible,
@@ -235,6 +243,7 @@ async function runOrderReadySync(prisma) {
                 attributeEmailOptIn: updateData.attributeEmailOptIn,
                 smsOptIn: updateData.smsOptIn,
                 emailOptIn: updateData.emailOptIn,
+                salspersonnumber: updateData.salspersonnumber,
             },
         });
         const createData = {
@@ -246,6 +255,8 @@ async function runOrderReadySync(prisma) {
             qtyUnallocated: row.qtyUnallocated ?? null,
             qtyAllocated: row.qtyAllocated ?? null,
             customerId: row.customerId ?? null,
+            customerIdDescription: row.customerIdDescription ?? null,
+            salspersonnumber: row.salspersonnumber ?? null,
             customerLocationId: row.customerLocationId ?? null,
             attributeBuyerGroup: row.attributeBuyerGroup ?? null,
             attributeOsContact: row.attributeOsContact ?? null,
@@ -279,6 +290,7 @@ async function runOrderReadySync(prisma) {
                 attributeEmailOptIn: notice.attributeEmailOptIn,
                 smsOptIn: notice.smsOptIn,
                 emailOptIn: notice.emailOptIn,
+                salspersonnumber: notice.salspersonnumber,
             },
         });
         await prisma.orderReadyLine.deleteMany({ where: { orderReadyId: notice.id } });
@@ -357,7 +369,17 @@ async function runOrderReadySync(prisma) {
         let sentEmail = false;
         let sentSms = false;
         if (notice.emailOptIn) {
-            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, jobDisplay);
+            const orderLabel = (0, orderNotificationLabel_1.buildOrderNotificationLabel)({
+                orderNbr,
+                buyerGroup: notice.attributeBuyerGroup,
+                customerLocationId: notice.customerLocationId,
+                customerIdDescription: notice.customerIdDescription,
+                jobDisplay,
+            });
+            const message = (0, buildOrderReadyEmail_1.buildOrderReadyEmail)(orderNbr, link, {
+                orderLabel,
+                jobDisplay,
+            });
             const recipient = notice.contactEmail || "";
             if (!recipient) {
                 console.log("[order-ready] email skipped (missing recipient)", { orderNbr });
@@ -378,8 +400,14 @@ async function runOrderReadySync(prisma) {
             console.log("[order-ready] email skipped (email opt-in false)", { orderNbr });
         }
         if (notice.smsOptIn && !notice.smsOptOutAt && notice.contactPhone) {
-            const jobPart = jobDisplay ? ` (${jobDisplay})` : "";
-            const smsBase = `MLD Will Call: Order ${orderNbr}${jobPart} is ready for pickup. Schedule here: ${link}`;
+            const orderLabel = (0, orderNotificationLabel_1.buildOrderNotificationLabel)({
+                orderNbr,
+                buyerGroup: notice.attributeBuyerGroup,
+                customerLocationId: notice.customerLocationId,
+                customerIdDescription: notice.customerIdDescription,
+                jobDisplay,
+            });
+            const smsBase = `MLD Will Call: ${orderLabel} is ready for pickup. Schedule here: ${link}`;
             const includeStopLine = !notice.smsFirstSentAt;
             const smsBody = (0, buildSms_1.applySmsCompliance)(smsBase, includeStopLine);
             await (0, sendSms_1.sendSms)(notice.contactPhone, smsBody, { allowTestOverride: false });

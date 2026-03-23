@@ -8,6 +8,7 @@ import {
   inferPaymentStatus,
   toNumber,
 } from "./orderHelpers";
+import { refreshPrepayPaymentsIfNeeded } from "../acumatica/sync/refreshPrepayPayments";
 
 type LineStats = {
   totalLines: number;
@@ -83,6 +84,37 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
   });
 
   const orderNbrs = summaries.map((summary) => summary.orderNbr);
+
+  try {
+    await refreshPrepayPaymentsIfNeeded({
+      baid,
+      orderNbrs,
+      context: "customer-orders-list",
+    });
+  } catch (err) {
+    console.warn("[payment-refresh][customer-orders-list] fallback to DB payment", {
+      baid,
+      orderCount: orderNbrs.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const refreshedPayments = orderNbrs.length
+    ? await prisma.erpOrderPayment.findMany({
+        where: {
+          baid,
+          orderNbr: { in: orderNbrs },
+        },
+        select: {
+          orderNbr: true,
+          unpaidBalance: true,
+          orderTotal: true,
+          terms: true,
+          status: true,
+        },
+      })
+    : [];
+  const paymentByOrder = new Map(refreshedPayments.map((payment) => [payment.orderNbr, payment]));
   const salesNumbers = Array.from(
     new Set(
       summaries
@@ -227,11 +259,12 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
 
     const orderType = inferOrderType(summary);
     const fulfillmentStatus = inferFulfillmentStatus(summary.status, stats);
-    const unpaidBalance = toNumber(summary.ErpOrderPayment?.unpaidBalance);
+    const payment = paymentByOrder.get(summary.orderNbr) ?? summary.ErpOrderPayment;
+    const unpaidBalance = toNumber(payment?.unpaidBalance);
     const paymentStatus = inferPaymentStatus(
       unpaidBalance,
-      summary.ErpOrderPayment?.terms ?? null,
-      summary.ErpOrderPayment?.status ?? null
+      payment?.terms ?? null,
+      payment?.status ?? null
     );
     const warehouses = Array.from(warehousesById.get(summary.id) ?? new Set<string>()).sort();
     const readiness = readinessById.get(summary.id) || { hasOpen: false, hasReady: false };

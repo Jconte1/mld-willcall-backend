@@ -4,6 +4,7 @@ exports.getCustomerOrders = getCustomerOrders;
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const orderHelpers_1 = require("./orderHelpers");
+const refreshPrepayPayments_1 = require("../acumatica/sync/refreshPrepayPayments");
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
@@ -36,6 +37,36 @@ async function getCustomerOrders(baid) {
         },
     });
     const orderNbrs = summaries.map((summary) => summary.orderNbr);
+    try {
+        await (0, refreshPrepayPayments_1.refreshPrepayPaymentsIfNeeded)({
+            baid,
+            orderNbrs,
+            context: "customer-orders-list",
+        });
+    }
+    catch (err) {
+        console.warn("[payment-refresh][customer-orders-list] fallback to DB payment", {
+            baid,
+            orderCount: orderNbrs.length,
+            error: err instanceof Error ? err.message : String(err),
+        });
+    }
+    const refreshedPayments = orderNbrs.length
+        ? await prisma.erpOrderPayment.findMany({
+            where: {
+                baid,
+                orderNbr: { in: orderNbrs },
+            },
+            select: {
+                orderNbr: true,
+                unpaidBalance: true,
+                orderTotal: true,
+                terms: true,
+                status: true,
+            },
+        })
+        : [];
+    const paymentByOrder = new Map(refreshedPayments.map((payment) => [payment.orderNbr, payment]));
     const salesNumbers = Array.from(new Set(summaries
         .map((summary) => summary.salesPersonNumber)
         .filter((value) => Boolean(value))));
@@ -166,8 +197,9 @@ async function getCustomerOrders(baid) {
         };
         const orderType = (0, orderHelpers_1.inferOrderType)(summary);
         const fulfillmentStatus = (0, orderHelpers_1.inferFulfillmentStatus)(summary.status, stats);
-        const unpaidBalance = (0, orderHelpers_1.toNumber)(summary.ErpOrderPayment?.unpaidBalance);
-        const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, summary.ErpOrderPayment?.terms ?? null, summary.ErpOrderPayment?.status ?? null);
+        const payment = paymentByOrder.get(summary.orderNbr) ?? summary.ErpOrderPayment;
+        const unpaidBalance = (0, orderHelpers_1.toNumber)(payment?.unpaidBalance);
+        const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, payment?.terms ?? null, payment?.status ?? null);
         const warehouses = Array.from(warehousesById.get(summary.id) ?? new Set()).sort();
         const readiness = readinessById.get(summary.id) || { hasOpen: false, hasReady: false };
         const isPickupReady = !readiness.hasOpen || readiness.hasReady;
