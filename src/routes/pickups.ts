@@ -101,7 +101,7 @@ const shipmentUpdateSchema = z.object({
 });
 
 function canAccessLocation(req: any, locationId: string): boolean {
-  if (req.auth.role === "ADMIN" || req.auth.role === "SALESPERSON") return true;
+  if (req.auth.role === "ADMIN") return true;
   return expandLocationIds(req.auth.locationAccess ?? []).includes(locationId);
 }
 
