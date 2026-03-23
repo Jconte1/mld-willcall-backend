@@ -12,7 +12,6 @@ const INACTIVE_STATUSES = new Set([
   "Pending Approval",
   "Rejected",
   "Pending Processing",
-  "Awaiting Payment",
   "Credit Hold",
   "Completed",
   "Invoiced",

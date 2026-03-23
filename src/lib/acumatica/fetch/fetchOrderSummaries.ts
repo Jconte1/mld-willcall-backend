@@ -113,7 +113,6 @@ export default async function fetchOrderSummaries(
         "Status ne 'Pending Approval'",
         "Status ne 'Rejected'",
         "Status ne 'Pending Processing'",
-        "Status ne 'Awaiting Payment'",
         "Status ne 'Credit Hold'",
         "Status ne 'Completed'",
         "Status ne 'Invoiced'",

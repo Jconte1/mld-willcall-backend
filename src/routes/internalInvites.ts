@@ -66,6 +66,23 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
   const email = parsed.data.email.toLowerCase().trim();
   const shouldSendEmail = Boolean(parsed.data.sendEmail);
 
+  const existingUser = await prisma.users.findUnique({
+    where: { email },
+    select: { id: true, baid: true },
+  });
+  const existingUserBaid = normalizeBaid(existingUser?.baid || "");
+  if (existingUser && existingUserBaid) {
+    console.info("[internal-invites] blocked existing synced user", {
+      email,
+      existingUserId: existingUser.id,
+      existingBaid: existingUserBaid,
+      requestedBaid: baid,
+    });
+    return res.status(409).json({
+      message: "An account already exists for this email and is already linked to a Customer ID#.",
+    });
+  }
+
   if (!BAID_REGEX.test(baid) || zip.length !== 5) {
     console.info("[internal-invites] invalid inputs", {
       hasBaid: Boolean(baid),

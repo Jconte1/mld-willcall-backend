@@ -14,6 +14,7 @@ type RefreshPrepayPaymentsInput = {
   orderNbrs: string[];
   context: string;
   forceRefreshAll?: boolean;
+  minRefreshIntervalMs?: number;
 };
 
 function normalizeOrderNbr(value: string) {
@@ -25,6 +26,7 @@ export async function refreshPrepayPaymentsIfNeeded({
   orderNbrs,
   context,
   forceRefreshAll = false,
+  minRefreshIntervalMs,
 }: RefreshPrepayPaymentsInput) {
   const uniqueOrderNbrs = Array.from(
     new Set(orderNbrs.map(normalizeOrderNbr).filter(Boolean))
@@ -44,6 +46,7 @@ export async function refreshPrepayPaymentsIfNeeded({
       orderNbr: true,
       terms: true,
       unpaidBalance: true,
+      updatedAt: true,
     },
   });
 
@@ -74,12 +77,25 @@ export async function refreshPrepayPaymentsIfNeeded({
   }
 
   const targetOrderNbrs = forceRefreshAll ? uniqueOrderNbrs : eligibleOrderNbrs;
+  const effectiveMinRefreshIntervalMs =
+    minRefreshIntervalMs ??
+    Number(process.env.PAYMENT_FORCE_REFRESH_MIN_INTERVAL_MS ?? 180000);
+  const nowMs = Date.now();
 
-  if (!targetOrderNbrs.length) {
-    console.info(`[payment-refresh][${context}] skip: no eligible prepay orders`, {
+  const staleTargetOrderNbrs = targetOrderNbrs.filter((orderNbr) => {
+    if (!forceRefreshAll) return true;
+    const payment = paymentByOrder.get(orderNbr);
+    if (!payment?.updatedAt) return true;
+    const ageMs = nowMs - new Date(payment.updatedAt).getTime();
+    return ageMs >= effectiveMinRefreshIntervalMs;
+  });
+
+  if (!staleTargetOrderNbrs.length) {
+    console.info(`[payment-refresh][${context}] skip: no payment refresh needed`, {
       baid,
       totalOrders: uniqueOrderNbrs.length,
       forceRefreshAll,
+      minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
     });
     return { calledErp: false, eligibleOrderNbrs };
   }
@@ -91,20 +107,22 @@ export async function refreshPrepayPaymentsIfNeeded({
 
   console.info(`[payment-refresh][${context}] ERP_CALLED payment-info`, {
     baid,
-    eligibleOrderNbrs: targetOrderNbrs,
-    count: targetOrderNbrs.length,
+    eligibleOrderNbrs: staleTargetOrderNbrs,
+    count: staleTargetOrderNbrs.length,
     forceRefreshAll,
+    minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
   });
 
-  const rows = await fetchPaymentInfo(restService, baid, { orderNbrs: targetOrderNbrs });
+  const rows = await fetchPaymentInfo(restService, baid, { orderNbrs: staleTargetOrderNbrs });
   const writeResult = await writePaymentInfo(baid, rows);
 
   console.info(`[payment-refresh][${context}] ERP_COMPLETED payment-info`, {
     baid,
-    eligibleOrderNbrs: targetOrderNbrs,
+    eligibleOrderNbrs: staleTargetOrderNbrs,
     fetchedRows: rows.length,
     writeResult,
     forceRefreshAll,
+    minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
   });
 
   return { calledErp: true, eligibleOrderNbrs };
