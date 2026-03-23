@@ -5,6 +5,7 @@ const express_1 = require("express");
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const notifications_1 = require("../notifications");
+const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
 const prisma = new client_1.PrismaClient();
 exports.customerPickupsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
@@ -119,8 +120,7 @@ function minutesToTime(totalMinutes) {
     return `${pad(hh)}:${pad(mm)}`;
 }
 function parseDateOnly(dateStr) {
-    // Anchor in Denver midday to avoid UTC date shifts.
-    return new Date(`${dateStr}T12:00:00-07:00`);
+    return (0, denverLocalDateTime_1.parseDenverDateOnly)(dateStr);
 }
 function formatDateInDenver(date) {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -180,7 +180,7 @@ function ceilToSlot(minutes) {
     return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 }
 function makeDateTime(dateStr, time) {
-    return new Date(`${dateStr}T${time}:00-07:00`);
+    return (0, denverLocalDateTime_1.makeDenverDateTime)(dateStr, time);
 }
 function buildSlotsForDate(dateStr, blocked, minStartMinutes) {
     const slots = [];

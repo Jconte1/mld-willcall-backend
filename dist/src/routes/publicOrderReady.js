@@ -231,7 +231,6 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
                         baid: notice.baid,
                         orderNbr,
                         status: notice.status,
-                        locationId: notice.locationId,
                         shipVia: notice.shipVia,
                         lastModified: acuLastModified,
                     });
@@ -249,6 +248,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
                 baid: notice.baid,
                 orderNbrs: [orderNbr],
                 context: "public-order-ready",
+                forceRefreshAll: true,
             });
         }
         catch (err) {
@@ -304,7 +304,6 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
                 baid: notice.baid,
                 orderNbr,
                 status: notice.status,
-                locationId: notice.locationId,
                 shipVia: notice.shipVia,
             });
             lines = await prisma.erpOrderLine.findMany({

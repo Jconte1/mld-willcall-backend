@@ -9,6 +9,7 @@ import {
 import { buildAppointmentLink } from "../notifications/links/buildLink";
 import { getActiveToken, createAppointmentToken } from "../notifications/links/tokens";
 import { toNumber } from "../lib/orders/orderHelpers";
+import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 
 const prisma = new PrismaClient();
 export const publicAppointmentsRouter = Router();
@@ -89,8 +90,7 @@ function getDenverParts(date: Date) {
 }
 
 function parseDateOnly(dateStr: string) {
-  // Anchor in Denver midday to avoid UTC date shifts.
-  return new Date(`${dateStr}T12:00:00-07:00`);
+  return parseDenverDateOnly(dateStr);
 }
 
 function addMinutes(date: Date, minutes: number) {
@@ -127,7 +127,7 @@ function areSlotsContiguous(slots: { startTime: string }[]) {
 }
 
 function makeDateTime(dateStr: string, time: string) {
-  return new Date(`${dateStr}T${time}:00-07:00`);
+  return makeDenverDateTime(dateStr, time);
 }
 
 function getMinAllowedSlot(now: Date) {

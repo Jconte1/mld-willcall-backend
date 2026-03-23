@@ -7,6 +7,7 @@ import {
   notifyCustomerCancelled,
   notifyCustomerScheduled,
 } from "../notifications";
+import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 
 const prisma = new PrismaClient();
 export const customerPickupsRouter = Router();
@@ -166,8 +167,7 @@ function minutesToTime(totalMinutes: number) {
 }
 
 function parseDateOnly(dateStr: string) {
-  // Anchor in Denver midday to avoid UTC date shifts.
-  return new Date(`${dateStr}T12:00:00-07:00`);
+  return parseDenverDateOnly(dateStr);
 }
 
 function formatDateInDenver(date: Date) {
@@ -238,7 +238,7 @@ function ceilToSlot(minutes: number) {
 }
 
 function makeDateTime(dateStr: string, time: string) {
-  return new Date(`${dateStr}T${time}:00-07:00`);
+  return makeDenverDateTime(dateStr, time);
 }
 
 function buildSlotsForDate(

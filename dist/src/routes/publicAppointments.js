@@ -8,6 +8,7 @@ const notifications_1 = require("../notifications");
 const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
 const orderHelpers_1 = require("../lib/orders/orderHelpers");
+const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
 const prisma = new client_1.PrismaClient();
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
@@ -75,8 +76,7 @@ function getDenverParts(date) {
     };
 }
 function parseDateOnly(dateStr) {
-    // Anchor in Denver midday to avoid UTC date shifts.
-    return new Date(`${dateStr}T12:00:00-07:00`);
+    return (0, denverLocalDateTime_1.parseDenverDateOnly)(dateStr);
 }
 function addMinutes(date, minutes) {
     return new Date(date.getTime() + minutes * 60000);
@@ -110,7 +110,7 @@ function areSlotsContiguous(slots) {
     return timeToMinutes(ordered[1].startTime) - timeToMinutes(ordered[0].startTime) === SLOT_MINUTES;
 }
 function makeDateTime(dateStr, time) {
-    return new Date(`${dateStr}T${time}:00-07:00`);
+    return (0, denverLocalDateTime_1.makeDenverDateTime)(dateStr, time);
 }
 function getMinAllowedSlot(now) {
     const timeStr = new Intl.DateTimeFormat("en-US", {

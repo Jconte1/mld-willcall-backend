@@ -93,7 +93,6 @@ async function fetchOrderSummaries(restService, baid, { pageSize: pageSizeArg, m
             "Status ne 'Pending Approval'",
             "Status ne 'Rejected'",
             "Status ne 'Pending Processing'",
-            "Status ne 'Awaiting Payment'",
             "Status ne 'Credit Hold'",
             "Status ne 'Completed'",
             "Status ne 'Invoiced'",

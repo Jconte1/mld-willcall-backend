@@ -15,7 +15,7 @@ const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 function normalizeOrderNbr(value) {
     return String(value || "").trim();
 }
-async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, }) {
+async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, forceRefreshAll = false, minRefreshIntervalMs, }) {
     const uniqueOrderNbrs = Array.from(new Set(orderNbrs.map(normalizeOrderNbr).filter(Boolean)));
     if (!uniqueOrderNbrs.length) {
         console.info(`[payment-refresh][${context}] skip: no orderNbrs`);
@@ -30,6 +30,7 @@ async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, }) {
             orderNbr: true,
             terms: true,
             unpaidBalance: true,
+            updatedAt: true,
         },
     });
     const paymentByOrder = new Map(existingPayments.map((payment) => [payment.orderNbr, payment]));
@@ -52,10 +53,25 @@ async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, }) {
             eligibleOrderNbrs.push(orderNbr);
         }
     }
-    if (!eligibleOrderNbrs.length) {
-        console.info(`[payment-refresh][${context}] skip: no eligible prepay orders`, {
+    const targetOrderNbrs = forceRefreshAll ? uniqueOrderNbrs : eligibleOrderNbrs;
+    const effectiveMinRefreshIntervalMs = minRefreshIntervalMs ??
+        Number(process.env.PAYMENT_FORCE_REFRESH_MIN_INTERVAL_MS ?? 180000);
+    const nowMs = Date.now();
+    const staleTargetOrderNbrs = targetOrderNbrs.filter((orderNbr) => {
+        if (!forceRefreshAll)
+            return true;
+        const payment = paymentByOrder.get(orderNbr);
+        if (!payment?.updatedAt)
+            return true;
+        const ageMs = nowMs - new Date(payment.updatedAt).getTime();
+        return ageMs >= effectiveMinRefreshIntervalMs;
+    });
+    if (!staleTargetOrderNbrs.length) {
+        console.info(`[payment-refresh][${context}] skip: no payment refresh needed`, {
             baid,
             totalOrders: uniqueOrderNbrs.length,
+            forceRefreshAll,
+            minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
         });
         return { calledErp: false, eligibleOrderNbrs };
     }
@@ -65,16 +81,20 @@ async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, }) {
     }
     console.info(`[payment-refresh][${context}] ERP_CALLED payment-info`, {
         baid,
-        eligibleOrderNbrs,
-        count: eligibleOrderNbrs.length,
+        eligibleOrderNbrs: staleTargetOrderNbrs,
+        count: staleTargetOrderNbrs.length,
+        forceRefreshAll,
+        minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
     });
-    const rows = await (0, fetchPaymentInfo_1.default)(restService, baid, { orderNbrs: eligibleOrderNbrs });
+    const rows = await (0, fetchPaymentInfo_1.default)(restService, baid, { orderNbrs: staleTargetOrderNbrs });
     const writeResult = await (0, writePaymentInfo_1.default)(baid, rows);
     console.info(`[payment-refresh][${context}] ERP_COMPLETED payment-info`, {
         baid,
-        eligibleOrderNbrs,
+        eligibleOrderNbrs: staleTargetOrderNbrs,
         fetchedRows: rows.length,
         writeResult,
+        forceRefreshAll,
+        minRefreshIntervalMs: effectiveMinRefreshIntervalMs,
     });
     return { calledErp: true, eligibleOrderNbrs };
 }

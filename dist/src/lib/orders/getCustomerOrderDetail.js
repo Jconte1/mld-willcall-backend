@@ -28,6 +28,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             baid,
             orderNbrs: [orderNbr],
             context: "customer-order-detail",
+            forceRefreshAll: true,
         });
     }
     catch (err) {

@@ -56,7 +56,7 @@ const shipmentUpdateSchema = zod_1.z.object({
     shipmentNbrs: zod_1.z.array(zod_1.z.string().min(1)).default([]),
 });
 function canAccessLocation(req, locationId) {
-    if (req.auth.role === "ADMIN" || req.auth.role === "SALESPERSON")
+    if (req.auth.role === "ADMIN")
         return true;
     return (0, locationIds_1.expandLocationIds)(req.auth.locationAccess ?? []).includes(locationId);
 }
@@ -286,7 +286,7 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput) {
         orderNbr,
         status,
         shipVia,
-        locationId,
+        erpLocationId: locationId,
         lastModified,
     });
     console.info("[staff-pickups][lookup] salesorder fallback complete", {
@@ -335,7 +335,6 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
                     orderNbr,
                     status: notice.status,
                     shipVia: notice.shipVia,
-                    locationId: notice.locationId,
                 });
             }
             catch (err) {
