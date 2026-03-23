@@ -15,40 +15,67 @@ type RefreshInput = {
   baid: string;
   orderNbr: string;
   status?: string | null;
-  locationId?: string | null;
+  erpLocationId?: string | null;
   shipVia?: string | null;
   lastModified?: Date | null;
 };
 
+const PICKUP_LOCATION_IDS = new Set(["slc-hq", "slc-outlet", "boise-willcall"]);
+
+function normalizeErpLocationId(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
+  if (PICKUP_LOCATION_IDS.has(normalized.toLowerCase())) {
+    return "__PICKUP_ID_BLOCKED__";
+  }
+  return normalized;
+}
+
 export async function refreshOrderReadyDetails(input: RefreshInput) {
-  const { baid, orderNbr, status, locationId, shipVia, lastModified } = input;
+  const { baid, orderNbr, status, erpLocationId, shipVia, lastModified } = input;
   const restService = createAcumaticaService();
   if (!shouldUseQueueErp()) {
     await restService.getToken();
   }
 
+  const normalizedBaid = String(baid || "").trim();
+  const normalizedOrderNbr = String(orderNbr || "").trim();
+  const normalizedErpLocationId = normalizeErpLocationId(erpLocationId);
+  if (normalizedErpLocationId === "__PICKUP_ID_BLOCKED__") {
+    console.warn("[order-ready] blocked non-erp locationId write", {
+      baid: normalizedBaid,
+      orderNbr: normalizedOrderNbr,
+      value: erpLocationId,
+    });
+  }
+
   const now = new Date();
   const summaryUpdate: Record<string, any> = {
     status: status ?? "Ready",
-    locationId: locationId ?? null,
     shipVia: shipVia ?? null,
     lastSeenAt: now,
     isActive: true,
     updatedAt: now,
     lastAcumaticaPullAt: now,
   };
+  if (normalizedErpLocationId && normalizedErpLocationId !== "__PICKUP_ID_BLOCKED__") {
+    summaryUpdate.locationId = normalizedErpLocationId;
+  }
   if (lastModified !== undefined) {
     summaryUpdate.lastAcumaticaModifiedAt = lastModified;
   }
 
   await prisma.erpOrderSummary.upsert({
-    where: { baid_orderNbr: { baid, orderNbr } },
+    where: { baid_orderNbr: { baid: normalizedBaid, orderNbr: normalizedOrderNbr } },
     create: {
       id: randomUUID(),
-      baid,
-      orderNbr,
+      baid: normalizedBaid,
+      orderNbr: normalizedOrderNbr,
       status: status ?? "Ready",
-      locationId: locationId ?? null,
+      locationId:
+        normalizedErpLocationId && normalizedErpLocationId !== "__PICKUP_ID_BLOCKED__"
+          ? normalizedErpLocationId
+          : null,
       deliveryDate: null,
       jobName: null,
       shipVia: shipVia ?? null,
@@ -64,16 +91,16 @@ export async function refreshOrderReadyDetails(input: RefreshInput) {
     update: summaryUpdate,
   });
 
-  const orderNbrs = [orderNbr];
+  const orderNbrs = [normalizedOrderNbr];
   const [addressRows, paymentRows, detailRows] = await Promise.all([
-    fetchAddressContact(restService, baid, { orderNbrs }),
-    fetchPaymentInfo(restService, baid, { orderNbrs }),
-    fetchInventoryDetails(restService, baid, orderNbrs),
+    fetchAddressContact(restService, normalizedBaid, { orderNbrs }),
+    fetchPaymentInfo(restService, normalizedBaid, { orderNbrs }),
+    fetchInventoryDetails(restService, normalizedBaid, orderNbrs),
   ]);
 
-  await writeAddressContact(baid, addressRows);
-  await writePaymentInfo(baid, paymentRows);
-  await writeInventoryDetails(baid, detailRows);
+  await writeAddressContact(normalizedBaid, addressRows);
+  await writePaymentInfo(normalizedBaid, paymentRows);
+  await writeInventoryDetails(normalizedBaid, detailRows);
 
-  return { orderNbr, refreshedAt: now };
+  return { orderNbr: normalizedOrderNbr, refreshedAt: now };
 }

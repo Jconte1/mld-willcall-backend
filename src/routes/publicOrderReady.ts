@@ -256,7 +256,6 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             baid: notice.baid,
             orderNbr,
             status: notice.status,
-            locationId: notice.locationId,
             shipVia: notice.shipVia,
             lastModified: acuLastModified,
           });
@@ -274,6 +273,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         baid: notice.baid,
         orderNbrs: [orderNbr],
         context: "public-order-ready",
+        forceRefreshAll: true,
       });
     } catch (err) {
       console.warn("[payment-refresh][public-order-ready] fallback to DB payment", {
@@ -333,7 +333,6 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         baid: notice.baid,
         orderNbr,
         status: notice.status,
-        locationId: notice.locationId,
         shipVia: notice.shipVia,
       });
       lines = await prisma.erpOrderLine.findMany({

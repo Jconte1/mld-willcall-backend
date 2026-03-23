@@ -13,6 +13,7 @@ type RefreshPrepayPaymentsInput = {
   baid: string;
   orderNbrs: string[];
   context: string;
+  forceRefreshAll?: boolean;
 };
 
 function normalizeOrderNbr(value: string) {
@@ -23,6 +24,7 @@ export async function refreshPrepayPaymentsIfNeeded({
   baid,
   orderNbrs,
   context,
+  forceRefreshAll = false,
 }: RefreshPrepayPaymentsInput) {
   const uniqueOrderNbrs = Array.from(
     new Set(orderNbrs.map(normalizeOrderNbr).filter(Boolean))
@@ -71,10 +73,13 @@ export async function refreshPrepayPaymentsIfNeeded({
     }
   }
 
-  if (!eligibleOrderNbrs.length) {
+  const targetOrderNbrs = forceRefreshAll ? uniqueOrderNbrs : eligibleOrderNbrs;
+
+  if (!targetOrderNbrs.length) {
     console.info(`[payment-refresh][${context}] skip: no eligible prepay orders`, {
       baid,
       totalOrders: uniqueOrderNbrs.length,
+      forceRefreshAll,
     });
     return { calledErp: false, eligibleOrderNbrs };
   }
@@ -86,20 +91,21 @@ export async function refreshPrepayPaymentsIfNeeded({
 
   console.info(`[payment-refresh][${context}] ERP_CALLED payment-info`, {
     baid,
-    eligibleOrderNbrs,
-    count: eligibleOrderNbrs.length,
+    eligibleOrderNbrs: targetOrderNbrs,
+    count: targetOrderNbrs.length,
+    forceRefreshAll,
   });
 
-  const rows = await fetchPaymentInfo(restService, baid, { orderNbrs: eligibleOrderNbrs });
+  const rows = await fetchPaymentInfo(restService, baid, { orderNbrs: targetOrderNbrs });
   const writeResult = await writePaymentInfo(baid, rows);
 
   console.info(`[payment-refresh][${context}] ERP_COMPLETED payment-info`, {
     baid,
-    eligibleOrderNbrs,
+    eligibleOrderNbrs: targetOrderNbrs,
     fetchedRows: rows.length,
     writeResult,
+    forceRefreshAll,
   });
 
   return { calledErp: true, eligibleOrderNbrs };
 }
-

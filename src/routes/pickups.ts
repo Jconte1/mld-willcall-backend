@@ -367,7 +367,7 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput: string) {
     orderNbr,
     status,
     shipVia,
-    locationId,
+    erpLocationId: locationId,
     lastModified,
   });
 
@@ -418,7 +418,6 @@ async function getOrRefreshOrderDetail(orderNbrInput: string): Promise<StaffOrde
           orderNbr,
           status: notice.status,
           shipVia: notice.shipVia,
-          locationId: notice.locationId,
         });
       } catch (err) {
         console.error("[staff-pickups] refresh from orderReadyNotice failed", {

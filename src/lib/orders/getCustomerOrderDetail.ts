@@ -34,6 +34,7 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
       baid,
       orderNbrs: [orderNbr],
       context: "customer-order-detail",
+      forceRefreshAll: true,
     });
   } catch (err) {
     console.warn("[payment-refresh][customer-order-detail] fallback to DB payment", {
