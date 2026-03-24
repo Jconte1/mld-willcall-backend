@@ -13,7 +13,13 @@ const prisma = new client_1.PrismaClient();
 exports.staffUsersRouter = (0, express_1.Router)();
 exports.staffUsersRouter.use(auth_1.requireAuth);
 exports.staffUsersRouter.use((0, auth_1.requireRole)("ADMIN"));
-const LOCS = zod_1.z.array(zod_1.z.enum(["slc-hq", "slc-outlet", "boise-willcall"]));
+const LOCS = zod_1.z.array(zod_1.z.enum([
+    "slc-hq",
+    "slc-outlet",
+    "boise-willcall",
+    "jackson-willcall",
+    "provo-willcall",
+]));
 const SALES_NUMBER = zod_1.z
     .string()
     .min(3)
@@ -101,7 +107,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
                         ? client_1.StaffRole.SALESPERSON
                         : client_1.StaffRole.STAFF,
             locationAccess: body.data.role === "ADMIN"
-                ? ["slc-hq", "slc-outlet", "boise-willcall"]
+                ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
                 : body.data.locationAccess,
             salespersonNumber,
             salespersonName: body.data.salespersonName ?? null,
@@ -255,7 +261,7 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
                         ? client_1.StaffRole.SALESPERSON
                         : client_1.StaffRole.STAFF,
             locationAccess: nextRole === "ADMIN"
-                ? ["slc-hq", "slc-outlet", "boise-willcall"]
+                ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
                 : (body.data.locationAccess ?? existing.locationAccess),
             isActive: body.data.isActive,
             mustChangePassword: body.data.mustChangePassword,

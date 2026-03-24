@@ -20,7 +20,13 @@ type RefreshInput = {
   lastModified?: Date | null;
 };
 
-const PICKUP_LOCATION_IDS = new Set(["slc-hq", "slc-outlet", "boise-willcall"]);
+const PICKUP_LOCATION_IDS = new Set([
+  "slc-hq",
+  "slc-outlet",
+  "boise-willcall",
+  "jackson-willcall",
+  "provo-willcall",
+]);
 
 function normalizeErpLocationId(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();

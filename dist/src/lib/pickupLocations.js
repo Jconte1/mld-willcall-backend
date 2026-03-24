@@ -20,6 +20,18 @@ const LOCATIONS = [
         address: "627 N. Dupont Ave. Boise, ID 83713",
         instructions: "Check in at the front desk when you arrive. Our team will assist you with loading.",
     },
+    {
+        id: "jackson-willcall",
+        name: "JACKSON WILL CALL",
+        address: "TBD",
+        instructions: "Check in at the front desk when you arrive. Our team will assist you with loading.",
+    },
+    {
+        id: "provo-willcall",
+        name: "PROVO WILL CALL",
+        address: "TBD",
+        instructions: "Check in at the front desk when you arrive. Our team will assist you with loading.",
+    },
 ];
 function getPickupLocation(locationId) {
     if (!locationId)

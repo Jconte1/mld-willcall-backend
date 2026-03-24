@@ -1,7 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveOrderReadyJobDisplay = resolveOrderReadyJobDisplay;
-const CANONICAL_PICKUP_LOCATION_IDS = new Set(["slc-hq", "slc-outlet", "boise-willcall"]);
+const CANONICAL_PICKUP_LOCATION_IDS = new Set([
+    "slc-hq",
+    "slc-outlet",
+    "boise-willcall",
+    "jackson-willcall",
+    "provo-willcall",
+]);
 function normalizeText(value) {
     const normalized = String(value ?? "").trim();
     return normalized || null;

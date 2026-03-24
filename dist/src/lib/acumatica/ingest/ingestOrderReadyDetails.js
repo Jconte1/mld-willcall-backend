@@ -15,7 +15,13 @@ const writePaymentInfo_1 = __importDefault(require("../write/writePaymentInfo"))
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
 const erpClient_1 = require("../../queue/erpClient");
 const prisma = new client_1.PrismaClient();
-const PICKUP_LOCATION_IDS = new Set(["slc-hq", "slc-outlet", "boise-willcall"]);
+const PICKUP_LOCATION_IDS = new Set([
+    "slc-hq",
+    "slc-outlet",
+    "boise-willcall",
+    "jackson-willcall",
+    "provo-willcall",
+]);
 function normalizeErpLocationId(value) {
     const normalized = String(value ?? "").trim();
     if (!normalized)

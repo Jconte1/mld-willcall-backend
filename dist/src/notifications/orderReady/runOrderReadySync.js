@@ -25,6 +25,10 @@ const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.InProgress,
     client_1.PickupAppointmentStatus.Ready,
 ];
+const JACKSON_SHIP_VIAS = new Set(["TRANS JACKSON", "WILL CALL JX"]);
+const PROVO_SHIP_VIAS = new Set(["TRANS PROVO", "WILL CALL PR"]);
+const JACKSON_WAREHOUSE = "JACKSON SHOWROOM";
+const PROVO_WAREHOUSE = "PROVO SHOWROOM";
 function normalizePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
     return digits || null;
@@ -58,6 +62,34 @@ function getAttemptDateKey(date) {
 }
 function buildSummaryKey(baid, orderNbr) {
     return `${String(baid ?? "").trim().toUpperCase()}::${orderNbr.trim().toUpperCase()}`;
+}
+function normalizeText(value) {
+    return String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+function evaluateOrderReadyLocationEligibility(input) {
+    const shipVia = normalizeText(input.shipVia);
+    const warehouse = normalizeText(input.warehouse);
+    if (JACKSON_SHIP_VIAS.has(shipVia)) {
+        const ok = warehouse === JACKSON_WAREHOUSE;
+        return {
+            eligible: ok,
+            reason: ok ? null : "jackson-shipvia-requires-jackson-showroom",
+            specialTransit: "jackson",
+        };
+    }
+    if (PROVO_SHIP_VIAS.has(shipVia)) {
+        const ok = warehouse === PROVO_WAREHOUSE;
+        return {
+            eligible: ok,
+            reason: ok ? null : "provo-shipvia-requires-provo-showroom",
+            specialTransit: "provo",
+        };
+    }
+    return {
+        eligible: true,
+        reason: null,
+        specialTransit: null,
+    };
 }
 async function shouldRun(prisma, now) {
     const existing = await prisma.orderReadyJobState.findUnique({
@@ -133,8 +165,14 @@ async function runOrderReadySync(prisma) {
         const row = bucket.row;
         const contactEmail = (row.attributeEmailNoty || "").trim() || null;
         const contactPhone = resolveOrderReadySmsPhone(row);
+        const locationEligibility = evaluateOrderReadyLocationEligibility({
+            shipVia: row.shipVia,
+            warehouse: row.warehouse,
+        });
         const mappedLocationId = (0, locationIds_1.normalizeWarehouseToLocationId)(row.warehouse);
-        const locationId = mappedLocationId ?? "slc-hq";
+        const locationId = locationEligibility.specialTransit != null
+            ? mappedLocationId ?? null
+            : mappedLocationId ?? "slc-hq";
         const summaryLookupKey = buildSummaryKey(row.customerId, orderNbr);
         const summary = summaryByBaidAndOrder.get(summaryLookupKey) ??
             summaryByOrder.get(orderNbr.trim().toUpperCase()) ??
@@ -145,8 +183,8 @@ async function runOrderReadySync(prisma) {
         });
         const smsOptIn = row.attributeSmsOptIn === true;
         const emailOptIn = row.attributeEmailOptIn === true;
-        const smsEligible = smsOptIn && Boolean(contactPhone);
-        const emailEligible = emailOptIn && Boolean(contactEmail);
+        const smsEligible = locationEligibility.eligible && smsOptIn && Boolean(contactPhone);
+        const emailEligible = locationEligibility.eligible && emailOptIn && Boolean(contactEmail);
         const existingNotice = await prisma.orderReadyNotice.findUnique({
             where: { orderNbr },
             select: {
@@ -160,12 +198,16 @@ async function runOrderReadySync(prisma) {
                 lastNotifiedAt: true,
                 nextEligibleNotifyAt: true,
                 scheduledAppointmentId: true,
+                smsOptIn: true,
+                emailOptIn: true,
             },
         });
         const prevEmail = (existingNotice?.attributeEmailNoty || "").trim() || null;
         const prevPhone = normalizePhone(existingNotice?.attributeSmsTxt);
         const channelDestinationChanged = Boolean(existingNotice) && (prevEmail !== contactEmail || prevPhone !== contactPhone);
         const bothOptedOut = row.attributeSmsOptIn === false && row.attributeEmailOptIn === false;
+        const wasPreviouslyEligible = Boolean(existingNotice?.smsOptIn || existingNotice?.emailOptIn);
+        const becameIneligible = !locationEligibility.eligible && wasPreviouslyEligible;
         if (channelDestinationChanged) {
             console.log("[order-ready] attempt counter reset (contact change)", {
                 orderNbr,
@@ -194,7 +236,18 @@ async function runOrderReadySync(prisma) {
                 lastNotifyAttemptOn: null,
             }
             : {};
-        const nextEligibleOverride = channelDestinationChanged && existingNotice?.lastNotifiedAt ? now : undefined;
+        const ineligibleResetData = becameIneligible
+            ? {
+                notifyAttemptCount: 0,
+                lastNotifyAttemptOn: null,
+                escalationCount: 0,
+                lastEscalatedAt: null,
+                nextEligibleNotifyAt: null,
+            }
+            : {};
+        const nextEligibleOverride = locationEligibility.eligible && channelDestinationChanged && existingNotice?.lastNotifiedAt
+            ? now
+            : undefined;
         const updateData = {
             baid: row.customerId ?? null,
             status: row.status ?? null,
@@ -223,6 +276,7 @@ async function runOrderReadySync(prisma) {
             lastReadyAt: now,
             ...attemptResetData,
             ...bothOptedOutData,
+            ...ineligibleResetData,
             ...(nextEligibleOverride ? { nextEligibleNotifyAt: nextEligibleOverride } : {}),
         };
         console.log("[order-ready] opt-in write attempt", {
@@ -237,6 +291,8 @@ async function runOrderReadySync(prisma) {
             computed: {
                 smsEligible,
                 emailEligible,
+                locationEligible: locationEligibility.eligible,
+                locationEligibilityReason: locationEligibility.reason,
             },
             writePayload: {
                 attributeSmsOptIn: updateData.attributeSmsOptIn,
@@ -353,6 +409,17 @@ async function runOrderReadySync(prisma) {
                 where: { id: notice.id },
                 data: { scheduledAppointmentId: null },
             });
+        }
+        if (!locationEligibility.eligible) {
+            console.log("[order-ready] skipped (location eligibility)", {
+                orderNbr,
+                shipVia: row.shipVia ?? null,
+                warehouse: row.warehouse ?? null,
+                mappedLocationId: mappedLocationId ?? null,
+                reason: locationEligibility.reason,
+                becameIneligible,
+            });
+            continue;
         }
         const eligible = !notice.lastNotifiedAt ||
             (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);

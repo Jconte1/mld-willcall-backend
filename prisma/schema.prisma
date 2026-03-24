@@ -397,7 +397,7 @@ model StaffUser {
   salespersonName    String?              @db.VarChar(128)
   salespersonPhone   String?              @db.VarChar(32)
   salespersonEmail   String?              @db.VarChar(256)
-  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
+  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall, jackson-willcall, provo-willcall
   locationAccess     String[]
   isActive           Boolean              @default(true)
   mustChangePassword Boolean              @default(true)
@@ -441,7 +441,7 @@ model PickupAppointment {
   userId            String?
   email             String                   @db.VarChar(256)
   pickupReference   String?                  @db.VarChar(256)
-  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall
+  /// Allowed IDs: slc-hq, slc-outlet, boise-willcall, jackson-willcall, provo-willcall
   locationId        String                   @db.VarChar(64)
   startAt           DateTime
   endAt             DateTime

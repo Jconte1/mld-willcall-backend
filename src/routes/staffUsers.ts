@@ -13,7 +13,15 @@ export const staffUsersRouter = Router();
 staffUsersRouter.use(requireAuth);
 staffUsersRouter.use(requireRole("ADMIN"));
 
-const LOCS = z.array(z.enum(["slc-hq", "slc-outlet", "boise-willcall"]));
+const LOCS = z.array(
+  z.enum([
+    "slc-hq",
+    "slc-outlet",
+    "boise-willcall",
+    "jackson-willcall",
+    "provo-willcall",
+  ])
+);
 const SALES_NUMBER = z
   .string()
   .min(3)
@@ -112,7 +120,7 @@ staffUsersRouter.post("/", async (req, res) => {
               : StaffRole.STAFF,
       locationAccess:
         body.data.role === "ADMIN"
-          ? ["slc-hq", "slc-outlet", "boise-willcall"]
+          ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
           : body.data.locationAccess,
       salespersonNumber,
       salespersonName: body.data.salespersonName ?? null,
@@ -280,7 +288,7 @@ staffUsersRouter.patch("/:id", async (req, res) => {
               : StaffRole.STAFF,
       locationAccess:
         nextRole === "ADMIN"
-          ? ["slc-hq", "slc-outlet", "boise-willcall"]
+          ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
           : (body.data.locationAccess ?? existing.locationAccess),
       isActive: body.data.isActive,
       mustChangePassword: body.data.mustChangePassword,

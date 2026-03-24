@@ -27,7 +27,13 @@ async function main() {
             name,
             passwordHash,
             role: client_1.StaffRole.ADMIN,
-            locationAccess: ["slc-hq", "slc-outlet", "boise-willcall"],
+            locationAccess: [
+                "slc-hq",
+                "slc-outlet",
+                "boise-willcall",
+                "jackson-willcall",
+                "provo-willcall",
+            ],
             isActive: true,
             mustChangePassword: false
         }

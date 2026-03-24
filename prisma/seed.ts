@@ -32,7 +32,13 @@ async function main() {
       name,
       passwordHash,
       role: StaffRole.ADMIN,
-      locationAccess: ["slc-hq", "slc-outlet", "boise-willcall"],
+      locationAccess: [
+        "slc-hq",
+        "slc-outlet",
+        "boise-willcall",
+        "jackson-willcall",
+        "provo-willcall",
+      ],
       isActive: true,
       mustChangePassword: false
     }

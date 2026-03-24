@@ -20,7 +20,13 @@ import {
 const prisma = new PrismaClient();
 export const pickupsRouter = Router();
 
-const LOCATION_IDS = ["slc-hq", "slc-outlet", "boise-willcall"] as const;
+const LOCATION_IDS = [
+  "slc-hq",
+  "slc-outlet",
+  "boise-willcall",
+  "jackson-willcall",
+  "provo-willcall",
+] as const;
 
 pickupsRouter.use(requireAuth);
 pickupsRouter.use(blockIfMustChangePassword);

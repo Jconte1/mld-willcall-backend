@@ -13,7 +13,13 @@ const erpClient_1 = require("../lib/queue/erpClient");
 const notifications_1 = require("../notifications");
 const prisma = new client_1.PrismaClient();
 exports.pickupsRouter = (0, express_1.Router)();
-const LOCATION_IDS = ["slc-hq", "slc-outlet", "boise-willcall"];
+const LOCATION_IDS = [
+    "slc-hq",
+    "slc-outlet",
+    "boise-willcall",
+    "jackson-willcall",
+    "provo-willcall",
+];
 exports.pickupsRouter.use(auth_1.requireAuth);
 exports.pickupsRouter.use(auth_1.blockIfMustChangePassword);
 exports.pickupsRouter.use(auth_1.blockIfMustCompleteProfile);
