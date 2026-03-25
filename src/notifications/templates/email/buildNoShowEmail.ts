@@ -3,12 +3,19 @@ const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
 const OUTER_BG = "#f8f2e9";
 
+function formatOrders(orderDisplays: string[]) {
+  const cleaned = orderDisplays.map((value) => String(value || "").trim()).filter(Boolean);
+  if (!cleaned.length) return "(none)";
+  return cleaned.join(", ");
+}
+
 function renderNoShowTemplate({
   title,
   preheader,
   message,
   when,
   orders,
+  location,
   link,
   logoUrl,
 }: {
@@ -17,9 +24,19 @@ function renderNoShowTemplate({
   message: string;
   when: string;
   orders: string;
+  location?: string;
   link: string;
   logoUrl: string;
 }) {
+  const locationBlock = location
+    ? `<tr>
+                    <td style="font-size:13px;color:#6b7280;padding-top:10px;">Pickup location</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:14px;color:#374151;">${location}</td>
+                  </tr>`
+    : "";
+
   return `<!doctype html>
 <html>
   <head>
@@ -60,6 +77,7 @@ function renderNoShowTemplate({
                   <tr>
                     <td style="font-size:14px;color:#374151;">${orders}</td>
                   </tr>
+                  ${locationBlock}
                 </table>
 
                 <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Manage appointment</a>
@@ -82,18 +100,31 @@ function renderNoShowTemplate({
 </html>`;
 }
 
-export function buildNoShowEmail(when: string, orders: string, link: string) {
+export function buildNoShowEmail(input: {
+  when: string;
+  orderDisplays: string[];
+  link: string;
+  locationName?: string | null;
+  locationAddress?: string | null;
+}) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
+  const location =
+    input.locationAddress && input.locationName
+      ? `${input.locationName} - ${input.locationAddress}`
+      : input.locationAddress || input.locationName || undefined;
+  const orders = formatOrders(input.orderDisplays);
+
   return {
     subject: "We missed you at pickup",
     body: renderNoShowTemplate({
       title: "We missed you",
-      preheader: `We missed you at your pickup on ${when}.`,
-      message: `We didn't see you at your pickup scheduled for ${when}. Your product is being returned to stock, so please reschedule as soon as possible.`,
-      when,
+      preheader: `We missed you at your pickup on ${input.when}.`,
+      message: `We didn't see you at your pickup scheduled for ${input.when}. Your product is being returned to stock, so please reschedule as soon as possible.`,
+      when: input.when,
       orders,
-      link,
+      location,
+      link: input.link,
       logoUrl,
     }),
   };

@@ -7,6 +7,9 @@ import { buildNoShowEmail } from "../templates/email/buildNoShowEmail";
 import { startOfDayDenver } from "../../lib/time/denver";
 import { buildAppointmentLink } from "../links/buildLink";
 import { rotateAppointmentToken } from "../links/tokens";
+import { getPickupLocation } from "../../lib/pickupLocations";
+import { resolveOrderReadyJobDisplay } from "../orderReady/orderDisplay";
+import { buildOrderNotificationLabel } from "../orderReady/orderNotificationLabel";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
@@ -69,6 +72,7 @@ async function sendNoShowNotifications(
   id: string;
   startAt: Date;
   endAt: Date;
+  locationId: string;
   emailOptIn: boolean;
   emailOptInEmail: string | null;
   customerEmail: string;
@@ -79,13 +83,74 @@ async function sendNoShowNotifications(
   }
 ) {
   const when = formatDenverDateTime(appointment.startAt);
-  const orderList = formatOrderList(appointment.orders.map((o) => o.orderNbr));
+  const orderNbrs = Array.from(
+    new Set(appointment.orders.map((o) => String(o.orderNbr || "").trim()).filter(Boolean))
+  );
+  const orderList = formatOrderList(orderNbrs);
+  const location = getPickupLocation(appointment.locationId);
+  const summaries = orderNbrs.length
+    ? await prisma.erpOrderSummary.findMany({
+        where: {
+          orderNbr: { in: orderNbrs },
+          isActive: true,
+        },
+        select: {
+          orderNbr: true,
+          locationId: true,
+          jobName: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+  const notices = orderNbrs.length
+    ? await prisma.orderReadyNotice.findMany({
+        where: { orderNbr: { in: orderNbrs } },
+        select: {
+          orderNbr: true,
+          attributeBuyerGroup: true,
+          customerLocationId: true,
+          customerIdDescription: true,
+        },
+      })
+    : [];
+  const summaryByOrderNbr = new Map<string, (typeof summaries)[number]>();
+  for (const summary of summaries) {
+    const key = summary.orderNbr.trim().toUpperCase();
+    if (!summaryByOrderNbr.has(key)) summaryByOrderNbr.set(key, summary);
+  }
+  const noticeByOrderNbr = new Map<string, (typeof notices)[number]>();
+  for (const notice of notices) {
+    const key = notice.orderNbr.trim().toUpperCase();
+    if (!noticeByOrderNbr.has(key)) noticeByOrderNbr.set(key, notice);
+  }
+  const orderDisplays = orderNbrs.map((orderNbr) => {
+    const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
+    const notice = noticeByOrderNbr.get(orderNbr.trim().toUpperCase());
+    const jobDisplay = resolveOrderReadyJobDisplay({
+      locationId: summary?.locationId,
+      jobName: summary?.jobName,
+    });
+    return buildOrderNotificationLabel({
+      orderNbr,
+      buyerGroup: notice?.attributeBuyerGroup,
+      customerLocationId: notice?.customerLocationId,
+      customerIdDescription: notice?.customerIdDescription,
+      jobDisplay,
+    });
+  });
   const token = await rotateAppointmentToken(prisma, appointment.id, appointment.endAt);
   const link = buildAppointmentLink(appointment.id, token.token);
 
   if (appointment.emailOptIn) {
     const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-    const message = buildNoShowEmail(when, orderList, link);
+    const message = buildNoShowEmail({
+      when,
+      orderDisplays,
+      link,
+      locationName: location?.name ?? appointment.locationId,
+      locationAddress: location?.address,
+    });
     await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
   }
 
@@ -137,6 +202,7 @@ export async function runNoShowSweep(prisma: PrismaClient) {
       id: updated.id,
       startAt: updated.startAt,
       endAt: updated.endAt,
+      locationId: updated.locationId,
       emailOptIn: updated.emailOptIn,
       emailOptInEmail: updated.emailOptInEmail,
       customerEmail: updated.customerEmail,
