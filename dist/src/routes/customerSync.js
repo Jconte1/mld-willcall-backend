@@ -3,11 +3,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.customerSyncRouter = void 0;
 const express_1 = require("express");
 const zod_1 = require("zod");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const resolveBaid_1 = require("../lib/acumatica/resolveBaid");
 const syncCustomerAccount_1 = require("../lib/acumatica/sync/syncCustomerAccount");
 const denver_1 = require("../lib/time/denver");
-const prisma = new client_1.PrismaClient();
 exports.customerSyncRouter = (0, express_1.Router)();
 const SYNC_BODY = zod_1.z.object({
     userId: zod_1.z.string().optional(),
@@ -29,7 +28,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
         return res.status(400).json({ message: String(err?.message || err) });
     }
     const now = new Date();
-    const existing = await prisma.baidSyncState.findUnique({ where: { baid } });
+    const existing = await prisma_1.prisma.baidSyncState.findUnique({ where: { baid } });
     console.log("[customer-sync] request", {
         baid,
         hasState: Boolean(existing),
@@ -68,7 +67,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
             });
         }
     }
-    await prisma.baidSyncState.upsert({
+    await prisma_1.prisma.baidSyncState.upsert({
         where: { baid },
         create: {
             baid,
@@ -89,7 +88,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
         console.log("[customer-sync] run", { baid, source: "acumatica" });
         const result = await (0, syncCustomerAccount_1.runCustomerDeltaSync)(baid, { sinceLiteral });
         const finishedAt = new Date();
-        await prisma.baidSyncState.update({
+        await prisma_1.prisma.baidSyncState.update({
             where: { baid },
             data: {
                 inProgress: false,
@@ -118,7 +117,7 @@ exports.customerSyncRouter.post("/", async (req, res) => {
     catch (err) {
         const message = String(err?.message || err);
         const failedAt = new Date();
-        await prisma.baidSyncState.update({
+        await prisma_1.prisma.baidSyncState.update({
             where: { baid },
             data: {
                 inProgress: false,

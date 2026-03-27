@@ -1,9 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = writeAddressContact;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const node_crypto_1 = require("node:crypto");
-const prisma = new client_1.PrismaClient();
 async function writeAddressContact(baid, rows, { concurrency = 10 } = {}) {
     const now = new Date();
     let addressUpserts = 0;
@@ -23,7 +22,7 @@ async function writeAddressContact(baid, rows, { concurrency = 10 } = {}) {
         console.log(`[upsertAddressContact] baid=${baid} nothing-to-map`);
         return { processedOrders: 0, addressUpserts: 0, contactUpserts: 0, ms: 0 };
     }
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, orderNbr: { in: uniqueNbrs } },
         select: { id: true, orderNbr: true },
     });
@@ -76,7 +75,7 @@ async function writeAddressContact(baid, rows, { concurrency = 10 } = {}) {
         };
         if (Object.values(address).some((v) => v !== null)) {
             tasks.push(async () => {
-                await prisma.erpOrderAddress.upsert({
+                await prisma_1.prisma.erpOrderAddress.upsert({
                     where: { orderSummaryId },
                     create: {
                         id: (0, node_crypto_1.randomUUID)(),
@@ -93,7 +92,7 @@ async function writeAddressContact(baid, rows, { concurrency = 10 } = {}) {
         }
         if (Object.values(contact).some((v) => v !== null)) {
             tasks.push(async () => {
-                await prisma.erpOrderContact.upsert({
+                await prisma_1.prisma.erpOrderContact.upsert({
                     where: { orderSummaryId },
                     create: {
                         id: (0, node_crypto_1.randomUUID)(),

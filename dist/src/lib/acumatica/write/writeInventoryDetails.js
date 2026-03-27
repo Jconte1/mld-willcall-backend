@@ -1,10 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = writeInventoryDetails;
+const prisma_1 = require("../../prisma");
 // writeInventoryDetails.ts
-const client_1 = require("@prisma/client");
 const node_crypto_1 = require("node:crypto");
-const prisma = new client_1.PrismaClient();
 async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}) {
     const lines = [];
     const affectedNbrs = new Set();
@@ -78,12 +77,12 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
             },
         };
     }
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, orderNbr: { in: orderNbrList } },
         select: { id: true, orderNbr: true },
     });
     const idByNbr = new Map(summaries.map((s) => [s.orderNbr, s.id]));
-    const { count: deleted } = await prisma.erpOrderLine.deleteMany({
+    const { count: deleted } = await prisma_1.prisma.erpOrderLine.deleteMany({
         where: { baid, orderNbr: { in: orderNbrList } },
     });
     let inserted = 0;
@@ -119,7 +118,7 @@ async function writeInventoryDetails(baid, detailRows, { chunkSize = 5000 } = {}
             const slice = mapped.slice(i, i + chunkSize);
             if (!slice.length)
                 continue;
-            const { count } = await prisma.erpOrderLine.createMany({
+            const { count } = await prisma_1.prisma.erpOrderLine.createMany({
                 data: slice,
                 skipDuplicates: true,
             });

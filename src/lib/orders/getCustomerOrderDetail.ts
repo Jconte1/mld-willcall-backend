@@ -1,6 +1,6 @@
 import { PickupAppointmentStatus } from "@prisma/client";
-import {
 import { prisma } from "../prisma";
+import {
   inferFulfillmentStatus,
   inferOrderType,
   inferPaymentStatus,

@@ -5,12 +5,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.staffProfileRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const auth_1 = require("../middleware/auth");
 const locationIds_1 = require("../lib/locationIds");
-const prisma = new client_1.PrismaClient();
 exports.staffProfileRouter = (0, express_1.Router)();
 exports.staffProfileRouter.use(auth_1.requireAuth);
 const profileSchema = zod_1.z.object({
@@ -59,7 +58,7 @@ exports.staffProfileRouter.get("/", async (req, res) => {
         email: req.auth.email,
         role: req.auth.role,
     });
-    const user = await prisma.staffUser.findUnique({
+    const user = await prisma_1.prisma.staffUser.findUnique({
         where: { id: req.auth.id },
         select: {
             id: true,
@@ -98,11 +97,11 @@ exports.staffProfileRouter.put("/", async (req, res) => {
     if (!salespersonNumber) {
         return res.status(400).json({ message: "Salesperson number is required" });
     }
-    const idLookup = await prisma.staffUser.findUnique({
+    const idLookup = await prisma_1.prisma.staffUser.findUnique({
         where: { id: req.auth.id },
         select: { id: true, email: true, role: true },
     });
-    const emailLookup = await prisma.staffUser.findUnique({
+    const emailLookup = await prisma_1.prisma.staffUser.findUnique({
         where: { email: req.auth.email },
         select: { id: true, email: true, role: true },
     });
@@ -110,7 +109,7 @@ exports.staffProfileRouter.put("/", async (req, res) => {
         byId: idLookup,
         byEmail: emailLookup,
     });
-    const existing = await prisma.staffUser.findFirst({
+    const existing = await prisma_1.prisma.staffUser.findFirst({
         where: {
             salespersonNumber,
             id: { not: req.auth.id },
@@ -122,7 +121,7 @@ exports.staffProfileRouter.put("/", async (req, res) => {
     }
     let updated = null;
     try {
-        updated = await prisma.staffUser.update({
+        updated = await prisma_1.prisma.staffUser.update({
             where: { id: req.auth.id },
             data: {
                 salespersonNumber,
@@ -152,14 +151,14 @@ exports.staffProfileRouter.put("/", async (req, res) => {
         });
     }
     if (!updated) {
-        const fallback = await prisma.staffUser.findUnique({
+        const fallback = await prisma_1.prisma.staffUser.findUnique({
             where: { email: req.auth.email },
             select: { id: true },
         });
         if (!fallback) {
             return res.status(404).json({ message: "Staff user not found" });
         }
-        updated = await prisma.staffUser.update({
+        updated = await prisma_1.prisma.staffUser.update({
             where: { id: fallback.id },
             data: {
                 salespersonNumber,

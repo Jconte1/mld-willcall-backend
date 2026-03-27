@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const client_1 = require("@prisma/client");
 const passwords_1 = require("../src/lib/passwords");
-const prisma = new client_1.PrismaClient();
+const prisma_1 = require("../src/lib/prisma");
 async function main() {
     const email = process.env.INITIAL_ADMIN_EMAIL;
     const name = process.env.INITIAL_ADMIN_NAME ?? "Admin";
@@ -15,13 +15,13 @@ async function main() {
     if (!email.toLowerCase().endsWith("@mld.com")) {
         throw new Error("INITIAL_ADMIN_EMAIL must end with @mld.com");
     }
-    const existing = await prisma.staffUser.findUnique({ where: { email: email.toLowerCase() } });
+    const existing = await prisma_1.prisma.staffUser.findUnique({ where: { email: email.toLowerCase() } });
     if (existing) {
         console.log("Initial admin already exists:", existing.email);
         return;
     }
     const passwordHash = await (0, passwords_1.hashPassword)(password);
-    await prisma.staffUser.create({
+    await prisma_1.prisma.staffUser.create({
         data: {
             email: email.toLowerCase(),
             name,
@@ -46,5 +46,5 @@ main()
     process.exit(1);
 })
     .finally(async () => {
-    await prisma.$disconnect();
+    await prisma_1.prisma.$disconnect();
 });

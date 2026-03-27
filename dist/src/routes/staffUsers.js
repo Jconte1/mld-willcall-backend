@@ -9,7 +9,7 @@ const locationIds_1 = require("../lib/locationIds");
 const auth_1 = require("../middleware/auth");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildStaffOnboardingEmail_1 = require("../notifications/templates/email/buildStaffOnboardingEmail");
-const prisma = new client_1.PrismaClient();
+const prisma_1 = require("../lib/prisma");
 exports.staffUsersRouter = (0, express_1.Router)();
 exports.staffUsersRouter.use(auth_1.requireAuth);
 exports.staffUsersRouter.use((0, auth_1.requireRole)("ADMIN"));
@@ -33,7 +33,7 @@ function normalizeSalespersonNumber(value) {
  * GET /api/staff/users
  */
 exports.staffUsersRouter.get("/", async (_req, res) => {
-    const users = await prisma.staffUser.findMany({
+    const users = await prisma_1.prisma.staffUser.findMany({
         orderBy: { createdAt: "desc" },
         select: {
             id: true,
@@ -85,7 +85,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
         return res.status(400).json({ message: "Email must end with @mld.com" });
     const salespersonNumber = normalizeSalespersonNumber(body.data.salespersonNumber);
     if (salespersonNumber) {
-        const existingSalesperson = await prisma.staffUser.findFirst({
+        const existingSalesperson = await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber },
             select: { id: true },
         });
@@ -95,7 +95,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
     }
     const tempPassword = (0, passwords_1.generateTempPassword)();
     const passwordHash = await (0, passwords_1.hashPassword)(tempPassword);
-    const created = await prisma.staffUser.create({
+    const created = await prisma_1.prisma.staffUser.create({
         data: {
             email,
             name: body.data.name,
@@ -176,7 +176,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
  * GET /api/staff/users/:id
  */
 exports.staffUsersRouter.get("/:id", async (req, res) => {
-    const user = await prisma.staffUser.findUnique({
+    const user = await prisma_1.prisma.staffUser.findUnique({
         where: { id: req.params.id },
         select: {
             id: true,
@@ -228,7 +228,7 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
         locationAccess: body.data.locationAccess,
         isActive: body.data.isActive,
     });
-    const existing = await prisma.staffUser.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma_1.prisma.staffUser.findUnique({ where: { id: req.params.id } });
     if (!existing)
         return res.status(404).json({ message: "Not found" });
     const nextRole = body.data.role ?? existing.role;
@@ -240,7 +240,7 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
         return res.status(400).json({ message: "Email must end with @mld.com" });
     }
     if (nextSalespersonNumber && nextSalespersonNumber !== existing.salespersonNumber) {
-        const existingSalesperson = await prisma.staffUser.findFirst({
+        const existingSalesperson = await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber: nextSalespersonNumber, id: { not: existing.id } },
             select: { id: true },
         });
@@ -248,7 +248,7 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
             return res.status(400).json({ message: "Salesperson number already exists" });
         }
     }
-    const updated = await prisma.staffUser.update({
+    const updated = await prisma_1.prisma.staffUser.update({
         where: { id: req.params.id },
         data: {
             email: nextEmail,
@@ -307,9 +307,9 @@ exports.staffUsersRouter.patch("/:id", async (req, res) => {
  * DELETE /api/staff/users/:id
  */
 exports.staffUsersRouter.delete("/:id", async (req, res) => {
-    const existing = await prisma.staffUser.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma_1.prisma.staffUser.findUnique({ where: { id: req.params.id } });
     if (!existing)
         return res.status(404).json({ message: "Not found" });
-    await prisma.staffUser.delete({ where: { id: req.params.id } });
+    await prisma_1.prisma.staffUser.delete({ where: { id: req.params.id } });
     return res.json({ ok: true });
 });

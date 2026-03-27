@@ -2,12 +2,11 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.authRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const tokens_1 = require("../lib/tokens");
 const passwords_1 = require("../lib/passwords");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
-const prisma = new client_1.PrismaClient();
 exports.authRouter = (0, express_1.Router)();
 const FORGOT_RESPONSE = {
     ok: true,
@@ -64,9 +63,9 @@ function validateResetPasswordRules(pw) {
 }
 async function incrementThrottle(key, limit) {
     const now = new Date();
-    const current = await prisma.passwordResetThrottle.findUnique({ where: { key } });
+    const current = await prisma_1.prisma.passwordResetThrottle.findUnique({ where: { key } });
     if (!current) {
-        await prisma.passwordResetThrottle.create({
+        await prisma_1.prisma.passwordResetThrottle.create({
             data: { key, count: 1, windowStart: now },
         });
         return { blocked: false };
@@ -76,7 +75,7 @@ async function incrementThrottle(key, limit) {
     }
     const sameWindow = now.getTime() - current.windowStart.getTime() < THROTTLE_WINDOW_MS;
     if (!sameWindow) {
-        await prisma.passwordResetThrottle.update({
+        await prisma_1.prisma.passwordResetThrottle.update({
             where: { key },
             data: { count: 1, windowStart: now, lockedUntil: null },
         });
@@ -85,7 +84,7 @@ async function incrementThrottle(key, limit) {
     const nextCount = current.count + 1;
     const shouldLock = nextCount > limit;
     const lockedUntil = shouldLock ? new Date(now.getTime() + THROTTLE_LOCK_MS) : null;
-    await prisma.passwordResetThrottle.update({
+    await prisma_1.prisma.passwordResetThrottle.update({
         where: { key },
         data: { count: nextCount, lockedUntil },
     });
@@ -110,7 +109,7 @@ async function sendPasswordResetGraphEmail(to, resetUrl) {
 }
 async function findValidResetRecord(token) {
     const tokenHash = (0, tokens_1.sha256)(token);
-    return prisma.passwordResetToken.findFirst({
+    return prisma_1.prisma.passwordResetToken.findFirst({
         where: {
             tokenHash,
             usedAt: null,
@@ -144,10 +143,10 @@ exports.authRouter.post("/forgot-password", async (req, res) => {
     const requestedType = body.data.type ?? (email.endsWith("@mld.com") ? "staff" : "customer");
     const isStaffEmail = email.endsWith("@mld.com");
     const staff = requestedType === "staff" && isStaffEmail
-        ? await prisma.staffUser.findUnique({ where: { email } })
+        ? await prisma_1.prisma.staffUser.findUnique({ where: { email } })
         : null;
     const customer = requestedType === "customer"
-        ? await prisma.users.findUnique({
+        ? await prisma_1.prisma.users.findUnique({
             where: { email },
             include: { customerCredential: true },
         })
@@ -163,7 +162,7 @@ exports.authRouter.post("/forgot-password", async (req, res) => {
     const tokenHash = (0, tokens_1.sha256)(rawToken);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + RESET_TOKEN_TTL_MS);
-    await prisma.$transaction(async (tx) => {
+    await prisma_1.prisma.$transaction(async (tx) => {
         if (targetStaff) {
             await tx.passwordResetToken.updateMany({
                 where: { staffUserId: targetStaff.id, usedAt: null },
@@ -259,7 +258,7 @@ exports.authRouter.post("/reset-password", async (req, res) => {
     }
     const newHash = await (0, passwords_1.hashPassword)(body.data.newPassword);
     const now = new Date();
-    await prisma.$transaction(async (tx) => {
+    await prisma_1.prisma.$transaction(async (tx) => {
         if (record.principal === "STAFF") {
             await tx.staffUser.update({
                 where: { id: record.staffUserId },

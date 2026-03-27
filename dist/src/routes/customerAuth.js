@@ -5,12 +5,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.customerAuthRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const passwords_1 = require("../lib/passwords");
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
-const prisma = new client_1.PrismaClient();
 exports.customerAuthRouter = (0, express_1.Router)();
 const BAID_REGEX = /^BA\d{7}$/;
 const REGISTER_BODY = zod_1.z.object({
@@ -90,7 +89,7 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
         });
         return res.status(400).json({ message: rule.message });
     }
-    const existing = await prisma.users.findUnique({ where: { email } });
+    const existing = await prisma_1.prisma.users.findUnique({ where: { email } });
     if (existing) {
         console.warn("[willcall][customer][register] email already exists", {
             email,
@@ -114,7 +113,7 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
         }
         const now = new Date();
         const codeHash = hashInviteCode(inviteCode);
-        const invite = await prisma.inviteCode.findFirst({
+        const invite = await prisma_1.prisma.inviteCode.findFirst({
             where: {
                 baid,
                 status: "Pending",
@@ -145,11 +144,11 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
                 });
             }
         }
-        const adminCount = await prisma.accountUserRole.count({
+        const adminCount = await prisma_1.prisma.accountUserRole.count({
             where: { baid, role: "ADMIN", isActive: true },
         });
         const assignedRole = adminCount > 0 ? invite.role : "ADMIN";
-        const user = await prisma.$transaction(async (tx) => {
+        const user = await prisma_1.prisma.$transaction(async (tx) => {
             const created = await tx.users.create({
                 data: {
                     id: node_crypto_1.default.randomUUID(),
@@ -278,7 +277,7 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
     const email = parsed.data.email.toLowerCase().trim();
     const password = parsed.data.password;
     console.log("[willcall][customer][login] start", { email });
-    const user = await prisma.users.findUnique({ where: { email } });
+    const user = await prisma_1.prisma.users.findUnique({ where: { email } });
     if (!user) {
         console.warn("[willcall][customer][login] invalid credentials (no user)", {
             email,
@@ -286,7 +285,7 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
         });
         return res.status(401).json({ message: "Invalid credentials" });
     }
-    const cred = await prisma.customerCredential.findUnique({ where: { userId: user.id } });
+    const cred = await prisma_1.prisma.customerCredential.findUnique({ where: { userId: user.id } });
     if (!cred) {
         console.warn("[willcall][customer][login] invalid credentials (no cred)", {
             email,
@@ -309,7 +308,7 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
         email,
         ms: msSince(t0),
     });
-    const roles = await prisma.accountUserRole.findMany({
+    const roles = await prisma_1.prisma.accountUserRole.findMany({
         where: { userId: user.id, isActive: true },
     });
     const accountRole = roles.find((r) => r.role === "ADMIN")?.role ??

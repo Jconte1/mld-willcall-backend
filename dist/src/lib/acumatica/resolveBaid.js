@@ -1,8 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveSingleBaid = resolveSingleBaid;
-const client_1 = require("@prisma/client");
-const prisma = new client_1.PrismaClient();
+const prisma_1 = require("../prisma");
 function normalizeEmail(email) {
     return email ? email.toLowerCase().trim() : null;
 }
@@ -15,11 +14,11 @@ async function resolveSingleBaid(input) {
     const baidIn = normalizeBaid(input.baid ?? null);
     if (baidIn && (userId || email)) {
         const user = userId
-            ? await prisma.users.findUnique({
+            ? await prisma_1.prisma.users.findUnique({
                 where: { id: userId },
                 select: { baid: true, isDeveloper: true },
             })
-            : await prisma.users.findUnique({
+            : await prisma_1.prisma.users.findUnique({
                 where: { email: email },
                 select: { baid: true, isDeveloper: true },
             });
@@ -37,8 +36,8 @@ async function resolveSingleBaid(input) {
         return baidIn;
     if (userId || email) {
         const user = userId
-            ? await prisma.users.findUnique({ where: { id: userId }, select: { baid: true } })
-            : await prisma.users.findUnique({ where: { email: email }, select: { baid: true } });
+            ? await prisma_1.prisma.users.findUnique({ where: { id: userId }, select: { baid: true } })
+            : await prisma_1.prisma.users.findUnique({ where: { email: email }, select: { baid: true } });
         if (!user?.baid)
             throw new Error("No BAID found for the given userId/email.");
         return user.baid;

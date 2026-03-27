@@ -1,9 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = writePaymentInfo;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const node_crypto_1 = require("node:crypto");
-const prisma = new client_1.PrismaClient();
 async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
     const now = new Date();
     const safeRows = Array.isArray(rows) ? rows : [];
@@ -20,7 +19,7 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
         console.log(`[upsertPaymentInfo] baid=${baid} nothing-to-map`);
         return { processedOrders: 0, paymentUpserts: 0, ms: 0 };
     }
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, orderNbr: { in: uniqueNbrs } },
         select: { id: true, orderNbr: true },
     });
@@ -45,7 +44,7 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
         if (orderTotal == null && unpaidBalance == null && !terms)
             continue;
         tasks.push(async () => {
-            await prisma.erpOrderPayment.upsert({
+            await prisma_1.prisma.erpOrderPayment.upsert({
                 where: { orderSummaryId },
                 create: {
                     id: (0, node_crypto_1.randomUUID)(),

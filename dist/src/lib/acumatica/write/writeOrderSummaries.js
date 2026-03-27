@@ -3,9 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.upsertOrderSummariesForBAID = upsertOrderSummariesForBAID;
 exports.upsertOrderSummariesDelta = upsertOrderSummariesDelta;
 exports.purgeOldOrders = purgeOldOrders;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const node_crypto_1 = require("node:crypto");
-const prisma = new client_1.PrismaClient();
 const INACTIVE_STATUSES = new Set([
     "Canceled",
     "Cancelled",
@@ -112,7 +111,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     const now = new Date();
     const incoming = mapOrderSummaryRows(rawRows);
     console.log(`[upsertOrderSummaries] baid=${baid} incoming=${incoming.length}`);
-    const existing = await prisma.erpOrderSummary.findMany({
+    const existing = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, deliveryDate: { gte: cutoff } },
         select: {
             orderNbr: true,
@@ -157,7 +156,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
             if (row)
                 console.log("[upsertOrderSummaries][debug-insert]", row);
         }
-        const { count } = await prisma.erpOrderSummary.createMany({
+        const { count } = await prisma_1.prisma.erpOrderSummary.createMany({
             data: toInsert.map((r) => ({
                 id: (0, node_crypto_1.randomUUID)(),
                 baid,
@@ -188,7 +187,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
                 console.log("[upsertOrderSummaries][debug-update]", row);
         }
         await runWithConcurrency(toUpdate, concurrency, async (r) => {
-            await prisma.erpOrderSummary.update({
+            await prisma_1.prisma.erpOrderSummary.update({
                 where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
                 data: {
                     status: r.status,
@@ -209,7 +208,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
         console.log(`[upsertOrderSummaries] updated=${updated} baid=${baid}`);
     }
     const seen = incoming.map((r) => r.orderNbr);
-    const { count: inactivated } = await prisma.erpOrderSummary.updateMany({
+    const { count: inactivated } = await prisma_1.prisma.erpOrderSummary.updateMany({
         where: {
             baid,
             isActive: true,
@@ -219,7 +218,7 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
         data: { isActive: false, updatedAt: now },
     });
     if (debugOrderNbr) {
-        const persisted = await prisma.erpOrderSummary.findFirst({
+        const persisted = await prisma_1.prisma.erpOrderSummary.findFirst({
             where: { baid, orderNbr: debugOrderNbr },
             select: { orderNbr: true, salesPersonNumber: true, shipVia: true, updatedAt: true },
         });
@@ -231,7 +230,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
     const now = new Date();
     const incoming = mapOrderSummaryRows(rawRows);
     console.log(`[upsertOrderSummariesDelta] baid=${baid} incoming=${incoming.length}`);
-    const existing = await prisma.erpOrderSummary.findMany({
+    const existing = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, orderNbr: { in: incoming.map((r) => r.orderNbr) } },
         select: {
             orderNbr: true,
@@ -273,7 +272,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
     }
     let inserted = 0;
     if (toInsert.length) {
-        const { count } = await prisma.erpOrderSummary.createMany({
+        const { count } = await prisma_1.prisma.erpOrderSummary.createMany({
             data: toInsert.map((r) => ({
                 id: (0, node_crypto_1.randomUUID)(),
                 baid,
@@ -299,7 +298,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
     let updated = 0;
     if (toUpdate.length) {
         await runWithConcurrency(toUpdate, concurrency, async (r) => {
-            await prisma.erpOrderSummary.update({
+            await prisma_1.prisma.erpOrderSummary.update({
                 where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
                 data: {
                     status: r.status,
@@ -322,7 +321,7 @@ async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {
     return { inserted, updated };
 }
 async function purgeOldOrders(cutoff) {
-    const { count } = await prisma.erpOrderSummary.deleteMany({
+    const { count } = await prisma_1.prisma.erpOrderSummary.deleteMany({
         where: {
             deliveryDate: { lt: cutoff },
             OR: [

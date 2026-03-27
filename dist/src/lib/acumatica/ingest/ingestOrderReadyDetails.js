@@ -4,7 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.refreshOrderReadyDetails = refreshOrderReadyDetails;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const node_crypto_1 = require("node:crypto");
 const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchAddressContact_1 = __importDefault(require("../fetch/fetchAddressContact"));
@@ -14,7 +14,6 @@ const writeAddressContact_1 = __importDefault(require("../write/writeAddressCont
 const writePaymentInfo_1 = __importDefault(require("../write/writePaymentInfo"));
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
 const erpClient_1 = require("../../queue/erpClient");
-const prisma = new client_1.PrismaClient();
 const PICKUP_LOCATION_IDS = new Set([
     "slc-hq",
     "slc-outlet",
@@ -62,7 +61,7 @@ async function refreshOrderReadyDetails(input) {
     if (lastModified !== undefined) {
         summaryUpdate.lastAcumaticaModifiedAt = lastModified;
     }
-    await prisma.erpOrderSummary.upsert({
+    await prisma_1.prisma.erpOrderSummary.upsert({
         where: { baid_orderNbr: { baid: normalizedBaid, orderNbr: normalizedOrderNbr } },
         create: {
             id: (0, node_crypto_1.randomUUID)(),

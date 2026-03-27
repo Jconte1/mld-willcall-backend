@@ -2,9 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.twilioInboundRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 exports.twilioInboundRouter = (0, express_1.Router)();
-const prisma = new client_1.PrismaClient();
 const STOP_WORDS = new Set(["STOP", "STOPALL", "END", "CANCEL", "UNSUBSCRIBE", "QUIT"]);
 const START_WORDS = new Set(["START", "UNSTOP", "YES"]);
 function normalizePhone(value) {
@@ -21,7 +20,7 @@ exports.twilioInboundRouter.post("/inbound", async (req, res) => {
         return res.status(200).send("OK");
     }
     if (STOP_WORDS.has(body)) {
-        await prisma.pickupAppointment.updateMany({
+        await prisma_1.prisma.pickupAppointment.updateMany({
             where: {
                 OR: [{ smsOptInPhone: from }, { customerPhone: from }],
             },
@@ -31,7 +30,7 @@ exports.twilioInboundRouter.post("/inbound", async (req, res) => {
                 smsOptOutReason: body,
             },
         });
-        await prisma.orderReadyNotice.updateMany({
+        await prisma_1.prisma.orderReadyNotice.updateMany({
             where: { contactPhone: from },
             data: {
                 smsOptIn: false,
@@ -42,7 +41,7 @@ exports.twilioInboundRouter.post("/inbound", async (req, res) => {
         return res.status(200).send("OK");
     }
     if (START_WORDS.has(body)) {
-        await prisma.pickupAppointment.updateMany({
+        await prisma_1.prisma.pickupAppointment.updateMany({
             where: {
                 OR: [{ smsOptInPhone: from }, { customerPhone: from }],
             },
@@ -52,7 +51,7 @@ exports.twilioInboundRouter.post("/inbound", async (req, res) => {
                 smsOptOutReason: null,
             },
         });
-        await prisma.orderReadyNotice.updateMany({
+        await prisma_1.prisma.orderReadyNotice.updateMany({
             where: { contactPhone: from },
             data: {
                 smsOptIn: true,

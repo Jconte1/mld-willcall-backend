@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.acumaticaRouter = void 0;
 const express_1 = require("express");
 const zod_1 = require("zod");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const oneTimeSync_1 = require("../lib/acumatica/oneTimeSync");
 const resolveBaid_1 = require("../lib/acumatica/resolveBaid");
 const ingestOrderSummaries_1 = require("../lib/acumatica/ingest/ingestOrderSummaries");
@@ -11,7 +11,6 @@ const ingestPaymentInfo_1 = require("../lib/acumatica/ingest/ingestPaymentInfo")
 const ingestInventoryDetails_1 = require("../lib/acumatica/ingest/ingestInventoryDetails");
 const ingestAddressContact_1 = require("../lib/acumatica/ingest/ingestAddressContact");
 exports.acumaticaRouter = (0, express_1.Router)();
-const prisma = new client_1.PrismaClient();
 const SYNC_KEYS = [
     "order-summaries",
     "payment-info",
@@ -45,7 +44,7 @@ exports.acumaticaRouter.post("/one-time-sync", async (req, res) => {
         : true;
     if (allOk) {
         const now = new Date();
-        await prisma.baidSyncState.upsert({
+        await prisma_1.prisma.baidSyncState.upsert({
             where: { baid: parsed.data.baid },
             create: {
                 baid: parsed.data.baid,

@@ -4,13 +4,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ingestAddressContact = ingestAddressContact;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchAddressContact_1 = __importDefault(require("../fetch/fetchAddressContact"));
 const writeAddressContact_1 = __importDefault(require("../write/writeAddressContact"));
 const denver_1 = require("../../time/denver");
 const erpClient_1 = require("../../queue/erpClient");
-const prisma = new client_1.PrismaClient();
 function nowMs() {
     return Number(process.hrtime.bigint() / 1000000n);
 }
@@ -18,7 +17,7 @@ async function handleOne(restService, baid) {
     const t0 = nowMs();
     const cutoffDenver = (0, denver_1.oneYearAgoDenver)(new Date());
     const cutoffLiteral = (0, denver_1.toDenverDateTimeOffsetLiteral)(cutoffDenver);
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, isActive: true, deliveryDate: { gte: cutoffDenver } },
         select: { orderNbr: true },
     });

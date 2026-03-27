@@ -4,9 +4,9 @@ exports.customerPickupsRouter = void 0;
 const express_1 = require("express");
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
+const prisma_1 = require("../lib/prisma");
 const notifications_1 = require("../notifications");
 const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
-const prisma = new client_1.PrismaClient();
 exports.customerPickupsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -83,25 +83,25 @@ const SLOT_MINUTES = 15;
 const MIN_ADVANCE_MINUTES = 4 * 60;
 const NEXT_DAY_EARLIEST_MINUTES = 10 * 60;
 async function hasAccountAccess(userId, appointmentId) {
-    const user = await prisma.users.findUnique({
+    const user = await prisma_1.prisma.users.findUnique({
         where: { id: userId },
         select: { isDeveloper: true },
     });
     if (user?.isDeveloper)
         return true;
-    const orderNbrs = await prisma.pickupAppointmentOrder.findMany({
+    const orderNbrs = await prisma_1.prisma.pickupAppointmentOrder.findMany({
         where: { appointmentId },
         select: { orderNbr: true },
     });
     if (!orderNbrs.length)
         return false;
-    const summary = await prisma.erpOrderSummary.findFirst({
+    const summary = await prisma_1.prisma.erpOrderSummary.findFirst({
         where: { orderNbr: { in: orderNbrs.map((o) => o.orderNbr) } },
         select: { baid: true },
     });
     if (!summary?.baid)
         return false;
-    const role = await prisma.accountUserRole.findFirst({
+    const role = await prisma_1.prisma.accountUserRole.findFirst({
         where: { userId, baid: summary.baid, isActive: true },
         select: { id: true },
     });
@@ -266,7 +266,7 @@ exports.customerPickupsRouter.get("/availability", async (req, res) => {
     });
     const rangeStart = parseDateOnly(from);
     const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
-    const appointments = await prisma.pickupAppointment.findMany({
+    const appointments = await prisma_1.prisma.pickupAppointment.findMany({
         where: {
             locationId,
             status: { in: BLOCKING_STATUSES },
@@ -323,7 +323,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         if (orderNbrs.length !== 1) {
             return res.status(400).json({ message: "Order-ready appointments must include one order." });
         }
-        const token = await prisma.orderReadyAccessToken.findFirst({
+        const token = await prisma_1.prisma.orderReadyAccessToken.findFirst({
             where: { token: payload.orderReadyToken, revokedAt: null },
             include: { orderReady: { select: { id: true, orderNbr: true } } },
         });
@@ -384,7 +384,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         });
     }
     for (const [index, appointment] of appointmentsToCreate.entries()) {
-        const conflict = await prisma.pickupAppointment.findFirst({
+        const conflict = await prisma_1.prisma.pickupAppointment.findFirst({
             where: {
                 locationId: appointment.locationId,
                 status: { in: BLOCKING_STATUSES },
@@ -400,7 +400,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             ordersToCreate.push({ appointmentIndex: index, orderNbr });
         });
     }
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma_1.prisma.$transaction(async (tx) => {
         const createdAppointments = [];
         for (const appointment of appointmentsToCreate) {
             const createdAppointment = await tx.pickupAppointment.create({
@@ -457,7 +457,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         return createdAppointments;
     });
     if (orderReadyNoticeId && created.length > 0) {
-        await prisma.orderReadyNotice.update({
+        await prisma_1.prisma.orderReadyNotice.update({
             where: { id: orderReadyNoticeId },
             data: { scheduledAppointmentId: created[0].id },
         });
@@ -465,7 +465,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
     for (const [index, appointment] of created.entries()) {
         const orderNbrs = appointmentsToCreate[index]?.orderNbrs ?? [];
         try {
-            await (0, notifications_1.notifyCustomerScheduled)(prisma, appointment, orderNbrs);
+            await (0, notifications_1.notifyCustomerScheduled)(prisma_1.prisma, appointment, orderNbrs);
         }
         catch (err) {
             console.error("[notifications] schedule failed", err);
@@ -481,7 +481,7 @@ exports.customerPickupsRouter.patch("/:id/cancel", async (req, res) => {
     if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request body" });
     }
-    const appointment = await prisma.pickupAppointment.findUnique({
+    const appointment = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
     });
     if (!appointment)
@@ -494,20 +494,20 @@ exports.customerPickupsRouter.patch("/:id/cancel", async (req, res) => {
     if (appointment.status === client_1.PickupAppointmentStatus.Cancelled) {
         return res.json({ appointment });
     }
-    const updated = await prisma.pickupAppointment.update({
+    const updated = await prisma_1.prisma.pickupAppointment.update({
         where: { id: appointment.id },
         data: { status: client_1.PickupAppointmentStatus.Cancelled },
     });
-    const orderNbrs = await prisma.pickupAppointmentOrder.findMany({
+    const orderNbrs = await prisma_1.prisma.pickupAppointmentOrder.findMany({
         where: { appointmentId: updated.id },
         select: { orderNbr: true },
     });
     try {
         if (parsed.data.suppressNotifications) {
-            await (0, notifications_1.cancelAppointmentSilently)(prisma, updated, orderNbrs.map((o) => o.orderNbr));
+            await (0, notifications_1.cancelAppointmentSilently)(prisma_1.prisma, updated, orderNbrs.map((o) => o.orderNbr));
         }
         else {
-            await (0, notifications_1.notifyCustomerCancelled)(prisma, updated, orderNbrs.map((o) => o.orderNbr));
+            await (0, notifications_1.notifyCustomerCancelled)(prisma_1.prisma, updated, orderNbrs.map((o) => o.orderNbr));
         }
     }
     catch (err) {
@@ -523,7 +523,7 @@ exports.customerPickupsRouter.patch("/:id/orders", async (req, res) => {
     if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request body" });
     }
-    const appointment = await prisma.pickupAppointment.findUnique({
+    const appointment = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
     });
     if (!appointment)
@@ -533,7 +533,7 @@ exports.customerPickupsRouter.patch("/:id/orders", async (req, res) => {
         if (!allowed)
             return res.status(403).json({ message: "Forbidden" });
     }
-    const existingOrders = await prisma.pickupAppointmentOrder.findMany({
+    const existingOrders = await prisma_1.prisma.pickupAppointmentOrder.findMany({
         where: { appointmentId: appointment.id },
         select: { orderNbr: true },
     });
@@ -544,7 +544,7 @@ exports.customerPickupsRouter.patch("/:id/orders", async (req, res) => {
     const nextEndAt = remaining === 0
         ? appointment.endAt
         : new Date(appointment.startAt.getTime() + (remaining > 6 ? 30 : 15) * 60000);
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await prisma_1.prisma.$transaction(async (tx) => {
         await tx.pickupAppointmentOrder.deleteMany({ where: { appointmentId: appointment.id } });
         if (nextOrderNbrs.length) {
             await tx.pickupAppointmentOrder.createMany({
@@ -566,8 +566,8 @@ exports.customerPickupsRouter.patch("/:id/orders", async (req, res) => {
     });
     if (nextStatus === client_1.PickupAppointmentStatus.Cancelled) {
         try {
-            await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
-            await (0, notifications_1.notifyCustomerCancelled)(prisma, updated, existingOrderNbrs);
+            await (0, notifications_1.cancelAppointmentNotifications)(prisma_1.prisma, updated.id);
+            await (0, notifications_1.notifyCustomerCancelled)(prisma_1.prisma, updated, existingOrderNbrs);
         }
         catch (err) {
             console.error("[notifications] cancel failed", err);

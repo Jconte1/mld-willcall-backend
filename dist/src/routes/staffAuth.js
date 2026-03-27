@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.staffAuthRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const passwords_1 = require("../lib/passwords");
@@ -28,7 +28,6 @@ function logInstance(label) {
 }
 const locationIds_1 = require("../lib/locationIds");
 const auth_1 = require("../middleware/auth");
-const prisma = new client_1.PrismaClient();
 exports.staffAuthRouter = (0, express_1.Router)();
 const LOGIN_BODY = zod_1.z.object({
     email: zod_1.z.string().email(),
@@ -54,7 +53,7 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
     const email = parsed.data.email.toLowerCase();
     if (!email.endsWith("@mld.com"))
         return res.status(401).json({ message: "Invalid credentials" });
-    const user = await prisma.staffUser.findUnique({ where: { email } });
+    const user = await prisma_1.prisma.staffUser.findUnique({ where: { email } });
     if (!user || !user.isActive)
         return res.status(401).json({ message: "Invalid credentials" });
     const ok = await (0, passwords_1.verifyPassword)(parsed.data.password, user.passwordHash);
@@ -121,7 +120,7 @@ exports.staffAuthRouter.post("/change-password", auth_1.requireAuth, async (req,
     }).safeParse(req.body);
     if (!body.success)
         return res.status(400).json({ message: "Invalid request body" });
-    const user = await prisma.staffUser.findUnique({ where: { id: req.auth.id } });
+    const user = await prisma_1.prisma.staffUser.findUnique({ where: { id: req.auth.id } });
     console.info("[staffAuth/change-password] user lookup", {
         found: Boolean(user),
         id: user?.id,
@@ -137,7 +136,7 @@ exports.staffAuthRouter.post("/change-password", auth_1.requireAuth, async (req,
     if (!rule.ok)
         return res.status(400).json({ message: rule.message });
     const newHash = await (0, passwords_1.hashPassword)(body.data.newPassword);
-    await prisma.staffUser.update({
+    await prisma_1.prisma.staffUser.update({
         where: { id: user.id },
         data: { passwordHash: newHash, mustChangePassword: false }
     });

@@ -5,13 +5,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.customerInvitesRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
-const prisma = new client_1.PrismaClient();
 exports.customerInvitesRouter = (0, express_1.Router)();
 const BAID_REGEX = /^BA\d{7}$/;
 const REQUEST_INVITE_BODY = zod_1.z.object({
@@ -92,13 +91,13 @@ function getClientIp(req) {
     return req.ip || req.connection?.remoteAddress || "";
 }
 async function hasAdminForBaid(baid) {
-    const count = await prisma.accountUserRole.count({
+    const count = await prisma_1.prisma.accountUserRole.count({
         where: { baid, role: "ADMIN", isActive: true },
     });
     return count > 0;
 }
 async function getAccess(userId, baid) {
-    const user = await prisma.users.findUnique({
+    const user = await prisma_1.prisma.users.findUnique({
         where: { id: userId },
         select: { id: true, isDeveloper: true },
     });
@@ -106,7 +105,7 @@ async function getAccess(userId, baid) {
         return { user: null, role: null, isDeveloper: false };
     if (user.isDeveloper)
         return { user, role: "ADMIN", isDeveloper: true };
-    const roleRow = await prisma.accountUserRole.findFirst({
+    const roleRow = await prisma_1.prisma.accountUserRole.findFirst({
         where: { userId, baid, isActive: true },
     });
     return { user, role: roleRow?.role ?? null, isDeveloper: false };
@@ -133,14 +132,14 @@ async function ensureMember(userId, baid) {
 }
 async function logInviteRequest(opts) {
     try {
-        await prisma.inviteRequestLog.create({ data: opts });
+        await prisma_1.prisma.inviteRequestLog.create({ data: opts });
     }
     catch {
         // best-effort logging
     }
 }
 async function checkLockout(key) {
-    const row = await prisma.inviteLockout.findUnique({ where: { key } });
+    const row = await prisma_1.prisma.inviteLockout.findUnique({ where: { key } });
     if (!row?.lockedUntil)
         return { locked: false };
     if (row.lockedUntil.getTime() <= Date.now())
@@ -149,9 +148,9 @@ async function checkLockout(key) {
 }
 async function recordAttempt(key, ok) {
     const now = new Date();
-    const row = await prisma.inviteLockout.findUnique({ where: { key } });
+    const row = await prisma_1.prisma.inviteLockout.findUnique({ where: { key } });
     if (!row) {
-        await prisma.inviteLockout.create({
+        await prisma_1.prisma.inviteLockout.create({
             data: {
                 key,
                 attemptCount: ok ? 0 : 1,
@@ -162,7 +161,7 @@ async function recordAttempt(key, ok) {
         return;
     }
     if (ok) {
-        await prisma.inviteLockout.update({
+        await prisma_1.prisma.inviteLockout.update({
             where: { key },
             data: { attemptCount: 0, lastAttemptAt: now, lockedUntil: null },
         });
@@ -171,7 +170,7 @@ async function recordAttempt(key, ok) {
     const withinWindow = row.lastAttemptAt && now.getTime() - row.lastAttemptAt.getTime() < LOCKOUT_WINDOW_MS;
     const nextCount = withinWindow ? row.attemptCount + 1 : 1;
     const lockedUntil = nextCount >= LOCKOUT_MAX_ATTEMPTS ? new Date(now.getTime() + LOCKOUT_WINDOW_MS) : null;
-    await prisma.inviteLockout.update({
+    await prisma_1.prisma.inviteLockout.update({
         where: { key },
         data: { attemptCount: nextCount, lastAttemptAt: now, lockedUntil },
     });
@@ -185,7 +184,7 @@ async function sendInviteEmail(opts) {
     });
 }
 async function revokePendingInvites(baid) {
-    await prisma.inviteCode.updateMany({
+    await prisma_1.prisma.inviteCode.updateMany({
         where: { baid, status: "Pending" },
         data: { status: "Revoked" },
     });
@@ -194,13 +193,13 @@ async function assignAdminIfNeeded(baid) {
     const hasAdmin = await hasAdminForBaid(baid);
     if (hasAdmin)
         return;
-    const manager = await prisma.accountUserRole.findFirst({
+    const manager = await prisma_1.prisma.accountUserRole.findFirst({
         where: { baid, role: "PM", isActive: true },
         orderBy: { createdAt: "asc" },
     });
     if (!manager)
         return;
-    await prisma.accountUserRole.update({
+    await prisma_1.prisma.accountUserRole.update({
         where: { id: manager.id },
         data: { role: "ADMIN" },
     });
@@ -281,7 +280,7 @@ exports.customerInvitesRouter.post("/request", async (req, res) => {
     const recipient = resolveInviteRecipient(process.env.NOTIFICATIONS_TEST_EMAIL, {
         allowTestOverride: true,
     });
-    await prisma.inviteCode.create({
+    await prisma_1.prisma.inviteCode.create({
         data: {
             baid,
             role: "ADMIN",
@@ -318,7 +317,7 @@ exports.customerInvitesRouter.post("/invitations/list", async (req, res) => {
     const access = await ensureMember(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    const invites = await prisma.inviteCode.findMany({
+    const invites = await prisma_1.prisma.inviteCode.findMany({
         where: { baid: parsed.data.baid },
         orderBy: { createdAt: "desc" },
         select: {
@@ -347,7 +346,7 @@ exports.customerInvitesRouter.post("/invitations", async (req, res) => {
     const codeHash = hashInviteCode(code);
     const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
     const recipient = resolveInviteRecipient(parsed.data.email, { allowTestOverride: false });
-    const invite = await prisma.inviteCode.create({
+    const invite = await prisma_1.prisma.inviteCode.create({
         data: {
             baid: parsed.data.baid,
             role: parsed.data.role,
@@ -361,7 +360,7 @@ exports.customerInvitesRouter.post("/invitations", async (req, res) => {
             createdByUserId: parsed.data.userId,
         },
     });
-    await prisma.roleAuditLog.create({
+    await prisma_1.prisma.roleAuditLog.create({
         data: {
             baid: parsed.data.baid,
             actorUserId: parsed.data.userId,
@@ -390,11 +389,11 @@ exports.customerInvitesRouter.post("/invitations/revoke", async (req, res) => {
     const access = await ensureAdmin(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    await prisma.inviteCode.updateMany({
+    await prisma_1.prisma.inviteCode.updateMany({
         where: { id: parsed.data.inviteId, baid: parsed.data.baid, status: "Pending" },
         data: { status: "Revoked" },
     });
-    await prisma.roleAuditLog.create({
+    await prisma_1.prisma.roleAuditLog.create({
         data: {
             baid: parsed.data.baid,
             actorUserId: parsed.data.userId,
@@ -411,7 +410,7 @@ exports.customerInvitesRouter.post("/members/list", async (req, res) => {
     const access = await ensureMember(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    const roles = await prisma.accountUserRole.findMany({
+    const roles = await prisma_1.prisma.accountUserRole.findMany({
         where: { baid: parsed.data.baid, isActive: true },
         include: {
             users: {
@@ -421,7 +420,7 @@ exports.customerInvitesRouter.post("/members/list", async (req, res) => {
         orderBy: { createdAt: "asc" },
     });
     const userIds = roles.map((r) => r.userId);
-    const sessions = await prisma.sessions.findMany({
+    const sessions = await prisma_1.prisma.sessions.findMany({
         where: { userId: { in: userIds } },
         orderBy: { updatedAt: "desc" },
         select: { userId: true, updatedAt: true },
@@ -448,7 +447,7 @@ exports.customerInvitesRouter.post("/members/role", async (req, res) => {
     const access = await ensureAdmin(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    const existing = await prisma.accountUserRole.findFirst({
+    const existing = await prisma_1.prisma.accountUserRole.findFirst({
         where: {
             baid: parsed.data.baid,
             userId: parsed.data.targetUserId,
@@ -457,11 +456,11 @@ exports.customerInvitesRouter.post("/members/role", async (req, res) => {
     });
     if (!existing)
         return res.status(404).json({ message: "Member not found" });
-    const updated = await prisma.accountUserRole.update({
+    const updated = await prisma_1.prisma.accountUserRole.update({
         where: { id: existing.id },
         data: { role: parsed.data.role },
     });
-    await prisma.roleAuditLog.create({
+    await prisma_1.prisma.roleAuditLog.create({
         data: {
             baid: parsed.data.baid,
             actorUserId: parsed.data.userId,
@@ -483,7 +482,7 @@ exports.customerInvitesRouter.post("/members/remove", async (req, res) => {
     const access = await ensureAdmin(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    const existing = await prisma.accountUserRole.findFirst({
+    const existing = await prisma_1.prisma.accountUserRole.findFirst({
         where: {
             baid: parsed.data.baid,
             userId: parsed.data.targetUserId,
@@ -492,11 +491,11 @@ exports.customerInvitesRouter.post("/members/remove", async (req, res) => {
     });
     if (!existing)
         return res.status(404).json({ message: "Member not found" });
-    await prisma.accountUserRole.update({
+    await prisma_1.prisma.accountUserRole.update({
         where: { id: existing.id },
         data: { isActive: false },
     });
-    await prisma.roleAuditLog.create({
+    await prisma_1.prisma.roleAuditLog.create({
         data: {
             baid: parsed.data.baid,
             actorUserId: parsed.data.userId,
@@ -517,7 +516,7 @@ exports.customerInvitesRouter.post("/requests/list", async (req, res) => {
     const access = await ensureAdmin(parsed.data.userId, parsed.data.baid);
     if (!access.ok)
         return res.status(access.status ?? 403).json({ message: "Not authorized" });
-    const requests = await prisma.inviteRequestLog.findMany({
+    const requests = await prisma_1.prisma.inviteRequestLog.findMany({
         where: { baid: parsed.data.baid },
         orderBy: { createdAt: "desc" },
         take: 200,

@@ -10,6 +10,9 @@ const buildNoShowEmail_1 = require("../templates/email/buildNoShowEmail");
 const denver_1 = require("../../lib/time/denver");
 const buildLink_1 = require("../links/buildLink");
 const tokens_1 = require("../links/tokens");
+const pickupLocations_1 = require("../../lib/pickupLocations");
+const orderDisplay_1 = require("../orderReady/orderDisplay");
+const orderNotificationLabel_1 = require("../orderReady/orderNotificationLabel");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "appointment-no-show-sweep";
 const RUN_HOUR = 17;
@@ -63,12 +66,73 @@ async function markRun(prisma, now) {
 }
 async function sendNoShowNotifications(prisma, appointment) {
     const when = (0, format_1.formatDenverDateTime)(appointment.startAt);
-    const orderList = (0, format_1.formatOrderList)(appointment.orders.map((o) => o.orderNbr));
+    const orderNbrs = Array.from(new Set(appointment.orders.map((o) => String(o.orderNbr || "").trim()).filter(Boolean)));
+    const orderList = (0, format_1.formatOrderList)(orderNbrs);
+    const location = (0, pickupLocations_1.getPickupLocation)(appointment.locationId);
+    const summaries = orderNbrs.length
+        ? await prisma.erpOrderSummary.findMany({
+            where: {
+                orderNbr: { in: orderNbrs },
+                isActive: true,
+            },
+            select: {
+                orderNbr: true,
+                locationId: true,
+                jobName: true,
+                updatedAt: true,
+            },
+            orderBy: { updatedAt: "desc" },
+        })
+        : [];
+    const notices = orderNbrs.length
+        ? await prisma.orderReadyNotice.findMany({
+            where: { orderNbr: { in: orderNbrs } },
+            select: {
+                orderNbr: true,
+                attributeBuyerGroup: true,
+                customerLocationId: true,
+                customerIdDescription: true,
+            },
+        })
+        : [];
+    const summaryByOrderNbr = new Map();
+    for (const summary of summaries) {
+        const key = summary.orderNbr.trim().toUpperCase();
+        if (!summaryByOrderNbr.has(key))
+            summaryByOrderNbr.set(key, summary);
+    }
+    const noticeByOrderNbr = new Map();
+    for (const notice of notices) {
+        const key = notice.orderNbr.trim().toUpperCase();
+        if (!noticeByOrderNbr.has(key))
+            noticeByOrderNbr.set(key, notice);
+    }
+    const orderDisplays = orderNbrs.map((orderNbr) => {
+        const summary = summaryByOrderNbr.get(orderNbr.trim().toUpperCase());
+        const notice = noticeByOrderNbr.get(orderNbr.trim().toUpperCase());
+        const jobDisplay = (0, orderDisplay_1.resolveOrderReadyJobDisplay)({
+            locationId: summary?.locationId,
+            jobName: summary?.jobName,
+        });
+        return (0, orderNotificationLabel_1.buildOrderNotificationLabel)({
+            orderNbr,
+            buyerGroup: notice?.attributeBuyerGroup,
+            customerLocationId: notice?.customerLocationId,
+            customerIdDescription: notice?.customerIdDescription,
+            jobDisplay,
+        });
+    });
     const token = await (0, tokens_1.rotateAppointmentToken)(prisma, appointment.id, appointment.endAt);
     const link = (0, buildLink_1.buildAppointmentLink)(appointment.id, token.token);
     if (appointment.emailOptIn) {
         const recipient = appointment.emailOptInEmail || appointment.customerEmail;
-        const message = (0, buildNoShowEmail_1.buildNoShowEmail)(when, orderList, link);
+        const message = (0, buildNoShowEmail_1.buildNoShowEmail)({
+            when,
+            orderDisplays,
+            link,
+            locationName: location?.name ?? appointment.locationId,
+            locationAddress: location?.address,
+        });
         await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body, { allowTestOverride: false });
     }
     if (appointment.smsOptIn) {
@@ -113,6 +177,7 @@ async function runNoShowSweep(prisma) {
             id: updated.id,
             startAt: updated.startAt,
             endAt: updated.endAt,
+            locationId: updated.locationId,
             emailOptIn: updated.emailOptIn,
             emailOptInEmail: updated.emailOptInEmail,
             customerEmail: updated.customerEmail,

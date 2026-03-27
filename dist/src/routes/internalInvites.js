@@ -5,13 +5,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.internalInvitesRouter = void 0;
 const express_1 = require("express");
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
-const prisma = new client_1.PrismaClient();
 exports.internalInvitesRouter = (0, express_1.Router)();
 const INTERNAL_TOKEN = process.env.INTERNAL_INVITE_TOKEN || "";
 const BAID_REGEX = /^BA\d{7}$/;
@@ -60,7 +59,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
     const zip = normalizeZip(parsed.data.billingZip);
     const email = parsed.data.email.toLowerCase().trim();
     const shouldSendEmail = Boolean(parsed.data.sendEmail);
-    const existingUser = await prisma.users.findUnique({
+    const existingUser = await prisma_1.prisma.users.findUnique({
         where: { email },
         select: { id: true, baid: true },
     });
@@ -99,7 +98,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
         return res.status(502).json({ message: "Unable to verify right now" });
     }
     const now = new Date();
-    const existing = await prisma.inviteCode.findFirst({
+    const existing = await prisma_1.prisma.inviteCode.findFirst({
         where: {
             baid,
             recipientEmail: email,
@@ -117,7 +116,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
         const codeHash = hashInviteCode(code);
         const nextExpiresAt = new Date(now.getTime() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
         if (existing) {
-            const updated = await prisma.inviteCode.update({
+            const updated = await prisma_1.prisma.inviteCode.update({
                 where: { id: existing.id },
                 data: {
                     codeHash,
@@ -131,7 +130,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
             expiresAt = updated.expiresAt;
         }
         else {
-            const created = await prisma.inviteCode.create({
+            const created = await prisma_1.prisma.inviteCode.create({
                 data: {
                     baid,
                     role: "PM",

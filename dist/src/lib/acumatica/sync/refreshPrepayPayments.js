@@ -4,13 +4,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.refreshPrepayPaymentsIfNeeded = refreshPrepayPaymentsIfNeeded;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchPaymentInfo_1 = __importDefault(require("../fetch/fetchPaymentInfo"));
 const writePaymentInfo_1 = __importDefault(require("../write/writePaymentInfo"));
 const orderHelpers_1 = require("../../orders/orderHelpers");
 const erpClient_1 = require("../../queue/erpClient");
-const prisma = new client_1.PrismaClient();
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 function normalizeOrderNbr(value) {
     return String(value || "").trim();
@@ -21,7 +20,7 @@ async function refreshPrepayPaymentsIfNeeded({ baid, orderNbrs, context, forceRe
         console.info(`[payment-refresh][${context}] skip: no orderNbrs`);
         return { calledErp: false, eligibleOrderNbrs: [] };
     }
-    const existingPayments = await prisma.erpOrderPayment.findMany({
+    const existingPayments = await prisma_1.prisma.erpOrderPayment.findMany({
         where: {
             baid,
             orderNbr: { in: uniqueOrderNbrs },

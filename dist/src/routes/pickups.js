@@ -10,8 +10,8 @@ const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderRe
 const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
 const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaService");
 const erpClient_1 = require("../lib/queue/erpClient");
+const prisma_1 = require("../lib/prisma");
 const notifications_1 = require("../notifications");
-const prisma = new client_1.PrismaClient();
 exports.pickupsRouter = (0, express_1.Router)();
 const LOCATION_IDS = [
     "slc-hq",
@@ -190,7 +190,7 @@ async function findActiveOrderConflicts(orderNbrs, startAt, endAt) {
         appointmentWhere.startAt = { lt: endAt };
         appointmentWhere.endAt = { gt: startAt };
     }
-    const rows = await prisma.pickupAppointmentOrder.findMany({
+    const rows = await prisma_1.prisma.pickupAppointmentOrder.findMany({
         where: {
             orderNbr: { in: orderNbrs },
             appointment: appointmentWhere,
@@ -217,7 +217,7 @@ async function findActiveOrderConflicts(orderNbrs, startAt, endAt) {
     }));
 }
 async function findOrderSummary(orderNbr) {
-    return prisma.erpOrderSummary.findFirst({
+    return prisma_1.prisma.erpOrderSummary.findFirst({
         where: { orderNbr, isActive: true },
         orderBy: [{ updatedAt: "desc" }],
         include: {
@@ -321,7 +321,7 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
         console.info("[staff-pickups][lookup] db miss", { orderNbr });
     }
     if (!summary) {
-        const notice = await prisma.orderReadyNotice.findUnique({
+        const notice = await prisma_1.prisma.orderReadyNotice.findUnique({
             where: { orderNbr },
             select: {
                 baid: true,
@@ -392,7 +392,7 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
             error: err instanceof Error ? err.message : String(err),
         });
     }
-    const paymentRow = await prisma.erpOrderPayment.findFirst({
+    const paymentRow = await prisma_1.prisma.erpOrderPayment.findFirst({
         where: {
             baid: summary.baid,
             orderNbr,
@@ -411,7 +411,7 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
         status: paymentRow?.status ?? null,
     };
     const salesPerson = summary.salesPersonNumber
-        ? await prisma.staffUser.findFirst({
+        ? await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber: summary.salesPersonNumber },
             select: {
                 salespersonNumber: true,
@@ -494,7 +494,7 @@ async function validateSelectedItemQty(selectedItems) {
     const lineIds = Array.from(new Set(selectedItems.flatMap((selection) => selection.items.map((item) => item.lineId).filter(Boolean))));
     if (!lineIds.length)
         return null;
-    const lines = await prisma.erpOrderLine.findMany({
+    const lines = await prisma_1.prisma.erpOrderLine.findMany({
         where: { id: { in: lineIds } },
         select: { id: true, openQty: true, orderNbr: true },
     });
@@ -610,7 +610,7 @@ exports.pickupsRouter.get("/", async (req, res) => {
     if (auth.role !== "ADMIN" && !locationId) {
         where.locationId = { in: (0, locationIds_1.expandLocationIds)(auth.locationAccess ?? []) };
     }
-    const pickups = await prisma.pickupAppointment.findMany({
+    const pickups = await prisma_1.prisma.pickupAppointment.findMany({
         where,
         orderBy: { startAt: "asc" },
         include: { orders: true, shipments: true },
@@ -722,7 +722,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
     if (isSalesperson && isBeforeMinAdvance(startAt, new Date())) {
         return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
     }
-    const slotConflict = await prisma.pickupAppointment.findFirst({
+    const slotConflict = await prisma_1.prisma.pickupAppointment.findFirst({
         where: {
             locationId: body.data.locationId,
             status: { in: ACTIVE_APPOINTMENT_STATUSES },
@@ -742,7 +742,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
             },
         });
     }
-    const user = await prisma.users.findUnique({ where: { email: customerEmail } });
+    const user = await prisma_1.prisma.users.findUnique({ where: { email: customerEmail } });
     const orderNbrs = uniqueOrderNbrs(body.data.orderNbrs);
     if (!orderNbrs.length) {
         console.warn("[staff-pickups][create] blocked: no orders");
@@ -857,7 +857,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
             }
         }
     }
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma_1.prisma.$transaction(async (tx) => {
         const appointment = await tx.pickupAppointment.create({
             data: {
                 userId: user?.id ?? null,
@@ -910,7 +910,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
         return appointment;
     });
     try {
-        await (0, notifications_1.notifyStaffScheduled)(prisma, created, orderNbrs);
+        await (0, notifications_1.notifyStaffScheduled)(prisma_1.prisma, created, orderNbrs);
     }
     catch (err) {
         console.error("[notifications] staff schedule failed", err);
@@ -928,7 +928,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
  * GET /api/staff/pickups/:id
  */
 exports.pickupsRouter.get("/:id", async (req, res) => {
-    const pickup = await prisma.pickupAppointment.findUnique({
+    const pickup = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true, shipments: true },
     });
@@ -947,7 +947,7 @@ exports.pickupsRouter.get("/:id", async (req, res) => {
  * GET /api/staff/pickups/:id/items
  */
 exports.pickupsRouter.get("/:id/items", async (req, res) => {
-    const pickup = await prisma.pickupAppointment.findUnique({
+    const pickup = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true, lines: true, shipments: true },
     });
@@ -956,7 +956,7 @@ exports.pickupsRouter.get("/:id/items", async (req, res) => {
     if (!canAccessLocation(req, pickup.locationId))
         return res.status(403).json({ message: "Forbidden" });
     const orderNbrs = pickup.orders.map((order) => order.orderNbr);
-    const orderLines = await prisma.erpOrderLine.findMany({
+    const orderLines = await prisma_1.prisma.erpOrderLine.findMany({
         where: { orderNbr: { in: orderNbrs } },
         select: {
             id: true,
@@ -996,7 +996,7 @@ exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
         .safeParse(req.body);
     if (!body.success)
         return res.status(400).json({ message: "Invalid request body" });
-    const appointment = await prisma.pickupAppointment.findUnique({
+    const appointment = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true, shipments: true },
     });
@@ -1030,7 +1030,7 @@ exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
             createdByUserId: req.auth?.id ?? null,
         }));
     });
-    await prisma.$transaction(async (tx) => {
+    await prisma_1.prisma.$transaction(async (tx) => {
         const orderNbrs = incoming.map((entry) => entry.orderNbr);
         if (orderNbrs.length) {
             await tx.pickupAppointmentShipment.deleteMany({
@@ -1052,7 +1052,7 @@ exports.pickupsRouter.patch("/:id/shipments", async (req, res) => {
             });
         }
     });
-    const updated = await prisma.pickupAppointment.findUnique({
+    const updated = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: appointment.id },
         include: { orders: true, shipments: true },
     });
@@ -1092,7 +1092,7 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
     if (!body.success)
         return res.status(400).json({ message: "Invalid request body" });
     const nextCustomerEmail = body.data.customerEmail?.toLowerCase();
-    const existing = await prisma.pickupAppointment.findUnique({
+    const existing = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true, lines: true },
     });
@@ -1115,7 +1115,7 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
             maxQty: invalidQty.maxQty,
         });
     }
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await prisma_1.prisma.$transaction(async (tx) => {
         if (body.data.orderNbrs) {
             await tx.pickupAppointmentOrder.deleteMany({ where: { appointmentId: existing.id } });
             const orderRows = body.data.orderNbrs.map((orderNbr) => ({
@@ -1195,30 +1195,30 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
     try {
         if (!terminalStatusChange && (timeChanged || locationChanged)) {
             if (notifyCustomer) {
-                await (0, notifications_1.notifyAppointmentRescheduled)(prisma, updated, effectiveOrderNbrs, existing.startAt, existing.endAt, notifyCustomer, true, true);
+                await (0, notifications_1.notifyAppointmentRescheduled)(prisma_1.prisma, updated, effectiveOrderNbrs, existing.startAt, existing.endAt, notifyCustomer, true, true);
             }
             else {
-                await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
+                await (0, notifications_1.cancelAppointmentNotifications)(prisma_1.prisma, updated.id);
             }
             if (updated.status === "Ready") {
-                await (0, notifications_1.notifyAppointmentReady)(prisma, updated, effectiveOrderNbrs, true, true, true);
+                await (0, notifications_1.notifyAppointmentReady)(prisma_1.prisma, updated, effectiveOrderNbrs, true, true, true);
             }
         }
         if (statusChanged && body.data.status === "Completed") {
-            await (0, notifications_1.notifyAppointmentCompleted)(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
+            await (0, notifications_1.notifyAppointmentCompleted)(prisma_1.prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
         }
         if (statusChanged && body.data.status === "Ready") {
-            await (0, notifications_1.notifyAppointmentReady)(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
+            await (0, notifications_1.notifyAppointmentReady)(prisma_1.prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
         }
         if (statusChanged && body.data.status === "Cancelled") {
-            await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
-            await (0, notifications_1.notifyStaffCancelled)(prisma, updated, effectiveOrderNbrs, cancelReason, notifyCustomer);
+            await (0, notifications_1.cancelAppointmentNotifications)(prisma_1.prisma, updated.id);
+            await (0, notifications_1.notifyStaffCancelled)(prisma_1.prisma, updated, effectiveOrderNbrs, cancelReason, notifyCustomer);
         }
         if (statusChanged && body.data.status === "NoShow") {
-            await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
+            await (0, notifications_1.cancelAppointmentNotifications)(prisma_1.prisma, updated.id);
         }
         if (orderListChanged || itemsChanged) {
-            await (0, notifications_1.notifyOrderListChanged)(prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
+            await (0, notifications_1.notifyOrderListChanged)(prisma_1.prisma, updated, effectiveOrderNbrs, notifyCustomer, true, true);
         }
     }
     catch (err) {

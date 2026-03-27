@@ -4,12 +4,12 @@ exports.publicAppointmentsRouter = void 0;
 const express_1 = require("express");
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
+const prisma_1 = require("../lib/prisma");
 const notifications_1 = require("../notifications");
 const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
 const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
-const prisma = new client_1.PrismaClient();
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -144,7 +144,7 @@ function getMinAllowedSlot(now) {
     return { dateStr: minDateStr, minutes: minMinutes };
 }
 async function validateToken(appointmentId, token) {
-    return prisma.appointmentAccessToken.findFirst({
+    return prisma_1.prisma.appointmentAccessToken.findFirst({
         where: {
             appointmentId,
             token,
@@ -154,7 +154,7 @@ async function validateToken(appointmentId, token) {
     });
 }
 async function getLatestLink(appointmentId) {
-    const token = await (0, tokens_1.getActiveToken)(prisma, appointmentId);
+    const token = await (0, tokens_1.getActiveToken)(prisma_1.prisma, appointmentId);
     if (!token)
         return null;
     return (0, buildLink_1.buildAppointmentLink)(appointmentId, token.token);
@@ -165,7 +165,7 @@ async function getLatestLink(appointmentId) {
 exports.publicAppointmentsRouter.get("/short/:token", async (req, res) => {
     const tokenValue = req.params.token;
     const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
-    const token = await prisma.appointmentAccessToken.findFirst({
+    const token = await prisma_1.prisma.appointmentAccessToken.findFirst({
         where: {
             token: tokenValue,
             revokedAt: null,
@@ -189,14 +189,14 @@ exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
     const token = await validateToken(req.params.id, parsed.data.token);
     if (!token)
         return res.status(403).json({ message: "Invalid or expired token" });
-    const appointment = await prisma.pickupAppointment.findUnique({
+    const appointment = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true },
     });
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
     const orderNbrs = appointment.orders.map((order) => order.orderNbr);
-    const selectedLines = await prisma.pickupAppointmentLine.findMany({
+    const selectedLines = await prisma_1.prisma.pickupAppointmentLine.findMany({
         where: { appointmentId: appointment.id },
         select: {
             orderNbr: true,
@@ -227,7 +227,7 @@ exports.publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
     if (!parsed.success) {
         return res.redirect(`${frontend}/unsubscribe?status=invalid`);
     }
-    const token = await prisma.appointmentAccessToken.findFirst({
+    const token = await prisma_1.prisma.appointmentAccessToken.findFirst({
         where: {
             appointmentId: req.params.id,
             token: parsed.data.token,
@@ -236,7 +236,7 @@ exports.publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
     if (!token) {
         return res.redirect(`${frontend}/unsubscribe?status=invalid`);
     }
-    await prisma.pickupAppointment.update({
+    await prisma_1.prisma.pickupAppointment.update({
         where: { id: req.params.id },
         data: {
             emailOptIn: false,
@@ -259,25 +259,30 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     if (!token)
         return res.status(403).json({ message: "Invalid or expired token" });
     const action = req.body?.action;
-    const appointment = await prisma.pickupAppointment.findUnique({
+    const appointment = await prisma_1.prisma.pickupAppointment.findUnique({
         where: { id: req.params.id },
         include: { orders: true },
     });
     if (!appointment)
         return res.status(404).json({ message: "Not found" });
     if (action === "cancel") {
+        if (appointment.status === client_1.PickupAppointmentStatus.NoShow) {
+            return res.status(409).json({
+                message: "Appointment already marked no-show; please reschedule.",
+            });
+        }
         if (appointment.status === client_1.PickupAppointmentStatus.Cancelled) {
             return res.json({ appointment });
         }
         const parsed = cancelSchema.safeParse(req.body);
         if (!parsed.success)
             return res.status(400).json({ message: "Invalid request body" });
-        const updated = await prisma.pickupAppointment.update({
+        const updated = await prisma_1.prisma.pickupAppointment.update({
             where: { id: appointment.id },
             data: { status: client_1.PickupAppointmentStatus.Cancelled },
         });
-        await (0, notifications_1.cancelAppointmentNotifications)(prisma, updated.id);
-        await (0, notifications_1.notifyCustomerCancelled)(prisma, updated, appointment.orders.map((o) => o.orderNbr));
+        await (0, notifications_1.cancelAppointmentNotifications)(prisma_1.prisma, updated.id);
+        await (0, notifications_1.notifyCustomerCancelled)(prisma_1.prisma, updated, appointment.orders.map((o) => o.orderNbr));
         const nextLink = await getLatestLink(updated.id);
         return res.json({ appointment: updated, nextLink });
     }
@@ -285,10 +290,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request body" });
     }
-    const disallowedStatuses = [
-        client_1.PickupAppointmentStatus.Completed,
-        client_1.PickupAppointmentStatus.NoShow,
-    ];
+    const disallowedStatuses = [client_1.PickupAppointmentStatus.Completed];
     if (disallowedStatuses.includes(appointment.status)) {
         return res.status(409).json({ message: "Appointment cannot be rescheduled." });
     }
@@ -328,7 +330,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     const orderedSlots = [...parsed.data.selectedSlots].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
     const startAt = makeDateTime(parsed.data.selectedDate, orderedSlots[0].startTime);
     const endAt = makeDateTime(parsed.data.selectedDate, orderedSlots[orderedSlots.length - 1].endTime);
-    const conflict = await prisma.pickupAppointment.findFirst({
+    const conflict = await prisma_1.prisma.pickupAppointment.findFirst({
         where: {
             id: { not: appointment.id },
             locationId: appointment.locationId,
@@ -341,7 +343,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     if (conflict) {
         return res.status(409).json({ message: "Time slot no longer available." });
     }
-    const updated = await prisma.pickupAppointment.update({
+    const updated = await prisma_1.prisma.pickupAppointment.update({
         where: { id: appointment.id },
         data: {
             startAt,
@@ -349,9 +351,9 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
             status: client_1.PickupAppointmentStatus.Scheduled,
         },
     });
-    await (0, notifications_1.notifyAppointmentRescheduled)(prisma, updated, appointment.orders.map((o) => o.orderNbr), appointment.startAt, appointment.endAt, true);
-    const activeToken = await (0, tokens_1.getActiveToken)(prisma, updated.id);
-    const tokenRow = activeToken ?? (await (0, tokens_1.createAppointmentToken)(prisma, updated.id, updated.endAt));
+    await (0, notifications_1.notifyAppointmentRescheduled)(prisma_1.prisma, updated, appointment.orders.map((o) => o.orderNbr), appointment.startAt, appointment.endAt, true);
+    const activeToken = await (0, tokens_1.getActiveToken)(prisma_1.prisma, updated.id);
+    const tokenRow = activeToken ?? (await (0, tokens_1.createAppointmentToken)(prisma_1.prisma, updated.id, updated.endAt));
     const link = (0, buildLink_1.buildAppointmentLink)(updated.id, tokenRow.token);
     return res.json({ appointment: updated, link });
 });

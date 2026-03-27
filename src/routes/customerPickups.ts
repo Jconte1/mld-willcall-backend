@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
-import {
 import { prisma } from "../lib/prisma";
+import {
   cancelAppointmentSilently,
   cancelAppointmentNotifications,
   notifyCustomerCancelled,

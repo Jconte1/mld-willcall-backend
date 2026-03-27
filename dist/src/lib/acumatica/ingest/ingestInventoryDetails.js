@@ -4,12 +4,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ingestInventoryDetails = ingestInventoryDetails;
-const client_1 = require("@prisma/client");
+const prisma_1 = require("../../prisma");
 const createAcumaticaService_1 = require("../createAcumaticaService");
 const fetchInventoryDetails_1 = __importDefault(require("../fetch/fetchInventoryDetails"));
 const writeInventoryDetails_1 = __importDefault(require("../write/writeInventoryDetails"));
 const erpClient_1 = require("../../queue/erpClient");
-const prisma = new client_1.PrismaClient();
 function nowMs() {
     return Number(process.hrtime.bigint() / 1000000n);
 }
@@ -17,7 +16,7 @@ async function handleOne(restService, baid) {
     const t0 = nowMs();
     const cutoff = new Date();
     cutoff.setFullYear(cutoff.getFullYear() - 1);
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, isActive: true, deliveryDate: { gte: cutoff } },
         select: { orderNbr: true },
     });

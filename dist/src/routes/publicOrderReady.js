@@ -18,7 +18,7 @@ const buildSms_1 = require("../notifications/templates/sms/buildSms");
 const orderDisplay_1 = require("../notifications/orderReady/orderDisplay");
 const orderNotificationLabel_1 = require("../notifications/orderReady/orderNotificationLabel");
 const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
-const prisma = new client_1.PrismaClient();
+const prisma_1 = require("../lib/prisma");
 exports.publicOrderReadyRouter = (0, express_1.Router)();
 const tokenSchema = zod_1.z.object({
     token: zod_1.z.string().min(1),
@@ -77,7 +77,7 @@ function getClientIp(req) {
     return req.ip || req.connection?.remoteAddress || "";
 }
 async function checkLockout(key) {
-    const row = await prisma.inviteLockout.findUnique({ where: { key } });
+    const row = await prisma_1.prisma.inviteLockout.findUnique({ where: { key } });
     if (!row?.lockedUntil)
         return { locked: false };
     if (row.lockedUntil.getTime() <= Date.now())
@@ -86,9 +86,9 @@ async function checkLockout(key) {
 }
 async function recordAttempt(key, ok) {
     const now = new Date();
-    const row = await prisma.inviteLockout.findUnique({ where: { key } });
+    const row = await prisma_1.prisma.inviteLockout.findUnique({ where: { key } });
     if (!row) {
-        await prisma.inviteLockout.create({
+        await prisma_1.prisma.inviteLockout.create({
             data: {
                 key,
                 attemptCount: ok ? 0 : 1,
@@ -99,7 +99,7 @@ async function recordAttempt(key, ok) {
         return;
     }
     if (ok) {
-        await prisma.inviteLockout.update({
+        await prisma_1.prisma.inviteLockout.update({
             where: { key },
             data: { attemptCount: 0, lastAttemptAt: now, lockedUntil: null },
         });
@@ -108,7 +108,7 @@ async function recordAttempt(key, ok) {
     const withinWindow = row.lastAttemptAt && now.getTime() - row.lastAttemptAt.getTime() < LOCKOUT_WINDOW_MS;
     const nextCount = withinWindow ? row.attemptCount + 1 : 1;
     const lockedUntil = nextCount >= LOCKOUT_MAX_ATTEMPTS ? new Date(now.getTime() + LOCKOUT_WINDOW_MS) : null;
-    await prisma.inviteLockout.update({
+    await prisma_1.prisma.inviteLockout.update({
         where: { key },
         data: { attemptCount: nextCount, lastAttemptAt: now, lockedUntil },
     });
@@ -133,13 +133,13 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         return res.status(400).json({ message: "Invalid token" });
     }
     const orderNbr = req.params.orderNbr;
-    const notice = await prisma.orderReadyNotice.findUnique({
+    const notice = await prisma_1.prisma.orderReadyNotice.findUnique({
         where: { orderNbr },
     });
     mark("notice");
     if (!notice)
         return res.status(404).json({ message: "Not found" });
-    const token = await prisma.orderReadyAccessToken.findFirst({
+    const token = await prisma_1.prisma.orderReadyAccessToken.findFirst({
         where: { orderReadyId: notice.id, token: parsed.data.token, revokedAt: null },
     });
     mark("token");
@@ -147,13 +147,13 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         return res.status(403).json({ message: "Invalid token" });
     let appointment = null;
     if (notice.scheduledAppointmentId) {
-        appointment = await prisma.pickupAppointment.findUnique({
+        appointment = await prisma_1.prisma.pickupAppointment.findUnique({
             where: { id: notice.scheduledAppointmentId },
             include: { orders: true },
         });
     }
     else {
-        const appointmentOrder = await prisma.pickupAppointmentOrder.findFirst({
+        const appointmentOrder = await prisma_1.prisma.pickupAppointmentOrder.findFirst({
             where: {
                 orderNbr,
                 appointment: { status: { in: SCHEDULED_STATUSES } },
@@ -163,7 +163,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         });
         appointment = appointmentOrder?.appointment ?? null;
         if (appointment?.id) {
-            await prisma.orderReadyNotice.update({
+            await prisma_1.prisma.orderReadyNotice.update({
                 where: { id: notice.id },
                 data: { scheduledAppointmentId: appointment.id },
             });
@@ -174,7 +174,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     let shouldRefreshDetails = false;
     let salesPersonNumber = null;
     if (notice.baid) {
-        const summary = await prisma.erpOrderSummary.findUnique({
+        const summary = await prisma_1.prisma.erpOrderSummary.findUnique({
             where: { baid_orderNbr: { baid: notice.baid, orderNbr } },
             select: { updatedAt: true, lastAcumaticaPullAt: true, salesPersonNumber: true },
         });
@@ -259,7 +259,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             });
         }
     }
-    const readyLineRows = await prisma.orderReadyLine.findMany({
+    const readyLineRows = await prisma_1.prisma.orderReadyLine.findMany({
         where: { orderReadyId: notice.id },
         select: { inventoryId: true },
     });
@@ -274,7 +274,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     });
     let lines = readyInventoryIds.size === 0
         ? []
-        : await prisma.erpOrderLine.findMany({
+        : await prisma_1.prisma.erpOrderLine.findMany({
             where: {
                 orderNbr,
                 inventoryId: { in: Array.from(readyInventoryIds) },
@@ -306,7 +306,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
                 status: notice.status,
                 shipVia: notice.shipVia,
             });
-            lines = await prisma.erpOrderLine.findMany({
+            lines = await prisma_1.prisma.erpOrderLine.findMany({
                 where: {
                     orderNbr,
                     inventoryId: { in: Array.from(readyInventoryIds) },
@@ -343,7 +343,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         amount: (0, orderHelpers_1.toNumber)(line.amount),
         taxRate: (0, orderHelpers_1.toNumber)(line.taxRate),
     }));
-    const payment = await prisma.erpOrderPayment.findFirst({
+    const payment = await prisma_1.prisma.erpOrderPayment.findFirst({
         where: {
             orderNbr,
             ...(notice.baid ? { baid: notice.baid } : {}),
@@ -356,7 +356,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         },
     });
     const salesPerson = salesPersonNumber
-        ? await prisma.staffUser.findFirst({
+        ? await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber: salesPersonNumber },
             select: {
                 salespersonNumber: true,
@@ -414,7 +414,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
 exports.publicOrderReadyRouter.get("/short/:token", async (req, res) => {
     const tokenValue = req.params.token;
     const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
-    const token = await prisma.orderReadyAccessToken.findFirst({
+    const token = await prisma_1.prisma.orderReadyAccessToken.findFirst({
         where: { token: tokenValue, revokedAt: null },
         include: { orderReady: true },
     });
@@ -452,7 +452,7 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
             message: "If your information matches, you will receive a link shortly.",
         });
     }
-    const notice = await prisma.orderReadyNotice.findUnique({
+    const notice = await prisma_1.prisma.orderReadyNotice.findUnique({
         where: { orderNbr },
     });
     const contactEmail = notice ? resolveNoticeEmail(notice) : null;
@@ -464,9 +464,9 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
     if (ipKey)
         await recordAttempt(ipKey, matched);
     if (match && notice) {
-        const tokenRow = await (0, tokens_1.rotateOrderReadyToken)(prisma, notice.id);
+        const tokenRow = await (0, tokens_1.rotateOrderReadyToken)(prisma_1.prisma, notice.id);
         const link = (0, buildLink_1.buildOrderReadyLink)(orderNbr, tokenRow.token);
-        const summary = await prisma.erpOrderSummary.findFirst({
+        const summary = await prisma_1.prisma.erpOrderSummary.findFirst({
             where: {
                 orderNbr,
                 ...(notice.baid ? { baid: notice.baid } : {}),
@@ -501,13 +501,13 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
             const smsBody = (0, buildSms_1.applySmsCompliance)(smsBase, includeStopLine);
             await (0, sendSms_1.sendSms)(phone, smsBody, { allowTestOverride: false });
             if (!notice.smsFirstSentAt) {
-                await prisma.orderReadyNotice.update({
+                await prisma_1.prisma.orderReadyNotice.update({
                     where: { id: notice.id },
                     data: { smsFirstSentAt: new Date() },
                 });
             }
         }
-        await prisma.orderReadyNotice.update({
+        await prisma_1.prisma.orderReadyNotice.update({
             where: { id: notice.id },
             data: {
                 lastNotifiedAt: new Date(),

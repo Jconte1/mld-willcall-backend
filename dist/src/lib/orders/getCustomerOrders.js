@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerOrders = getCustomerOrders;
 const client_1 = require("@prisma/client");
-const prisma = new client_1.PrismaClient();
+const prisma_1 = require("../prisma");
 const orderHelpers_1 = require("./orderHelpers");
 const refreshPrepayPayments_1 = require("../acumatica/sync/refreshPrepayPayments");
 const ACTIVE_APPOINTMENT_STATUSES = [
@@ -12,7 +12,7 @@ const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Ready,
 ];
 async function getCustomerOrders(baid) {
-    const summaries = await prisma.erpOrderSummary.findMany({
+    const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
         where: { baid, isActive: true },
         orderBy: [{ deliveryDate: "asc" }, { orderNbr: "asc" }],
         select: {
@@ -52,7 +52,7 @@ async function getCustomerOrders(baid) {
         });
     }
     const refreshedPayments = orderNbrs.length
-        ? await prisma.erpOrderPayment.findMany({
+        ? await prisma_1.prisma.erpOrderPayment.findMany({
             where: {
                 baid,
                 orderNbr: { in: orderNbrs },
@@ -71,7 +71,7 @@ async function getCustomerOrders(baid) {
         .map((summary) => summary.salesPersonNumber)
         .filter((value) => Boolean(value))));
     const salesPeople = salesNumbers.length
-        ? await prisma.staffUser.findMany({
+        ? await prisma_1.prisma.staffUser.findMany({
             where: { salespersonNumber: { in: salesNumbers } },
             select: {
                 salespersonNumber: true,
@@ -91,7 +91,7 @@ async function getCustomerOrders(baid) {
         },
     ]));
     const appointmentOrders = orderNbrs.length
-        ? await prisma.pickupAppointmentOrder.findMany({
+        ? await prisma_1.prisma.pickupAppointmentOrder.findMany({
             where: {
                 orderNbr: { in: orderNbrs },
                 appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
@@ -100,7 +100,7 @@ async function getCustomerOrders(baid) {
         })
         : [];
     const completedAppointmentOrders = orderNbrs.length
-        ? await prisma.pickupAppointmentOrder.findMany({
+        ? await prisma_1.prisma.pickupAppointmentOrder.findMany({
             where: {
                 orderNbr: { in: orderNbrs },
                 appointment: { status: client_1.PickupAppointmentStatus.Completed },
@@ -144,7 +144,7 @@ async function getCustomerOrders(baid) {
     }
     const summaryIds = summaries.map((s) => s.id);
     const lines = summaryIds.length
-        ? await prisma.erpOrderLine.findMany({
+        ? await prisma_1.prisma.erpOrderLine.findMany({
             where: { orderSummaryId: { in: summaryIds } },
             select: {
                 orderSummaryId: true,

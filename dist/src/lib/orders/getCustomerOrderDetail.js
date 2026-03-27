@@ -2,9 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerOrderDetail = getCustomerOrderDetail;
 const client_1 = require("@prisma/client");
+const prisma_1 = require("../prisma");
 const orderHelpers_1 = require("./orderHelpers");
 const refreshPrepayPayments_1 = require("../acumatica/sync/refreshPrepayPayments");
-const prisma = new client_1.PrismaClient();
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
@@ -12,7 +12,7 @@ const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Ready,
 ];
 async function getCustomerOrderDetail(baid, orderNbr) {
-    const summary = await prisma.erpOrderSummary.findUnique({
+    const summary = await prisma_1.prisma.erpOrderSummary.findUnique({
         where: { baid_orderNbr: { baid, orderNbr } },
         include: {
             ErpOrderAddress: true,
@@ -38,7 +38,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             error: err instanceof Error ? err.message : String(err),
         });
     }
-    const paymentRow = await prisma.erpOrderPayment.findFirst({
+    const paymentRow = await prisma_1.prisma.erpOrderPayment.findFirst({
         where: {
             baid,
             orderNbr,
@@ -82,7 +82,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
     const unpaidBalance = (0, orderHelpers_1.toNumber)(paymentRow?.unpaidBalance ?? null);
     const paymentStatus = (0, orderHelpers_1.inferPaymentStatus)(unpaidBalance, paymentRow?.terms ?? null, paymentRow?.status ?? null);
     const warehouses = Array.from(new Set(lines.map((l) => l.warehouse).filter(Boolean))).sort();
-    const appointmentOrder = await prisma.pickupAppointmentOrder.findFirst({
+    const appointmentOrder = await prisma_1.prisma.pickupAppointmentOrder.findFirst({
         where: {
             orderNbr,
             appointment: { status: { in: ACTIVE_APPOINTMENT_STATUSES } },
@@ -91,7 +91,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
         include: { appointment: true },
     });
     const appointmentOrders = appointmentOrder?.appointment
-        ? await prisma.pickupAppointmentOrder.findMany({
+        ? await prisma_1.prisma.pickupAppointmentOrder.findMany({
             where: { appointmentId: appointmentOrder.appointment.id },
             select: { orderNbr: true },
         })
@@ -106,7 +106,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
             orderNbrs: appointmentOrders.map((row) => row.orderNbr),
         }
         : null;
-    const lastCompletedAppointment = await prisma.pickupAppointmentOrder.findFirst({
+    const lastCompletedAppointment = await prisma_1.prisma.pickupAppointmentOrder.findFirst({
         where: {
             orderNbr,
             appointment: { status: client_1.PickupAppointmentStatus.Completed },
@@ -115,7 +115,7 @@ async function getCustomerOrderDetail(baid, orderNbr) {
         orderBy: { appointment: { endAt: "desc" } },
     });
     const salesPerson = summary.salesPersonNumber
-        ? await prisma.staffUser.findFirst({
+        ? await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber: summary.salesPersonNumber },
             select: {
                 salespersonNumber: true,
