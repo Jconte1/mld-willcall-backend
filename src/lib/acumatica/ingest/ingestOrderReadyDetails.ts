@@ -1,4 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../prisma";
+
 import { randomUUID } from "node:crypto";
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchAddressContact from "../fetch/fetchAddressContact";
@@ -8,8 +9,6 @@ import writeAddressContact from "../write/writeAddressContact";
 import writePaymentInfo from "../write/writePaymentInfo";
 import writeInventoryDetails from "../write/writeInventoryDetails";
 import { shouldUseQueueErp } from "../../queue/erpClient";
-
-const prisma = new PrismaClient();
 
 type RefreshInput = {
   baid: string;

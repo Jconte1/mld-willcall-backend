@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { PrismaClient, PickupAppointmentStatus, Prisma } from "@prisma/client";
+import { PickupAppointmentStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } from "../middleware/auth";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
@@ -8,6 +8,7 @@ import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrep
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
 import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
 import {
+import { prisma } from "../lib/prisma";
   cancelAppointmentNotifications,
   notifyAppointmentCompleted,
   notifyAppointmentRescheduled,
@@ -17,7 +18,6 @@ import {
   notifyStaffScheduled,
 } from "../notifications";
 
-const prisma = new PrismaClient();
 export const pickupsRouter = Router();
 
 const LOCATION_IDS = [

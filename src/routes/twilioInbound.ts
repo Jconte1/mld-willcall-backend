@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
 
 export const twilioInboundRouter = Router();
-const prisma = new PrismaClient();
 
 const STOP_WORDS = new Set(["STOP", "STOPALL", "END", "CANCEL", "UNSUBSCRIBE", "QUIT"]);
 const START_WORDS = new Set(["START", "UNSTOP", "YES"]);

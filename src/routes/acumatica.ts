@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { runOneTimeSync, OneTimeSyncKey } from "../lib/acumatica/oneTimeSync";
 import { resolveSingleBaid } from "../lib/acumatica/resolveBaid";
 import { ingestOrderSummaries } from "../lib/acumatica/ingest/ingestOrderSummaries";
@@ -9,7 +10,6 @@ import { ingestInventoryDetails } from "../lib/acumatica/ingest/ingestInventoryD
 import { ingestAddressContact } from "../lib/acumatica/ingest/ingestAddressContact";
 
 export const acumaticaRouter = Router();
-const prisma = new PrismaClient();
 
 const SYNC_KEYS: OneTimeSyncKey[] = [
   "order-summaries",

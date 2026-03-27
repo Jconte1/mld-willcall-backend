@@ -1,11 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../prisma";
+
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchAddressContact from "../fetch/fetchAddressContact";
 import writeAddressContact from "../write/writeAddressContact";
 import { oneYearAgoDenver, toDenverDateTimeOffsetLiteral } from "../../time/denver";
 import { shouldUseQueueErp } from "../../queue/erpClient";
-
-const prisma = new PrismaClient();
 
 function nowMs() {
   return Number(process.hrtime.bigint() / 1_000_000n);

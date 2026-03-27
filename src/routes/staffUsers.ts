@@ -1,13 +1,13 @@
 import { Router } from "express";
-import { PrismaClient, StaffRole } from "@prisma/client";
+import { StaffRole } from "@prisma/client";
 import { z } from "zod";
 import { generateTempPassword, hashPassword } from "../lib/passwords";
 import { normalizeLocationIds } from "../lib/locationIds";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildStaffOnboardingEmail } from "../notifications/templates/email/buildStaffOnboardingEmail";
+import { prisma } from "../lib/prisma";
 
-const prisma = new PrismaClient();
 export const staffUsersRouter = Router();
 
 staffUsersRouter.use(requireAuth);

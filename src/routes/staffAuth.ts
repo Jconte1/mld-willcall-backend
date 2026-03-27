@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { verifyPassword, validatePasswordRules, hashPassword } from "../lib/passwords";
@@ -23,7 +24,6 @@ function logInstance(label: string) {
 import { normalizeLocationIds } from "../lib/locationIds";
 import { requireAuth } from "../middleware/auth";
 
-const prisma = new PrismaClient();
 export const staffAuthRouter = Router();
 
 const LOGIN_BODY = z.object({

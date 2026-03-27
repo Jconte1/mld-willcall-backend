@@ -1,6 +1,5 @@
-import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { PickupAppointmentStatus } from "@prisma/client";
+import { prisma } from "../prisma";
 
 import {
   inferFulfillmentStatus,

@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
+import { PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import {
+import { prisma } from "../lib/prisma";
   cancelAppointmentSilently,
   cancelAppointmentNotifications,
   notifyCustomerCancelled,
@@ -9,7 +10,6 @@ import {
 } from "../notifications";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 
-const prisma = new PrismaClient();
 export const customerPickupsRouter = Router();
 
 const TIME_RE = /^\d{2}:\d{2}$/;

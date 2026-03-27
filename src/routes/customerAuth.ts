@@ -1,12 +1,12 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { z } from "zod";
 import crypto from "node:crypto";
 
 import { hashPassword, verifyPassword, validatePasswordRules } from "../lib/passwords";
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 
-const prisma = new PrismaClient();
 export const customerAuthRouter = Router();
 
 const BAID_REGEX = /^BA\d{7}$/;

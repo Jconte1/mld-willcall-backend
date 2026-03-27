@@ -1,8 +1,7 @@
 import "dotenv/config";
-import { PrismaClient, StaffRole } from "@prisma/client";
+import { StaffRole } from "@prisma/client";
 import { hashPassword } from "../src/lib/passwords";
-
-const prisma = new PrismaClient();
+import { prisma } from "../src/lib/prisma";
 
 async function main() {
   const email = process.env.INITIAL_ADMIN_EMAIL;

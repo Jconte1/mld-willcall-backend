@@ -1,8 +1,7 @@
+import { prisma } from "../../prisma";
 // writeInventoryDetails.ts
-import { PrismaClient } from "@prisma/client";
-import { randomUUID } from "node:crypto";
 
-const prisma = new PrismaClient();
+import { randomUUID } from "node:crypto";
 
 type AnyRow = Record<string, any>;
 

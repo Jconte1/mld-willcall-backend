@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
+import { PickupAppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
@@ -15,8 +15,8 @@ import { applySmsCompliance } from "../notifications/templates/sms/buildSms";
 import { resolveOrderReadyJobDisplay } from "../notifications/orderReady/orderDisplay";
 import { buildOrderNotificationLabel } from "../notifications/orderReady/orderNotificationLabel";
 import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
+import { prisma } from "../lib/prisma";
 
-const prisma = new PrismaClient();
 export const publicOrderReadyRouter = Router();
 
 const tokenSchema = z.object({

@@ -1,10 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { runPendingJobs } from "./jobs/runPendingJobs";
 import { runNoShowSweep } from "./appointments/runNoShowSweep";
 import { runOrderReadySync } from "./orderReady/runOrderReadySync";
 import { runOrderReadyEscalations } from "./orderReady/runOrderReadyEscalations";
 
-const prisma = new PrismaClient();
 const intervalMs = Number(process.env.NOTIFICATIONS_WORKER_INTERVAL_MS || 60000);
 
 async function tick() {

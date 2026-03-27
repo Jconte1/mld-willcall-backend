@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { resolveSingleBaid } from "../lib/acumatica/resolveBaid";
 import { runCustomerDeltaSync } from "../lib/acumatica/sync/syncCustomerAccount";
 import { toDenverDateTimeOffsetLiteralAt } from "../lib/time/denver";
 
-const prisma = new PrismaClient();
 
 export const customerSyncRouter = Router();
 

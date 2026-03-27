@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { z } from "zod";
 import crypto from "node:crypto";
 
@@ -7,7 +8,6 @@ import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
 
-const prisma = new PrismaClient();
 export const customerInvitesRouter = Router();
 
 const BAID_REGEX = /^BA\d{7}$/;

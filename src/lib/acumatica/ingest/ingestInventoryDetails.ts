@@ -1,10 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../prisma";
+
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchInventoryDetails from "../fetch/fetchInventoryDetails";
 import writeInventoryDetails from "../write/writeInventoryDetails";
 import { shouldUseQueueErp } from "../../queue/erpClient";
-
-const prisma = new PrismaClient();
 
 function nowMs() {
   return Number(process.hrtime.bigint() / 1_000_000n);

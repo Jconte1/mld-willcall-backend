@@ -1,7 +1,6 @@
-import { PrismaClient } from "@prisma/client";
-import { randomUUID } from "node:crypto";
+import { prisma } from "../../prisma";
 
-const prisma = new PrismaClient();
+import { randomUUID } from "node:crypto";
 
 type AnyRow = Record<string, any>;
 

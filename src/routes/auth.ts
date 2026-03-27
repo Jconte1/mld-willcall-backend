@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { z } from "zod";
 import { makeRandomToken, sha256 } from "../lib/tokens";
 import { hashPassword } from "../lib/passwords";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 
-const prisma = new PrismaClient();
 export const authRouter = Router();
 
 const FORGOT_RESPONSE = {

@@ -1,13 +1,12 @@
-import { PrismaClient, PickupAppointmentStatus } from "@prisma/client";
+import { PickupAppointmentStatus } from "@prisma/client";
 import {
+import { prisma } from "../prisma";
   inferFulfillmentStatus,
   inferOrderType,
   inferPaymentStatus,
   toNumber,
 } from "./orderHelpers";
 import { refreshPrepayPaymentsIfNeeded } from "../acumatica/sync/refreshPrepayPayments";
-
-const prisma = new PrismaClient();
 
 const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,

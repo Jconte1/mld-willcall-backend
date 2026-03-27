@@ -1,11 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../prisma";
+
 import { createAcumaticaService } from "../createAcumaticaService";
 import fetchPaymentInfo from "../fetch/fetchPaymentInfo";
 import writePaymentInfo from "../write/writePaymentInfo";
 import { toNumber } from "../../orders/orderHelpers";
 import { shouldUseQueueErp } from "../../queue/erpClient";
-
-const prisma = new PrismaClient();
 
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 

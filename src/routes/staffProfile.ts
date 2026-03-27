@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { requireAuth } from "../middleware/auth";
 import { normalizeLocationIds } from "../lib/locationIds";
 
-const prisma = new PrismaClient();
 export const staffProfileRouter = Router();
 
 staffProfileRouter.use(requireAuth);
