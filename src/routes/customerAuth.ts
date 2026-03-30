@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 
 import { hashPassword, verifyPassword, validatePasswordRules } from "../lib/passwords";
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
+import { clearFailedLogin, getLoginThrottleState, recordFailedLogin } from "../lib/loginThrottle";
 
 export const customerAuthRouter = Router();
 
@@ -310,34 +311,81 @@ customerAuthRouter.post("/login", async (req, res) => {
 
   console.log("[willcall][customer][login] start", { email });
 
+  const throttle = await getLoginThrottleState("customer", email);
+  if (throttle.blocked) {
+    return res.status(429).json({
+      message: "Too many failed attempts. Account temporarily locked.",
+      attemptsLeft: 0,
+      lockedUntil: throttle.lockedUntil?.toISOString(),
+    });
+  }
+
   const user = await prisma.users.findUnique({ where: { email } });
   if (!user) {
+    const failed = await recordFailedLogin("customer", email);
     console.warn("[willcall][customer][login] invalid credentials (no user)", {
       email,
+      attemptsLeft: failed.attemptsLeft,
       ms: msSince(t0),
     });
-    return res.status(401).json({ message: "Invalid credentials" });
+    if (failed.blocked) {
+      return res.status(429).json({
+        message: "Too many failed attempts. Account temporarily locked.",
+        attemptsLeft: 0,
+        lockedUntil: failed.lockedUntil?.toISOString(),
+      });
+    }
+    return res.status(401).json({
+      message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+      attemptsLeft: failed.attemptsLeft,
+    });
   }
 
   const cred = await prisma.customerCredential.findUnique({ where: { userId: user.id } });
   if (!cred) {
+    const failed = await recordFailedLogin("customer", email);
     console.warn("[willcall][customer][login] invalid credentials (no cred)", {
       email,
       userId: user.id,
+      attemptsLeft: failed.attemptsLeft,
       ms: msSince(t0),
     });
-    return res.status(401).json({ message: "Invalid credentials" });
+    if (failed.blocked) {
+      return res.status(429).json({
+        message: "Too many failed attempts. Account temporarily locked.",
+        attemptsLeft: 0,
+        lockedUntil: failed.lockedUntil?.toISOString(),
+      });
+    }
+    return res.status(401).json({
+      message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+      attemptsLeft: failed.attemptsLeft,
+    });
   }
 
   const ok = await verifyPassword(password, cred.passwordHash);
   if (!ok) {
+    const failed = await recordFailedLogin("customer", email);
     console.warn("[willcall][customer][login] invalid credentials (bad password)", {
       email,
       userId: user.id,
+      attemptsLeft: failed.attemptsLeft,
       ms: msSince(t0),
     });
-    return res.status(401).json({ message: "Invalid credentials" });
+    if (failed.blocked) {
+      return res.status(429).json({
+        message: "Too many failed attempts. Account temporarily locked.",
+        attemptsLeft: 0,
+        lockedUntil: failed.lockedUntil?.toISOString(),
+      });
+    }
+    return res.status(401).json({
+      message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+      attemptsLeft: failed.attemptsLeft,
+    });
   }
+
+  await clearFailedLogin("customer", email);
 
   console.log("[willcall][customer][login] success", {
     userId: user.id,

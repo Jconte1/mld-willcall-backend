@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { verifyPassword, validatePasswordRules, hashPassword } from "../lib/passwords";
+import { clearFailedLogin, getLoginThrottleState, recordFailedLogin } from "../lib/loginThrottle";
 
 function logInstance(label: string) {
   const raw = process.env.DATABASE_URL || "";
@@ -55,11 +56,48 @@ staffAuthRouter.post("/login", async (req, res) => {
   const email = parsed.data.email.toLowerCase();
   if (!email.endsWith("@mld.com")) return res.status(401).json({ message: "Invalid credentials" });
 
+  const throttle = await getLoginThrottleState("staff", email);
+  if (throttle.blocked) {
+    return res.status(429).json({
+      message: "Too many failed attempts. Account temporarily locked.",
+      attemptsLeft: 0,
+      lockedUntil: throttle.lockedUntil?.toISOString(),
+    });
+  }
+
   const user = await prisma.staffUser.findUnique({ where: { email } });
-  if (!user || !user.isActive) return res.status(401).json({ message: "Invalid credentials" });
+  if (!user || !user.isActive) {
+    const failed = await recordFailedLogin("staff", email);
+    if (failed.blocked) {
+      return res.status(429).json({
+        message: "Too many failed attempts. Account temporarily locked.",
+        attemptsLeft: 0,
+        lockedUntil: failed.lockedUntil?.toISOString(),
+      });
+    }
+    return res.status(401).json({
+      message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+      attemptsLeft: failed.attemptsLeft,
+    });
+  }
 
   const ok = await verifyPassword(parsed.data.password, user.passwordHash);
-  if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+  if (!ok) {
+    const failed = await recordFailedLogin("staff", email);
+    if (failed.blocked) {
+      return res.status(429).json({
+        message: "Too many failed attempts. Account temporarily locked.",
+        attemptsLeft: 0,
+        lockedUntil: failed.lockedUntil?.toISOString(),
+      });
+    }
+    return res.status(401).json({
+      message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+      attemptsLeft: failed.attemptsLeft,
+    });
+  }
+
+  await clearFailedLogin("staff", email);
 
   const secret = process.env.JWT_SECRET;
   if (!secret) return res.status(500).json({ message: "Server misconfigured: JWT_SECRET missing" });
