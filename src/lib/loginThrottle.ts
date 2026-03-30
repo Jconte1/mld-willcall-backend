@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 60 * 60 * 1000; // 1 hour rolling window
-const LOGIN_LOCK_MS = 60 * 60 * 1000; // 1 hour lockout
+const LOGIN_LOCK_MS = 15 * 60 * 1000; // 15 minute lockout
 
 function keyFor(type: "staff" | "customer", email: string) {
   return `login:${type}:${email.toLowerCase().trim()}`;
@@ -74,4 +74,3 @@ export async function clearFailedLogin(type: "staff" | "customer", email: string
     data: { count: 0, lockedUntil: null, windowStart: new Date() },
   });
 }
-
