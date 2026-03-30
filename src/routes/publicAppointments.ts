@@ -11,16 +11,14 @@ import { buildAppointmentLink } from "../notifications/links/buildLink";
 import { getActiveToken, createAppointmentToken } from "../notifications/links/tokens";
 import { toNumber } from "../lib/orders/orderHelpers";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
+import { getPickupHours } from "../lib/pickupHours";
 
 export const publicAppointmentsRouter = Router();
 
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_MINUTES = 15;
-const OPEN_HOUR = 7;
-const CLOSE_HOUR = 17;
 const MIN_ADVANCE_MINUTES = 4 * 60;
-const NEXT_DAY_EARLIEST_MINUTES = 10 * 60;
 
 const tokenSchema = z.object({
   token: z.string().min(1),
@@ -110,10 +108,11 @@ function ceilToSlot(minutes: number) {
   return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 }
 
-function ensureWithinBusinessHours(dateStr: string, slots: { startTime: string }[]) {
+function ensureWithinBusinessHours(locationId: string, dateStr: string, slots: { startTime: string }[]) {
   if (isWeekend(dateStr)) return false;
-  const startMinutes = OPEN_HOUR * 60;
-  const lastStartMinutes = (CLOSE_HOUR * 60) - SLOT_MINUTES;
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const startMinutes = openHour * 60;
+  const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
   return slots.every((slot) => {
     const minutes = timeToMinutes(slot.startTime);
     return minutes >= startMinutes && minutes <= lastStartMinutes;
@@ -130,7 +129,9 @@ function makeDateTime(dateStr: string, time: string) {
   return makeDenverDateTime(dateStr, time);
 }
 
-function getMinAllowedSlot(now: Date) {
+function getMinAllowedSlot(now: Date, locationId: string) {
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const openMinutes = openHour * 60;
   const timeStr = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Denver",
     hour: "2-digit",
@@ -139,11 +140,11 @@ function getMinAllowedSlot(now: Date) {
   }).format(now);
   const [hour, minute] = timeStr.split(":").map((part) => Number(part));
   const todayStr = formatDateInDenver(now);
-  const closeMinutes = CLOSE_HOUR * 60;
+  const closeMinutes = closeHour * 60;
   const lastStartMinutes = closeMinutes - SLOT_MINUTES;
 
   if (isWeekend(todayStr)) {
-    return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+    return { dateStr: nextBusinessDateStr(todayStr), minutes: openMinutes + MIN_ADVANCE_MINUTES };
   }
 
   const nowMinutes = hour * 60 + minute;
@@ -153,13 +154,13 @@ function getMinAllowedSlot(now: Date) {
   if (minMinutes > closeMinutes) {
     const remaining = minMinutes - closeMinutes;
     minDateStr = nextBusinessDateStr(todayStr);
-    minMinutes = OPEN_HOUR * 60 + remaining;
+    minMinutes = openMinutes + remaining;
   }
 
-  if (minMinutes < OPEN_HOUR * 60) minMinutes = OPEN_HOUR * 60;
+  if (minMinutes < openMinutes) minMinutes = openMinutes;
   if (minMinutes > lastStartMinutes) {
     minDateStr = nextBusinessDateStr(minDateStr);
-    minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+    minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
   }
 
   minMinutes = ceilToSlot(minMinutes);
@@ -347,10 +348,10 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
     return res.status(400).json({ message: "Selected slots do not match appointment size." });
   }
 
-  if (!ensureWithinBusinessHours(parsed.data.selectedDate, parsed.data.selectedSlots)) {
+  if (!ensureWithinBusinessHours(appointment.locationId, parsed.data.selectedDate, parsed.data.selectedSlots)) {
     return res.status(400).json({ message: "Selected time is outside business hours." });
   }
-  const minAllowed = getMinAllowedSlot(new Date());
+  const minAllowed = getMinAllowedSlot(new Date(), appointment.locationId);
   const now = new Date();
   console.log("[public-appointments][min-advance]", {
     now: now.toISOString(),

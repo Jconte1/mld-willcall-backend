@@ -9,6 +9,7 @@ import {
   notifyCustomerScheduled,
 } from "../notifications";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
+import { getPickupHours } from "../lib/pickupHours";
 
 export const customerPickupsRouter = Router();
 
@@ -116,11 +117,8 @@ type PendingAppointment = {
 };
 
 const DENVER_TZ = "America/Denver";
-const OPEN_HOUR = 7;
-const CLOSE_HOUR = 17;
 const SLOT_MINUTES = 15;
 const MIN_ADVANCE_MINUTES = 4 * 60;
-const NEXT_DAY_EARLIEST_MINUTES = 10 * 60;
 
 async function hasAccountAccess(
   userId: string,
@@ -242,13 +240,15 @@ function makeDateTime(dateStr: string, time: string) {
 }
 
 function buildSlotsForDate(
+  locationId: string,
   dateStr: string,
   blocked: Set<string>,
   minStartMinutes: number | null
 ) {
   const slots = [];
-  const startMinutes = OPEN_HOUR * 60;
-  const lastStartMinutes = (CLOSE_HOUR * 60) - SLOT_MINUTES;
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const startMinutes = openHour * 60;
+  const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
 
   for (let minutes = startMinutes; minutes <= lastStartMinutes; minutes += SLOT_MINUTES) {
     const startTime = minutesToTime(minutes);
@@ -266,10 +266,15 @@ function buildSlotsForDate(
   return slots;
 }
 
-function ensureWithinBusinessHours(dateStr: string, slots: { startTime: string; endTime: string }[]) {
+function ensureWithinBusinessHours(
+  locationId: string,
+  dateStr: string,
+  slots: { startTime: string; endTime: string }[]
+) {
   if (isWeekend(dateStr)) return false;
-  const startMinutes = OPEN_HOUR * 60;
-  const lastStartMinutes = (CLOSE_HOUR * 60) - SLOT_MINUTES;
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const startMinutes = openHour * 60;
+  const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
   return slots.every((slot) => {
     const minutes = timeToMinutes(slot.startTime);
     return minutes >= startMinutes && minutes <= lastStartMinutes;
@@ -282,14 +287,16 @@ function areSlotsContiguous(slots: { startTime: string }[]) {
   return timeToMinutes(ordered[1].startTime) - timeToMinutes(ordered[0].startTime) === SLOT_MINUTES;
 }
 
-function getMinAllowedSlot(now: Date) {
+function getMinAllowedSlot(now: Date, locationId: string) {
   const parts = getDenverParts(now);
-  const closeMinutes = CLOSE_HOUR * 60;
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const openMinutes = openHour * 60;
+  const closeMinutes = closeHour * 60;
   const lastStartMinutes = closeMinutes - SLOT_MINUTES;
   const todayStr = parts.dateStr;
 
   if (isWeekend(todayStr)) {
-    return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+    return { dateStr: nextBusinessDateStr(todayStr), minutes: openMinutes + MIN_ADVANCE_MINUTES };
   }
 
   const nowMinutes = parts.hour * 60 + parts.minute;
@@ -299,13 +306,13 @@ function getMinAllowedSlot(now: Date) {
   if (minMinutes > closeMinutes) {
     const remaining = minMinutes - closeMinutes;
     minDateStr = nextBusinessDateStr(todayStr);
-    minMinutes = OPEN_HOUR * 60 + remaining;
+    minMinutes = openMinutes + remaining;
   }
 
-  if (minMinutes < OPEN_HOUR * 60) minMinutes = OPEN_HOUR * 60;
+  if (minMinutes < openMinutes) minMinutes = openMinutes;
   if (minMinutes > lastStartMinutes) {
     minDateStr = nextBusinessDateStr(minDateStr);
-    minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+    minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
   }
 
   minMinutes = ceilToSlot(minMinutes);
@@ -324,7 +331,7 @@ customerPickupsRouter.get("/availability", async (req, res) => {
 
   const { locationId, from, to } = parsed.data;
   const now = new Date();
-  const minAllowed = getMinAllowedSlot(now);
+  const minAllowed = getMinAllowedSlot(now, locationId);
   console.log("[availability][min-advance]", {
     now: now.toISOString(),
     denverDate: formatDateInDenver(now),
@@ -379,7 +386,7 @@ customerPickupsRouter.get("/availability", async (req, res) => {
 
     availability.push({
       date: dateStr,
-      slots: isBlackedOut ? [] : buildSlotsForDate(dateStr, blocked, minStartMinutes),
+      slots: isBlackedOut ? [] : buildSlotsForDate(locationId, dateStr, blocked, minStartMinutes),
       isBlackedOut,
     });
   }
@@ -417,10 +424,10 @@ customerPickupsRouter.post("/", async (req, res) => {
   const ordersToCreate: { appointmentIndex: number; orderNbr: string }[] = [];
 
   for (const group of payload.groups) {
-    if (!ensureWithinBusinessHours(group.selectedDate, group.selectedSlots)) {
+    if (!ensureWithinBusinessHours(group.locationId, group.selectedDate, group.selectedSlots)) {
       return res.status(400).json({ message: "Selected time is outside business hours." });
     }
-    const minAllowed = getMinAllowedSlot(new Date());
+    const minAllowed = getMinAllowedSlot(new Date(), group.locationId);
     const selectedStartMinutes = timeToMinutes(group.selectedSlots[0].startTime);
     if (group.selectedDate < minAllowed.dateStr) {
       return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
