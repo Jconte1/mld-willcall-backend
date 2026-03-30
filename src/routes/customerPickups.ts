@@ -10,6 +10,7 @@ import {
 } from "../notifications";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { getPickupHours } from "../lib/pickupHours";
+import { isHolidayClosure } from "../lib/pickupClosures";
 
 export const customerPickupsRouter = Router();
 
@@ -222,12 +223,16 @@ function isWeekend(dateStr: string) {
   return weekday === "Sat" || weekday === "Sun";
 }
 
-function nextBusinessDateStr(dateStr: string) {
+function isClosedDate(dateStr: string, locationId: string) {
+  return isWeekend(dateStr) || isHolidayClosure(dateStr, locationId);
+}
+
+function nextBusinessDateStr(dateStr: string, locationId: string) {
   let cursor = parseDateOnly(dateStr);
   while (true) {
     cursor = addMinutes(cursor, 24 * 60);
     const next = formatDateInDenver(cursor);
-    if (!isWeekend(next)) return next;
+    if (!isClosedDate(next, locationId)) return next;
   }
 }
 
@@ -271,7 +276,7 @@ function ensureWithinBusinessHours(
   dateStr: string,
   slots: { startTime: string; endTime: string }[]
 ) {
-  if (isWeekend(dateStr)) return false;
+  if (isClosedDate(dateStr, locationId)) return false;
   const { openHour, closeHour } = getPickupHours(locationId);
   const startMinutes = openHour * 60;
   const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
@@ -295,8 +300,8 @@ function getMinAllowedSlot(now: Date, locationId: string) {
   const lastStartMinutes = closeMinutes - SLOT_MINUTES;
   const todayStr = parts.dateStr;
 
-  if (isWeekend(todayStr)) {
-    return { dateStr: nextBusinessDateStr(todayStr), minutes: openMinutes + MIN_ADVANCE_MINUTES };
+  if (isClosedDate(todayStr, locationId)) {
+    return { dateStr: nextBusinessDateStr(todayStr, locationId), minutes: openMinutes + MIN_ADVANCE_MINUTES };
   }
 
   const nowMinutes = parts.hour * 60 + parts.minute;
@@ -305,13 +310,13 @@ function getMinAllowedSlot(now: Date, locationId: string) {
 
   if (minMinutes > closeMinutes) {
     const remaining = minMinutes - closeMinutes;
-    minDateStr = nextBusinessDateStr(todayStr);
+    minDateStr = nextBusinessDateStr(todayStr, locationId);
     minMinutes = openMinutes + remaining;
   }
 
   if (minMinutes < openMinutes) minMinutes = openMinutes;
   if (minMinutes > lastStartMinutes) {
-    minDateStr = nextBusinessDateStr(minDateStr);
+    minDateStr = nextBusinessDateStr(minDateStr, locationId);
     minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
   }
 
@@ -375,7 +380,7 @@ customerPickupsRouter.get("/availability", async (req, res) => {
   const availability = [];
   for (let cursor = new Date(rangeStart); cursor < rangeEnd; cursor = addMinutes(cursor, 24 * 60)) {
     const dateStr = formatDateInDenver(cursor);
-    const isBlackedOut = isWeekend(dateStr);
+    const isBlackedOut = isClosedDate(dateStr, locationId);
     const blocked = blockedByDate.get(dateStr) ?? new Set<string>();
     let minStartMinutes: number | null = null;
     if (dateStr < minAllowed.dateStr) {

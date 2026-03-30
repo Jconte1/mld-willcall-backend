@@ -7,6 +7,8 @@ import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderRea
 import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
 import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
 import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
+import { getPickupHours } from "../lib/pickupHours";
+import { isHolidayClosure } from "../lib/pickupClosures";
 import { prisma } from "../lib/prisma";
 import {
   cancelAppointmentNotifications,
@@ -60,8 +62,6 @@ const SHIPMENT_FORMAT = /^SMT\d{7}$/;
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
-const OPEN_HOUR = 7;
-const CLOSE_HOUR = 17;
 const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
@@ -195,12 +195,16 @@ function isWeekend(dateStr: string) {
   return weekday === "Sat" || weekday === "Sun";
 }
 
-function nextBusinessDateStr(dateStr: string) {
+function isClosedDate(dateStr: string, locationId: string) {
+  return isWeekend(dateStr) || isHolidayClosure(dateStr, locationId);
+}
+
+function nextBusinessDateStr(dateStr: string, locationId: string) {
   let cursor = parseDateOnly(dateStr);
   while (true) {
     cursor = addMinutes(cursor, 24 * 60);
     const next = formatDateInDenver(cursor);
-    if (!isWeekend(next)) return next;
+    if (!isClosedDate(next, locationId)) return next;
   }
 }
 
@@ -208,14 +212,16 @@ function ceilToSlot(minutes: number) {
   return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 }
 
-function getMinAllowedSlot(now: Date) {
+function getMinAllowedSlot(now: Date, locationId: string) {
+  const { openHour, closeHour } = getPickupHours(locationId);
+  const openMinutes = openHour * 60;
   const todayStr = formatDateInDenver(now);
   const nowMinutes = timeToMinutes(formatTimeInDenver(now));
-  const closeMinutes = CLOSE_HOUR * 60;
+  const closeMinutes = closeHour * 60;
   const lastStartMinutes = closeMinutes - SLOT_MINUTES;
 
-  if (isWeekend(todayStr)) {
-    return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+  if (isClosedDate(todayStr, locationId)) {
+    return { dateStr: nextBusinessDateStr(todayStr, locationId), minutes: openMinutes + MIN_ADVANCE_MINUTES };
   }
 
   let minDateStr = todayStr;
@@ -223,21 +229,21 @@ function getMinAllowedSlot(now: Date) {
 
   if (minMinutes > closeMinutes) {
     const remaining = minMinutes - closeMinutes;
-    minDateStr = nextBusinessDateStr(todayStr);
-    minMinutes = OPEN_HOUR * 60 + remaining;
+    minDateStr = nextBusinessDateStr(todayStr, locationId);
+    minMinutes = openMinutes + remaining;
   }
 
-  if (minMinutes < OPEN_HOUR * 60) minMinutes = OPEN_HOUR * 60;
+  if (minMinutes < openMinutes) minMinutes = openMinutes;
   if (minMinutes > lastStartMinutes) {
-    minDateStr = nextBusinessDateStr(minDateStr);
-    minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
+    minDateStr = nextBusinessDateStr(minDateStr, locationId);
+    minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
   }
 
   return { dateStr: minDateStr, minutes: ceilToSlot(minMinutes) };
 }
 
-function isBeforeMinAdvance(startAt: Date, now: Date) {
-  const minAllowed = getMinAllowedSlot(now);
+function isBeforeMinAdvance(startAt: Date, now: Date, locationId: string) {
+  const minAllowed = getMinAllowedSlot(now, locationId);
   const startDateStr = formatDateInDenver(startAt);
   const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
   return (
@@ -858,7 +864,7 @@ pickupsRouter.post("/", async (req, res) => {
   if (startAt <= new Date()) {
     return res.status(400).json({ message: "Appointment start time must be in the future." });
   }
-  if (isSalesperson && isBeforeMinAdvance(startAt, new Date())) {
+  if (isSalesperson && isBeforeMinAdvance(startAt, new Date(), body.data.locationId)) {
     return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
   }
 

@@ -12,6 +12,7 @@ import { getActiveToken, createAppointmentToken } from "../notifications/links/t
 import { toNumber } from "../lib/orders/orderHelpers";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { getPickupHours } from "../lib/pickupHours";
+import { isHolidayClosure } from "../lib/pickupClosures";
 
 export const publicAppointmentsRouter = Router();
 
@@ -51,6 +52,10 @@ function isWeekend(dateStr: string) {
     weekday: "short",
   }).format(date);
   return weekday === "Sat" || weekday === "Sun";
+}
+
+function isClosedDate(dateStr: string, locationId: string) {
+  return isWeekend(dateStr) || isHolidayClosure(dateStr, locationId);
 }
 
 function formatDateInDenver(date: Date) {
@@ -95,12 +100,12 @@ function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
 }
 
-function nextBusinessDateStr(dateStr: string) {
+function nextBusinessDateStr(dateStr: string, locationId: string) {
   let cursor = parseDateOnly(dateStr);
   while (true) {
     cursor = addMinutes(cursor, 24 * 60);
     const next = formatDateInDenver(cursor);
-    if (!isWeekend(next)) return next;
+    if (!isClosedDate(next, locationId)) return next;
   }
 }
 
@@ -109,7 +114,7 @@ function ceilToSlot(minutes: number) {
 }
 
 function ensureWithinBusinessHours(locationId: string, dateStr: string, slots: { startTime: string }[]) {
-  if (isWeekend(dateStr)) return false;
+  if (isClosedDate(dateStr, locationId)) return false;
   const { openHour, closeHour } = getPickupHours(locationId);
   const startMinutes = openHour * 60;
   const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
@@ -143,8 +148,8 @@ function getMinAllowedSlot(now: Date, locationId: string) {
   const closeMinutes = closeHour * 60;
   const lastStartMinutes = closeMinutes - SLOT_MINUTES;
 
-  if (isWeekend(todayStr)) {
-    return { dateStr: nextBusinessDateStr(todayStr), minutes: openMinutes + MIN_ADVANCE_MINUTES };
+  if (isClosedDate(todayStr, locationId)) {
+    return { dateStr: nextBusinessDateStr(todayStr, locationId), minutes: openMinutes + MIN_ADVANCE_MINUTES };
   }
 
   const nowMinutes = hour * 60 + minute;
@@ -153,13 +158,13 @@ function getMinAllowedSlot(now: Date, locationId: string) {
 
   if (minMinutes > closeMinutes) {
     const remaining = minMinutes - closeMinutes;
-    minDateStr = nextBusinessDateStr(todayStr);
+    minDateStr = nextBusinessDateStr(todayStr, locationId);
     minMinutes = openMinutes + remaining;
   }
 
   if (minMinutes < openMinutes) minMinutes = openMinutes;
   if (minMinutes > lastStartMinutes) {
-    minDateStr = nextBusinessDateStr(minDateStr);
+    minDateStr = nextBusinessDateStr(minDateStr, locationId);
     minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
   }
 
