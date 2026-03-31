@@ -31,21 +31,6 @@ export default async function fetchOrderSummaries(
       useOrderBy: Boolean(useOrderBy),
     });
     const rows = Array.isArray(resp?.rows) ? resp.rows : [];
-    const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
-    if (debugOrderNbr) {
-      const debugRow = rows.find((r: AnyRow) => {
-        const raw = r?.OrderNbr;
-        const value =
-          raw && typeof raw === "object" && "value" in raw ? (raw as { value?: unknown }).value : raw;
-        return String(value || "").trim().toUpperCase() === debugOrderNbr;
-      });
-      console.log("[fetchOrderSummaries][queue][debug-row]", {
-        baid,
-        orderNbr: debugOrderNbr,
-        found: Boolean(debugRow),
-        row: debugRow ?? null,
-      });
-    }
     console.log(`[fetchOrderSummaries][queue] baid=${baid} totalRows=${rows.length}`);
     return rows;
   }

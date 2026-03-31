@@ -27,7 +27,6 @@ function shouldBeActive(status: string | null) {
 
 function mapOrderSummaryRows(rawRows: AnyRow[]) {
   const incoming: AnyRow[] = [];
-  const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
   for (const row of Array.isArray(rawRows) ? rawRows : []) {
     const orderNbr = firstVal(row, ["OrderNbr", "orderNbr", "nbr"]);
     const status = firstVal(row, ["Status", "status"]);
@@ -86,24 +85,6 @@ function mapOrderSummaryRows(rawRows: AnyRow[]) {
       noteId: optStr(noteId),
       salesPersonNumber: optStr(salesPersonNumber),
     };
-    if (debugOrderNbr && mapped.orderNbr.trim().toUpperCase() === debugOrderNbr) {
-      console.log("[upsertOrderSummaries][debug-map]", {
-        orderNbr: mapped.orderNbr,
-        rowKeys: Object.keys(row || {}),
-        fetched: {
-          defaultSalespersonField: (row as AnyRow)?.DefaultSalesperson ?? null,
-          defaultSalespersonFieldAlt: (row as AnyRow)?.DefaultSalesPerson ?? null,
-          defaultSalesperson,
-          salesPersonAttr,
-          salesPersonIdField,
-        },
-        mapped: {
-          salesPersonNumber: mapped.salesPersonNumber,
-          shipVia: mapped.shipVia,
-          customerName: mapped.customerName,
-        },
-      });
-    }
     incoming.push(mapped);
   }
   return incoming;
@@ -139,7 +120,6 @@ export async function upsertOrderSummariesForBAID(
   const byNbr = new Map(existing.map((r) => [r.orderNbr, r]));
   const toInsert: AnyRow[] = [];
   const toUpdate: AnyRow[] = [];
-  const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
 
   for (const r of incoming) {
     const prev = byNbr.get(r.orderNbr);
@@ -162,10 +142,6 @@ export async function upsertOrderSummariesForBAID(
 
   let inserted = 0;
   if (toInsert.length) {
-    if (debugOrderNbr) {
-      const row = toInsert.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
-      if (row) console.log("[upsertOrderSummaries][debug-insert]", row);
-    }
     const { count } = await prisma.erpOrderSummary.createMany({
       data: toInsert.map((r) => ({
         id: randomUUID(),
@@ -192,10 +168,6 @@ export async function upsertOrderSummariesForBAID(
 
   let updated = 0;
   if (toUpdate.length) {
-    if (debugOrderNbr) {
-      const row = toUpdate.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
-      if (row) console.log("[upsertOrderSummaries][debug-update]", row);
-    }
     await runWithConcurrency(toUpdate, concurrency, async (r) => {
       await prisma.erpOrderSummary.update({
         where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
@@ -228,14 +200,6 @@ export async function upsertOrderSummariesForBAID(
     },
     data: { isActive: false, updatedAt: now },
   });
-
-  if (debugOrderNbr) {
-    const persisted = await prisma.erpOrderSummary.findFirst({
-      where: { baid, orderNbr: debugOrderNbr },
-      select: { orderNbr: true, salesPersonNumber: true, shipVia: true, updatedAt: true },
-    });
-    console.log("[upsertOrderSummaries][debug-persisted]", { baid, row: persisted ?? null });
-  }
 
   return { inserted, updated, inactivated };
 }

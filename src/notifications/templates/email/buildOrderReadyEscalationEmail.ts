@@ -56,7 +56,6 @@ export function buildOrderReadyEscalationEmail(input: EscalationInput) {
                   ${line("Order Number", asText(input.orderNbr))}
                   ${line("Customer ID (BAID)", asText(input.customerId))}
                   ${line("Customer Name", asText(input.customerName))}
-                  ${line("Contact Name", asText(input.contactName))}
                   ${line("Contact Email", asText(input.contactEmail))}
                   ${line("Contact Phone", asText(input.contactPhone))}
                   ${line("Location", asText(input.locationId))}

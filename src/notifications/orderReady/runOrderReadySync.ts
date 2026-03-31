@@ -295,7 +295,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeSmsOptIn: row.attributeSmsOptIn ?? null,
       attributeEmailOptIn: row.attributeEmailOptIn ?? null,
       contactName: row.attributeOsContact ?? null,
-      contactPhone, // TODO: replace with actual contact phone field
+      contactPhone,
       contactEmail,
       locationId,
       smsOptIn: smsEligible,
@@ -352,7 +352,7 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       attributeSmsOptIn: row.attributeSmsOptIn ?? null,
       attributeEmailOptIn: row.attributeEmailOptIn ?? null,
       contactName: row.attributeOsContact ?? null,
-      contactPhone, // TODO: replace with actual contact phone field
+      contactPhone,
       contactEmail,
       locationId,
       smsOptIn: smsEligible,
