@@ -549,6 +549,7 @@ function findPrepayBlock(
   detail: StaffOrderDetail,
   selectedItems: z.infer<typeof selectedItemsSchema> | undefined
 ) {
+  if (String(detail.orderNbr || "").trim().toUpperCase().startsWith("R1")) return null;
   const terms = (detail.payment.terms ?? "").trim().toUpperCase();
   if (!PREPAY_TERMS.has(terms)) return null;
 
