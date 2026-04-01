@@ -294,35 +294,44 @@ function areSlotsContiguous(slots: { startTime: string }[]) {
 
 function getMinAllowedSlot(now: Date, locationId: string) {
   const parts = getDenverParts(now);
-  const { openHour, closeHour } = getPickupHours(locationId);
-  const openMinutes = openHour * 60;
-  const closeMinutes = closeHour * 60;
-  const lastStartMinutes = closeMinutes - SLOT_MINUTES;
-  const todayStr = parts.dateStr;
+  let cursorDateStr = parts.dateStr;
+  let cursorMinutes = parts.hour * 60 + parts.minute;
+  let remainingAdvance = MIN_ADVANCE_MINUTES;
 
-  if (isClosedDate(todayStr, locationId)) {
-    return { dateStr: nextBusinessDateStr(todayStr, locationId), minutes: openMinutes + MIN_ADVANCE_MINUTES };
+  while (true) {
+    const { openHour, closeHour } = getPickupHours(locationId);
+    const openMinutes = openHour * 60;
+    const closeMinutes = closeHour * 60;
+
+    if (isClosedDate(cursorDateStr, locationId)) {
+      cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+      cursorMinutes = getPickupHours(locationId).openHour * 60;
+      continue;
+    }
+
+    if (cursorMinutes < openMinutes) cursorMinutes = openMinutes;
+    if (cursorMinutes >= closeMinutes) {
+      cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+      cursorMinutes = getPickupHours(locationId).openHour * 60;
+      continue;
+    }
+
+    const availableToday = closeMinutes - cursorMinutes;
+    if (remainingAdvance <= availableToday) {
+      let minMinutes = ceilToSlot(cursorMinutes + remainingAdvance);
+      const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+      if (minMinutes > lastStartMinutes) {
+        cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+        const { openHour: nextOpenHour } = getPickupHours(locationId);
+        minMinutes = nextOpenHour * 60;
+      }
+      return { dateStr: cursorDateStr, minutes: minMinutes };
+    }
+
+    remainingAdvance -= availableToday;
+    cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+    cursorMinutes = getPickupHours(locationId).openHour * 60;
   }
-
-  const nowMinutes = parts.hour * 60 + parts.minute;
-  let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
-  let minDateStr = todayStr;
-
-  if (minMinutes > closeMinutes) {
-    const remaining = minMinutes - closeMinutes;
-    minDateStr = nextBusinessDateStr(todayStr, locationId);
-    minMinutes = openMinutes + remaining;
-  }
-
-  if (minMinutes < openMinutes) minMinutes = openMinutes;
-  if (minMinutes > lastStartMinutes) {
-    minDateStr = nextBusinessDateStr(minDateStr, locationId);
-    minMinutes = openMinutes + MIN_ADVANCE_MINUTES;
-  }
-
-  minMinutes = ceilToSlot(minMinutes);
-
-  return { dateStr: minDateStr, minutes: minMinutes };
 }
 
 /**
