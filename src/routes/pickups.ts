@@ -404,8 +404,12 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput: string) {
   return true;
 }
 
-async function getOrRefreshOrderDetail(orderNbrInput: string): Promise<StaffOrderDetail | null> {
+async function getOrRefreshOrderDetail(
+  orderNbrInput: string,
+  options?: { forceFresh?: boolean }
+): Promise<StaffOrderDetail | null> {
   const orderNbr = normalizeOrderNbr(orderNbrInput);
+  const forceFresh = Boolean(options?.forceFresh);
   console.info("[staff-pickups][lookup] start", { orderNbr });
   let summary = await findOrderSummary(orderNbr);
   if (summary) {
@@ -418,6 +422,33 @@ async function getOrRefreshOrderDetail(orderNbrInput: string): Promise<StaffOrde
     });
   } else {
     console.info("[staff-pickups][lookup] db miss", { orderNbr });
+  }
+
+  if (summary && forceFresh) {
+    try {
+      console.info("[staff-pickups][lookup] forced refresh start", {
+        orderNbr,
+        baid: summary.baid,
+      });
+      await refreshOrderReadyDetails({
+        baid: summary.baid,
+        orderNbr,
+        status: summary.status,
+        shipVia: summary.shipVia,
+        erpLocationId: summary.locationId,
+      });
+      summary = await findOrderSummary(orderNbr);
+      console.info("[staff-pickups][lookup] forced refresh result", {
+        orderNbr,
+        found: Boolean(summary),
+        lineCount: summary?.ErpOrderLine?.length ?? 0,
+      });
+    } catch (err) {
+      console.error("[staff-pickups][lookup] forced refresh failed", {
+        orderNbr,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   if (!summary) {
@@ -796,7 +827,7 @@ pickupsRouter.post("/orders/lookup", async (req, res) => {
     role: req.auth?.role,
   });
   const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
-  const detail = await getOrRefreshOrderDetail(body.data.orderNbr);
+  const detail = await getOrRefreshOrderDetail(body.data.orderNbr, { forceFresh: true });
   if (!detail) {
     console.warn("[staff-pickups][lookup] endpoint not found", {
       orderNbr: body.data.orderNbr,
