@@ -25,7 +25,7 @@ const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
 ];
 const JACKSON_SHIP_VIAS = new Set(["TRANS JACKSON", "WILL CALL JX"]);
 const PROVO_SHIP_VIAS = new Set(["TRANS PROVO", "WILL CALL PR"]);
-const JACKSON_WAREHOUSE = "JACKSON SHOWROOM";
+const JACKSON_WAREHOUSES = new Set(["JACKSON SHOWROOM", "JACKSON WAREHOUSE"]);
 const PROVO_WAREHOUSE = "PROVO SHOWROOM";
 
 function normalizePhone(value: string | null | undefined) {
@@ -83,10 +83,10 @@ function evaluateOrderReadyLocationEligibility(input: {
   const warehouse = normalizeText(input.warehouse);
 
   if (JACKSON_SHIP_VIAS.has(shipVia)) {
-    const ok = warehouse === JACKSON_WAREHOUSE;
+    const ok = JACKSON_WAREHOUSES.has(warehouse);
     return {
       eligible: ok,
-      reason: ok ? null : "jackson-shipvia-requires-jackson-showroom",
+      reason: ok ? null : "jackson-shipvia-requires-jackson-showroom-or-warehouse",
       specialTransit: "jackson" as const,
     };
   }

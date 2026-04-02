@@ -5,6 +5,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
+import { createRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
 
@@ -203,7 +204,31 @@ async function sendInviteEmail(opts: {
   allowTestOverride?: boolean;
 }) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
-  const message = buildInviteEmail(opts.code, opts.baid, opts.roleLabel, frontendUrl, opts.zipCode);
+  let prefillToken: string | null = null;
+  if (opts.zipCode && opts.recipient) {
+    try {
+      prefillToken = createRegistrationPrefillToken({
+        customerId: opts.baid,
+        billingZip: opts.zipCode,
+        inviteCode: opts.code,
+        email: opts.recipient,
+      });
+    } catch (err) {
+      console.warn("[customer-invites] failed to create prefill token; using fallback link", {
+        baid: opts.baid,
+        recipient: opts.recipient,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  const message = buildInviteEmail(
+    opts.code,
+    opts.baid,
+    opts.roleLabel,
+    frontendUrl,
+    opts.zipCode,
+    prefillToken
+  );
 
   await sendEmail(opts.recipient, message.subject, message.body, {
     allowTestOverride: opts.allowTestOverride,

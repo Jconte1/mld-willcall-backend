@@ -96,10 +96,14 @@ export function buildInviteEmail(
   baid: string,
   roleLabel: string,
   link: string,
-  zipCode?: string | null
+  zipCode?: string | null,
+  prefillToken?: string | null
 ) {
   const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
+  const ctaLink = prefillToken
+    ? `${frontendUrl}/?register=1&prefillToken=${encodeURIComponent(prefillToken)}`
+    : link;
   return {
     subject: "MLD Will Call Invite Code",
     body: renderInviteTemplate({
@@ -110,7 +114,7 @@ export function buildInviteEmail(
       baid,
       zipCode,
       roleLabel,
-      link,
+      link: ctaLink,
       logoUrl,
     }),
   };

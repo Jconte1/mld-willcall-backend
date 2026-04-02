@@ -5,6 +5,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
+import { createRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
 
@@ -160,7 +161,22 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
 
   if (shouldSendEmail && code) {
     const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
-    const message = buildInviteEmail(code, baid, "Manager", frontendUrl, zip);
+    let prefillToken: string | null = null;
+    try {
+      prefillToken = createRegistrationPrefillToken({
+        customerId: baid,
+        billingZip: zip,
+        inviteCode: code,
+        email,
+      });
+    } catch (err) {
+      console.warn("[internal-invites] failed to create prefill token; using fallback link", {
+        baid,
+        email,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const message = buildInviteEmail(code, baid, "Manager", frontendUrl, zip, prefillToken);
     await sendEmail(email, message.subject, message.body, {
       allowTestOverride: false,
       allowNonProdSend: true,
