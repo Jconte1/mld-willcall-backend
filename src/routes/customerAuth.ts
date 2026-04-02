@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { hashPassword, verifyPassword, validatePasswordRules } from "../lib/passwords";
 import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 import { clearFailedLogin, getLoginThrottleState, recordFailedLogin } from "../lib/loginThrottle";
+import { verifyRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 
 export const customerAuthRouter = Router();
 
@@ -50,6 +51,10 @@ const LOGIN_BODY = z.object({
   password: z.string().min(1),
 });
 
+const REGISTER_PREFILL_BODY = z.object({
+  token: z.string().min(20),
+});
+
 function msSince(t0: number) {
   return Date.now() - t0;
 }
@@ -58,6 +63,31 @@ function hashInviteCode(code: string) {
   const secret = process.env.INVITE_CODE_SECRET || "";
   return crypto.createHash("sha256").update(`${code}:${secret}`).digest("hex");
 }
+
+/**
+ * POST /api/customer/register/prefill
+ * Body: { token }
+ * Returns: { baid, zip, inviteCode, email, orderNbr }
+ */
+customerAuthRouter.post("/register/prefill", async (req, res) => {
+  const parsed = REGISTER_PREFILL_BODY.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  try {
+    const prefill = verifyRegistrationPrefillToken(parsed.data.token);
+    return res.json({
+      baid: prefill.baid,
+      zip: prefill.zip,
+      inviteCode: prefill.inviteCode,
+      email: prefill.email,
+      orderNbr: prefill.orderNbr,
+    });
+  } catch {
+    return res.status(400).json({ message: "Invalid or expired link" });
+  }
+});
 
 /**
  * POST /api/customer/register
