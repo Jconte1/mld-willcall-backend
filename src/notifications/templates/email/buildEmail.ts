@@ -57,7 +57,6 @@ function renderTemplate({
   orders,
   location,
   link,
-  unsubscribeLink,
   staffNote,
   logoUrl,
 }: {
@@ -68,7 +67,6 @@ function renderTemplate({
   orders: string;
   location?: string;
   link: string;
-  unsubscribeLink?: string;
   staffNote?: string;
   logoUrl: string;
 }) {
@@ -135,7 +133,6 @@ function renderTemplate({
             <tr>
               <td style="padding:20px 28px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;">
                 If you did not request this, you can ignore this email.
-                ${unsubscribeLink ? `<div style="margin-top:10px;"><a href="${unsubscribeLink}" style="color:#6b7280;text-decoration:underline;">Unsubscribe from email updates</a></div>` : ""}
               </td>
             </tr>
           </table>
@@ -173,7 +170,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           orders,
           location: locationLine,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -189,7 +185,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           orders,
           location: locationLine,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -205,7 +200,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           orders,
           location: locationLine,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -222,7 +216,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           orders,
           location: locationLine,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -239,7 +232,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           when,
           orders,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -255,7 +247,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           when,
           orders,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -270,7 +261,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           when,
           orders,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -286,7 +276,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           orders,
           location: locationLine,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),
@@ -301,7 +290,6 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
           when,
           orders,
           link: payload.link,
-          unsubscribeLink: payload.unsubscribeLink,
           staffNote,
           logoUrl,
         }),

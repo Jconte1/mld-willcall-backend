@@ -459,9 +459,13 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       continue;
     }
 
+    const todayKey = getAttemptDateKey(now);
+    const nextEligibleDayKey = notice.nextEligibleNotifyAt
+      ? getAttemptDateKey(notice.nextEligibleNotifyAt)
+      : null;
     const eligible =
       !notice.lastNotifiedAt ||
-      (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
+      (nextEligibleDayKey != null && nextEligibleDayKey <= todayKey);
     if (!eligible) continue;
 
     const activeToken = await getActiveOrderReadyToken(prisma, notice.id);
