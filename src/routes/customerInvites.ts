@@ -339,9 +339,7 @@ customerInvitesRouter.post("/request", async (req, res) => {
   const code = generateInviteCode();
   const codeHash = hashInviteCode(code);
   const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
-  const recipient = resolveInviteRecipient(process.env.NOTIFICATIONS_TEST_EMAIL, {
-    allowTestOverride: true,
-  });
+  const recipient = "";
 
   await prisma.inviteCode.create({
     data: {
@@ -363,7 +361,7 @@ customerInvitesRouter.post("/request", async (req, res) => {
       baid,
       roleLabel: "Admin",
       zipCode: zip,
-      allowTestOverride: true,
+      allowTestOverride: false,
     });
   }
 
