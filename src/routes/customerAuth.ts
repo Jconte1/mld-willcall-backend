@@ -77,12 +77,17 @@ customerAuthRouter.post("/register/prefill", async (req, res) => {
 
   try {
     const prefill = verifyRegistrationPrefillToken(parsed.data.token);
+    const existing = await prisma.users.findUnique({
+      where: { email: prefill.email.toLowerCase().trim() },
+      select: { id: true },
+    });
     return res.json({
       baid: prefill.baid,
       zip: prefill.zip,
       inviteCode: prefill.inviteCode,
       email: prefill.email,
       orderNbr: prefill.orderNbr,
+      existingAccount: Boolean(existing),
     });
   } catch {
     return res.status(400).json({ message: "Invalid or expired link" });
