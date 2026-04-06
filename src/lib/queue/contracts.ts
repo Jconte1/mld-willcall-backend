@@ -1,6 +1,8 @@
 export type QueueVerifyCustomerResponse = {
   ok: boolean;
   matched: boolean;
+  comparedZip5?: string;
+  candidateZip5?: string[];
 };
 
 export type QueueRowsResponse<T> = {

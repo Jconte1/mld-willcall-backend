@@ -160,12 +160,19 @@ async function fetchCustomerRowsByCustomerId(
   return [];
 }
 
-async function verifyBaidViaQueue(baid: string, zip: string): Promise<boolean> {
+async function verifyBaidViaQueue(
+  baid: string,
+  zip: string
+): Promise<{ matched: boolean; comparedZip5?: string; candidateZip5?: string[] }> {
   const resp = await queueErpJobRequest<QueueVerifyCustomerResponse>("/api/erp/jobs/customers/verify", {
     customerId: baid,
     zip5: zip,
   });
-  return Boolean(resp?.matched);
+  return {
+    matched: Boolean(resp?.matched),
+    comparedZip5: resp?.comparedZip5,
+    candidateZip5: Array.isArray(resp?.candidateZip5) ? resp.candidateZip5 : [],
+  };
 }
 
 export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<boolean> {
@@ -177,7 +184,8 @@ export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<
   if (IS_DEV) console.log(`${LOG_PREFIX} start`, { baid: cleaned });
 
   if (shouldUseQueueErp()) {
-    const ok = await verifyBaidViaQueue(cleaned, cleanedZip);
+    const queueResult = await verifyBaidViaQueue(cleaned, cleanedZip);
+    const ok = queueResult.matched;
     if (IS_DEV) console.log("[willcall][verify-baid][queue] result", { baid: cleaned, ok });
     return ok;
   }
@@ -218,14 +226,14 @@ export async function diagnoseBaidZipInAcumatica(
   }
 
   if (shouldUseQueueErp()) {
-    const matched = await verifyBaidViaQueue(cleaned, normalizedZip);
+    const queueResult = await verifyBaidViaQueue(cleaned, normalizedZip);
     return {
       mode: "queue",
       baid: cleaned,
       providedZip,
-      normalizedZip,
-      matched,
-      candidateZip5: [],
+      normalizedZip: queueResult.comparedZip5 || normalizedZip,
+      matched: queueResult.matched,
+      candidateZip5: queueResult.candidateZip5 || [],
     };
   }
 
