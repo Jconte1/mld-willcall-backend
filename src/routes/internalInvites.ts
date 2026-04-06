@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { z } from "zod";
 import crypto from "node:crypto";
 
-import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
+import { diagnoseBaidZipInAcumatica, verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 import { createRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
@@ -96,7 +96,26 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
   try {
     const verified = await verifyBaidInAcumatica(baid, zip);
     if (!verified) {
-      console.info("[internal-invites] verify failed", { baid });
+      let diagnostics: Awaited<ReturnType<typeof diagnoseBaidZipInAcumatica>> | null = null;
+      try {
+        diagnostics = await diagnoseBaidZipInAcumatica(baid, zip);
+      } catch (diagErr: any) {
+        console.info("[internal-invites] verify diagnostics error", {
+          baid,
+          zipSent: parsed.data.billingZip,
+          zipNormalized: zip,
+          message: String(diagErr?.message || diagErr),
+        });
+      }
+
+      console.info("[internal-invites] verify failed", {
+        baid,
+        zipSent: parsed.data.billingZip,
+        zipNormalized: zip,
+        compareMode: diagnostics?.mode || "unknown",
+        acumaticaMatched: diagnostics?.matched ?? false,
+        acumaticaCandidateZip5: diagnostics?.candidateZip5 || [],
+      });
       return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
     }
   } catch (err: any) {

@@ -110,6 +110,56 @@ async function fetchCustomerRowsByBaid(
   return [];
 }
 
+async function fetchCustomerRowsByCustomerId(
+  restService: AcumaticaService,
+  baid: string
+): Promise<AnyJson[]> {
+  const token = await restService.getToken();
+  const base = `${restService.baseUrl}/entity/CustomEndpoint/24.200.001/Customer`;
+
+  const params = new URLSearchParams();
+  params.set("$top", "10");
+  params.set("$filter", `CustomerID eq '${odataEscape(baid)}'`);
+  params.set("$select", "CustomerID,Zip5,ZipCode,PostalCode");
+
+  const url = `${base}?${params.toString()}`;
+
+  if (IS_DEV) {
+    console.log(`${LOG_PREFIX} -> customer-only request`, { baid, url });
+  }
+
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  });
+
+  const text = await resp.text().catch(() => "");
+
+  if (IS_DEV) {
+    console.log(`${LOG_PREFIX} <- customer-only response`, {
+      baid,
+      status: resp.status,
+      ok: resp.ok,
+      bytes: text.length,
+    });
+    console.log(`${LOG_PREFIX} customer-only raw`, truncate(text, 2000));
+  }
+
+  if (!resp.ok) {
+    throw new Error(truncate(text, 500) || `ERP error (${resp.status})`);
+  }
+
+  const json: AnyJson = safeJsonParse(text);
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json?.value)) return json.value;
+  return [];
+}
+
 async function verifyBaidViaQueue(baid: string, zip: string): Promise<boolean> {
   const resp = await queueErpJobRequest<QueueVerifyCustomerResponse>("/api/erp/jobs/customers/verify", {
     customerId: baid,
@@ -140,4 +190,63 @@ export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<
   if (IS_DEV) console.log(`${LOG_PREFIX} result`, { baid: cleaned, ok, rows: rows.length });
 
   return ok;
+}
+
+export async function diagnoseBaidZipInAcumatica(
+  baid: string,
+  providedZip: string
+): Promise<{
+  mode: "queue" | "acumatica";
+  baid: string;
+  providedZip: string;
+  normalizedZip: string;
+  matched: boolean;
+  candidateZip5: string[];
+}> {
+  const cleaned = String(baid || "").trim().toUpperCase();
+  const normalizedZip = String(providedZip || "").replace(/\D/g, "").slice(0, 5);
+
+  if (!cleaned || normalizedZip.length !== 5) {
+    return {
+      mode: shouldUseQueueErp() ? "queue" : "acumatica",
+      baid: cleaned,
+      providedZip,
+      normalizedZip,
+      matched: false,
+      candidateZip5: [],
+    };
+  }
+
+  if (shouldUseQueueErp()) {
+    const matched = await verifyBaidViaQueue(cleaned, normalizedZip);
+    return {
+      mode: "queue",
+      baid: cleaned,
+      providedZip,
+      normalizedZip,
+      matched,
+      candidateZip5: [],
+    };
+  }
+
+  const restService = createErpClient();
+  const matchedRows = await fetchCustomerRowsByBaid(restService, cleaned, normalizedZip);
+  const matched = matchedRows.length > 0;
+  const allRows = await fetchCustomerRowsByCustomerId(restService, cleaned);
+  const candidateZip5 = Array.from(
+    new Set(
+      allRows
+        .map((row) => String(row?.Zip5 ?? row?.ZipCode ?? row?.PostalCode ?? "").replace(/\D/g, "").slice(0, 5))
+        .filter((zip) => zip.length === 5)
+    )
+  );
+
+  return {
+    mode: "acumatica",
+    baid: cleaned,
+    providedZip,
+    normalizedZip,
+    matched,
+    candidateZip5,
+  };
 }
