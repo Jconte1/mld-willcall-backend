@@ -191,8 +191,23 @@ export async function verifyBaidInAcumatica(baid: string, zip: string): Promise<
 
   const restService = createErpClient();
   const rows = await fetchCustomerRowsByBaid(restService, cleaned, cleanedZip);
+  let ok = Array.isArray(rows) && rows.length > 0;
 
-  const ok = Array.isArray(rows) && rows.length > 0;
+  if (!ok) {
+    const candidateRows = await fetchCustomerRowsByCustomerId(restService, cleaned);
+    const candidateZip5 = Array.from(
+      new Set(
+        candidateRows
+          .map((row) =>
+            String(row?.Zip5 ?? row?.ZipCode ?? row?.PostalCode ?? row?.Zip ?? "")
+              .replace(/\D/g, "")
+              .slice(0, 5)
+          )
+          .filter((value) => value.length === 5)
+      )
+    );
+    ok = candidateZip5.includes(cleanedZip);
+  }
 
   if (IS_DEV) console.log(`${LOG_PREFIX} result`, { baid: cleaned, ok, rows: rows.length });
 
