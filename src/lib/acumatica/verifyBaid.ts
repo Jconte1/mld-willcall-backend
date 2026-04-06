@@ -120,7 +120,6 @@ async function fetchCustomerRowsByCustomerId(
   const params = new URLSearchParams();
   params.set("$top", "10");
   params.set("$filter", `CustomerID eq '${odataEscape(baid)}'`);
-  params.set("$select", "CustomerID,Zip5,ZipCode,PostalCode");
 
   const url = `${base}?${params.toString()}`;
 
@@ -244,7 +243,7 @@ export async function diagnoseBaidZipInAcumatica(
   const candidateZip5 = Array.from(
     new Set(
       allRows
-        .map((row) => String(row?.Zip5 ?? row?.ZipCode ?? row?.PostalCode ?? "").replace(/\D/g, "").slice(0, 5))
+        .map((row) => String(row?.Zip5 ?? row?.ZipCode ?? row?.PostalCode ?? row?.Zip ?? "").replace(/\D/g, "").slice(0, 5))
         .filter((zip) => zip.length === 5)
     )
   );
