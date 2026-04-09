@@ -165,6 +165,7 @@ model ErpOrderPayment {
   baid            String          @db.VarChar(64)
   orderNbr        String          @db.VarChar(64)
   orderTotal      Decimal?        @db.Decimal(18, 2)
+  otherFees       Decimal?        @db.Decimal(18, 2)
   unpaidBalance   Decimal?        @db.Decimal(18, 2)
   terms           String          @db.VarChar(64)
   status          String          @default("Active") @db.VarChar(48)

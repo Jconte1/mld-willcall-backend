@@ -77,6 +77,7 @@ type StaffOrderDetail = {
   shipVia: string | null;
   payment: {
     orderTotal: number;
+    otherFees: number;
     unpaidBalance: number;
     terms: string | null;
     status: string | null;
@@ -532,6 +533,7 @@ async function getOrRefreshOrderDetail(
     select: {
       orderTotal: true,
       unpaidBalance: true,
+      otherFees: true,
       terms: true,
       status: true,
     },
@@ -539,6 +541,7 @@ async function getOrRefreshOrderDetail(
 
   const payment = {
     orderTotal: toNumber(paymentRow?.orderTotal),
+    otherFees: toNumber(paymentRow?.otherFees),
     unpaidBalance: toNumber(paymentRow?.unpaidBalance),
     terms: paymentRow?.terms ?? null,
     status: paymentRow?.status ?? null,
@@ -599,6 +602,7 @@ function findPrepayBlock(
     (selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item])
   );
   const unpaidBalance = detail.payment.unpaidBalance;
+  const otherFees = detail.payment.otherFees;
   const remainingGoodsPreTax = detail.lines.reduce((sum, line) => {
     const key = line.id || line.inventoryId || "";
     const selected = selectedMap.get(key);
@@ -610,7 +614,8 @@ function findPrepayBlock(
     return sum + remainingQty * perUnitPreTax;
   }, 0);
 
-  const retainRequired = remainingGoodsPreTax * 0.5;
+  const remainingWithFees = remainingGoodsPreTax + otherFees;
+  const retainRequired = remainingWithFees * 0.5;
   const amountOwed = Math.max(0, unpaidBalance - retainRequired);
 
   if (amountOwed <= 0) return null;

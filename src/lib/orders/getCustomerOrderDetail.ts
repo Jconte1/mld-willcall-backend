@@ -50,6 +50,7 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
     },
     select: {
       orderTotal: true,
+      otherFees: true,
       unpaidBalance: true,
       terms: true,
       status: true,
@@ -205,6 +206,7 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
     payment: paymentRow
       ? {
           orderTotal: toNumber(paymentRow.orderTotal),
+          otherFees: toNumber(paymentRow.otherFees),
           unpaidBalance,
           terms: paymentRow.terms,
           status: paymentRow.status,

@@ -380,6 +380,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     },
     select: {
       orderTotal: true,
+      otherFees: true,
       unpaidBalance: true,
       terms: true,
       status: true,
@@ -432,6 +433,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     payment: payment
       ? {
           orderTotal: toNumber(payment.orderTotal),
+          otherFees: toNumber(payment.otherFees),
           unpaidBalance: toNumber(payment.unpaidBalance),
           terms: payment.terms,
           status: payment.status,

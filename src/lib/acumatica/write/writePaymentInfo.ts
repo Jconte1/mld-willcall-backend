@@ -46,6 +46,7 @@ export default async function writePaymentInfo(
 
     const orderTotal = optDec(val(row, "OrderTotal"), 2);
     const unpaidBalance = optDec(val(row, "UnpaidBalance"), 2);
+    const otherFees = optDec(val(row, "OtherFees"), 2);
     const status = optStr(val(row, "Status"));
     const termsRaw = optStr(val(row, "Terms"));
     const terms = normalizeTerms(termsRaw);
@@ -61,6 +62,7 @@ export default async function writePaymentInfo(
           baid,
           orderNbr,
           orderTotal,
+          otherFees,
           unpaidBalance,
           status: status ?? undefined,
           terms,
@@ -70,6 +72,7 @@ export default async function writePaymentInfo(
           baid,
           orderNbr,
           orderTotal,
+          otherFees,
           unpaidBalance,
           status: status ?? undefined,
           terms,
