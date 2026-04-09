@@ -573,9 +573,16 @@ async function getOrRefreshOrderDetail(
   })).sort((a, b) => (a.inventoryId ?? "").localeCompare(b.inventoryId ?? ""));
 
   const lineAmountTotal = lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+  const lineTaxTotal = lines.reduce((sum, line) => {
+    const orderQty = line.orderQty || 0;
+    if (orderQty <= 0) return sum;
+    const perUnitPreTax = (line.amount || 0) / orderQty;
+    const perUnitTax = perUnitPreTax * ((line.taxRate || 0) / 100);
+    return sum + perUnitTax * orderQty;
+  }, 0);
   const computedOtherFees = Math.max(
     0,
-    Math.round((payment.orderTotal - lineAmountTotal) * 100) / 100
+    Math.round((payment.orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100
   );
   payment.otherFees = computedOtherFees;
 
@@ -610,7 +617,7 @@ function findPrepayBlock(
   );
   const unpaidBalance = detail.payment.unpaidBalance;
   const otherFees = detail.payment.otherFees;
-  const remainingGoodsPreTax = detail.lines.reduce((sum, line) => {
+  const remainingGoodsWithTax = detail.lines.reduce((sum, line) => {
     const key = line.id || line.inventoryId || "";
     const selected = selectedMap.get(key);
     const selectedQty = selected ? selected.qty : 0;
@@ -618,10 +625,11 @@ function findPrepayBlock(
     const orderQty = line.orderQty;
     if (orderQty <= 0 || remainingQty <= 0) return sum;
     const perUnitPreTax = line.amount / orderQty;
-    return sum + remainingQty * perUnitPreTax;
+    const perUnitTax = perUnitPreTax * (line.taxRate / 100);
+    return sum + remainingQty * (perUnitPreTax + perUnitTax);
   }, 0);
 
-  const remainingWithFees = remainingGoodsPreTax + otherFees;
+  const remainingWithFees = remainingGoodsWithTax + otherFees;
   const retainRequired = remainingWithFees * 0.5;
   const amountOwed = Math.max(0, unpaidBalance - retainRequired);
 

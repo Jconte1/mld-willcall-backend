@@ -151,8 +151,18 @@ export async function getCustomerOrderDetail(baid: string, orderNbr: string) {
       : null;
 
   const lineAmountTotal = lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+  const lineTaxTotal = lines.reduce((sum, line) => {
+    const orderQty = line.orderQty || 0;
+    if (orderQty <= 0) return sum;
+    const perUnitPreTax = (line.amount || 0) / orderQty;
+    const perUnitTax = perUnitPreTax * ((line.taxRate || 0) / 100);
+    return sum + perUnitTax * orderQty;
+  }, 0);
   const orderTotal = toNumber(paymentRow?.orderTotal ?? null) ?? 0;
-  const computedOtherFees = Math.max(0, Math.round((orderTotal - lineAmountTotal) * 100) / 100);
+  const computedOtherFees = Math.max(
+    0,
+    Math.round((orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100
+  );
 
   return {
     summary: {

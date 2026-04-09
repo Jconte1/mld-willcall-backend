@@ -392,9 +392,20 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
   });
   const orderTotal = payment ? toNumber(payment.orderTotal) : null;
   const lineAmountTotal = toNumber(lineAmountSum._sum.amount) ?? 0;
+  const taxRows = await prisma.erpOrderLine.findMany({
+    where: { orderNbr },
+    select: { orderQty: true, amount: true, taxRate: true },
+  });
+  const lineTaxTotal = taxRows.reduce((sum, line) => {
+    const orderQty = Number(line.orderQty ?? 0) || 0;
+    if (orderQty <= 0) return sum;
+    const perUnitPreTax = (Number(line.amount ?? 0) || 0) / orderQty;
+    const perUnitTax = perUnitPreTax * ((Number(line.taxRate ?? 0) || 0) / 100);
+    return sum + perUnitTax * orderQty;
+  }, 0);
   const computedOtherFees =
     payment && orderTotal != null
-      ? Math.max(0, Math.round((orderTotal - lineAmountTotal) * 100) / 100)
+      ? Math.max(0, Math.round((orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100)
       : null;
   const salesPerson = salesPersonNumber
     ? await prisma.staffUser.findFirst({
