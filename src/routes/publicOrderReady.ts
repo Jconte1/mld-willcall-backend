@@ -386,6 +386,16 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
       status: true,
     },
   });
+  const lineAmountSum = await prisma.erpOrderLine.aggregate({
+    where: { orderNbr },
+    _sum: { amount: true },
+  });
+  const orderTotal = payment ? toNumber(payment.orderTotal) : null;
+  const lineAmountTotal = toNumber(lineAmountSum._sum.amount) ?? 0;
+  const computedOtherFees =
+    payment && orderTotal != null
+      ? Math.max(0, Math.round((orderTotal - lineAmountTotal) * 100) / 100)
+      : null;
   const salesPerson = salesPersonNumber
     ? await prisma.staffUser.findFirst({
         where: { salespersonNumber: salesPersonNumber },
@@ -432,8 +442,8 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     appointment,
     payment: payment
       ? {
-          orderTotal: toNumber(payment.orderTotal),
-          otherFees: toNumber(payment.otherFees),
+          orderTotal: orderTotal,
+          otherFees: computedOtherFees,
           unpaidBalance: toNumber(payment.unpaidBalance),
           terms: payment.terms,
           status: payment.status,

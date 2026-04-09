@@ -572,6 +572,13 @@ async function getOrRefreshOrderDetail(
     taxRate: toNumber(line.taxRate),
   })).sort((a, b) => (a.inventoryId ?? "").localeCompare(b.inventoryId ?? ""));
 
+  const lineAmountTotal = lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+  const computedOtherFees = Math.max(
+    0,
+    Math.round((payment.orderTotal - lineAmountTotal) * 100) / 100
+  );
+  payment.otherFees = computedOtherFees;
+
   return {
     orderNbr,
     baid: summary.baid,
