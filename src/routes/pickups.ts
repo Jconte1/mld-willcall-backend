@@ -60,6 +60,7 @@ const selectedItemsSchema = z.object({
 
 const SHIPMENT_FORMAT = /^SMT\d{7}$/;
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const PREPAY_MIN_DUE = 1;
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
 const MIN_ADVANCE_MINUTES = 4 * 60;
@@ -633,7 +634,7 @@ function findPrepayBlock(
   const retainRequired = remainingWithFees * 0.5;
   const amountOwed = Math.max(0, unpaidBalance - retainRequired);
 
-  if (amountOwed <= 0) return null;
+  if (amountOwed < PREPAY_MIN_DUE) return null;
   return {
     orderNbr: detail.orderNbr,
     amountOwed: Math.round(amountOwed * 100) / 100,
