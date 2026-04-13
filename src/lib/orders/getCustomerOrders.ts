@@ -25,6 +25,13 @@ type OrderSummaryView = {
   buyerGroup: string | null;
   shipVia: string | null;
   locationId: string | null;
+  jobsiteAddress: {
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+  } | null;
   salesPersonNumber: string | null;
   salesPerson: {
     number: string;
@@ -70,6 +77,15 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       buyerGroup: true,
       shipVia: true,
       locationId: true,
+      ErpOrderAddress: {
+        select: {
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          postalCode: true,
+        },
+      },
       salesPersonNumber: true,
       ErpOrderPayment: {
         select: {
@@ -278,6 +294,15 @@ export async function getCustomerOrders(baid: string): Promise<OrderSummaryView[
       buyerGroup: summary.buyerGroup,
       shipVia: summary.shipVia,
       locationId: summary.locationId,
+      jobsiteAddress: summary.ErpOrderAddress
+        ? {
+            addressLine1: summary.ErpOrderAddress.addressLine1 ?? null,
+            addressLine2: summary.ErpOrderAddress.addressLine2 ?? null,
+            city: summary.ErpOrderAddress.city ?? null,
+            state: summary.ErpOrderAddress.state ?? null,
+            postalCode: summary.ErpOrderAddress.postalCode ?? null,
+          }
+        : null,
       salesPersonNumber: summary.salesPersonNumber ?? null,
       salesPerson: summary.salesPersonNumber
         ? salesByNumber.get(summary.salesPersonNumber) ?? null
