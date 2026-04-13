@@ -46,7 +46,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     console.warn("[auth] invalid token", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return res.status(401).json({ message: "Invalid or expired token" });
+    return res.status(401).json({ message: "Session expired. Please logout and log back in." });
   }
 }
 
