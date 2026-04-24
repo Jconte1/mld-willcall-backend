@@ -121,6 +121,15 @@ const DENVER_TZ = "America/Denver";
 const SLOT_MINUTES = 15;
 const MIN_ADVANCE_MINUTES = 4 * 60;
 
+type ActiveOrderConflict = {
+  orderNbr: string;
+  appointmentId: string;
+  status: PickupAppointmentStatus;
+  startAt: Date;
+  endAt: Date;
+  displayAt: string;
+};
+
 async function hasAccountAccess(
   userId: string,
   appointmentId: string
@@ -208,6 +217,55 @@ function formatTimeInDenver(date: Date) {
   const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
   const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
   return `${hh}:${mm}`;
+}
+
+function formatDenverDateTime(input: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: DENVER_TZ,
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(input);
+}
+
+function normalizeOrderNbr(value: string) {
+  return value.trim().toUpperCase();
+}
+
+async function findActiveOrderConflicts(orderNbrs: string[]): Promise<ActiveOrderConflict[]> {
+  if (!orderNbrs.length) return [];
+
+  const rows = await prisma.pickupAppointmentOrder.findMany({
+    where: {
+      orderNbr: { in: orderNbrs.map(normalizeOrderNbr) },
+      appointment: {
+        status: { in: BLOCKING_STATUSES },
+      },
+    },
+    include: {
+      appointment: {
+        select: {
+          id: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+        },
+      },
+    },
+    orderBy: [{ appointment: { startAt: "asc" } }],
+  });
+
+  return rows.map((row) => ({
+    orderNbr: row.orderNbr,
+    appointmentId: row.appointmentId,
+    status: row.appointment.status,
+    startAt: row.appointment.startAt,
+    endAt: row.appointment.endAt,
+    displayAt: formatDenverDateTime(row.appointment.startAt),
+  }));
 }
 
 function addMinutes(date: Date, minutes: number) {
@@ -418,7 +476,9 @@ customerPickupsRouter.post("/", async (req, res) => {
   }
 
   const payload = parsed.data;
-  const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs)));
+  const orderNbrs = Array.from(
+    new Set(payload.groups.flatMap((group) => group.orderNbrs).map(normalizeOrderNbr).filter(Boolean))
+  );
   let orderReadyNoticeId: string | null = null;
   if (payload.orderReadyToken) {
     if (orderNbrs.length !== 1) {
@@ -436,6 +496,16 @@ customerPickupsRouter.post("/", async (req, res) => {
 
   const appointmentsToCreate: PendingAppointment[] = [];
   const ordersToCreate: { appointmentIndex: number; orderNbr: string }[] = [];
+
+  const activeConflicts = await findActiveOrderConflicts(orderNbrs);
+  if (activeConflicts.length) {
+    const first = activeConflicts[0];
+    return res.status(409).json({
+      message: `Order ${first.orderNbr} already has an active pickup appointment. Please contact your salesperson if you have questions.`,
+      code: "ORDER_ALREADY_SCHEDULED",
+      conflicts: activeConflicts,
+    });
+  }
 
   for (const group of payload.groups) {
     if (!ensureWithinBusinessHours(group.locationId, group.selectedDate, group.selectedSlots)) {

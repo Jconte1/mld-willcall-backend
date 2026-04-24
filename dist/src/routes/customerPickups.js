@@ -155,6 +155,51 @@ function formatTimeInDenver(date) {
     const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
     return `${hh}:${mm}`;
 }
+function formatDenverDateTime(input) {
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        month: "2-digit",
+        day: "2-digit",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+    }).format(input);
+}
+function normalizeOrderNbr(value) {
+    return value.trim().toUpperCase();
+}
+async function findActiveOrderConflicts(orderNbrs) {
+    if (!orderNbrs.length)
+        return [];
+    const rows = await prisma_1.prisma.pickupAppointmentOrder.findMany({
+        where: {
+            orderNbr: { in: orderNbrs.map(normalizeOrderNbr) },
+            appointment: {
+                status: { in: BLOCKING_STATUSES },
+            },
+        },
+        include: {
+            appointment: {
+                select: {
+                    id: true,
+                    status: true,
+                    startAt: true,
+                    endAt: true,
+                },
+            },
+        },
+        orderBy: [{ appointment: { startAt: "asc" } }],
+    });
+    return rows.map((row) => ({
+        orderNbr: row.orderNbr,
+        appointmentId: row.appointmentId,
+        status: row.appointment.status,
+        startAt: row.appointment.startAt,
+        endAt: row.appointment.endAt,
+        displayAt: formatDenverDateTime(row.appointment.startAt),
+    }));
+}
 function addMinutes(date, minutes) {
     return new Date(date.getTime() + minutes * 60000);
 }
@@ -333,7 +378,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         return res.status(400).json({ message: "Invalid request body", issues: parsed.error.issues });
     }
     const payload = parsed.data;
-    const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs)));
+    const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs).map(normalizeOrderNbr).filter(Boolean)));
     let orderReadyNoticeId = null;
     if (payload.orderReadyToken) {
         if (orderNbrs.length !== 1) {
@@ -350,6 +395,15 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
     }
     const appointmentsToCreate = [];
     const ordersToCreate = [];
+    const activeConflicts = await findActiveOrderConflicts(orderNbrs);
+    if (activeConflicts.length) {
+        const first = activeConflicts[0];
+        return res.status(409).json({
+            message: `Order ${first.orderNbr} already has an active pickup appointment. Please contact your salesperson if you have questions.`,
+            code: "ORDER_ALREADY_SCHEDULED",
+            conflicts: activeConflicts,
+        });
+    }
     for (const group of payload.groups) {
         if (!ensureWithinBusinessHours(group.locationId, group.selectedDate, group.selectedSlots)) {
             return res.status(400).json({ message: "Selected time is outside business hours." });

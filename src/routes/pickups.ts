@@ -265,14 +265,13 @@ function isBeforeMinAdvance(startAt: Date, now: Date, locationId: string) {
   );
 }
 
-async function findActiveOrderConflicts(orderNbrs: string[], startAt?: Date, endAt?: Date) {
+async function findActiveOrderConflicts(orderNbrs: string[], excludeAppointmentId?: string) {
   if (!orderNbrs.length) return [];
   const appointmentWhere: Prisma.PickupAppointmentWhereInput = {
     status: { in: ACTIVE_APPOINTMENT_STATUSES },
   };
-  if (startAt && endAt) {
-    appointmentWhere.startAt = { lt: endAt };
-    appointmentWhere.endAt = { gt: startAt };
+  if (excludeAppointmentId) {
+    appointmentWhere.id = { not: excludeAppointmentId };
   }
 
   const rows = await prisma.pickupAppointmentOrder.findMany({
@@ -960,10 +959,10 @@ pickupsRouter.post("/", async (req, res) => {
     return res.status(400).json({ message: "At least one order is required." });
   }
 
-  const activeConflicts = await findActiveOrderConflicts(orderNbrs, startAt, endAt);
+  const activeConflicts = await findActiveOrderConflicts(orderNbrs);
   if (activeConflicts.length) {
     const first = activeConflicts[0];
-    const message = `${first.orderNbr} is already scheduled on ${first.displayAt}`;
+    const message = `Order ${first.orderNbr} already has an active pickup appointment scheduled for ${first.displayAt}.`;
     console.warn("[staff-pickups][create] blocked: active order conflict", {
       orderNbrs,
       conflicts: activeConflicts.map((c) => ({
@@ -1351,6 +1350,17 @@ pickupsRouter.patch("/:id", async (req, res) => {
   }
 
   const nextOrderNbrs = body.data.orderNbrs ?? existing.orders.map((o) => o.orderNbr);
+  if (body.data.orderNbrs) {
+    const activeConflicts = await findActiveOrderConflicts(nextOrderNbrs, existing.id);
+    if (activeConflicts.length) {
+      const first = activeConflicts[0];
+      return res.status(409).json({
+        message: `Order ${first.orderNbr} already has an active pickup appointment scheduled for ${first.displayAt}.`,
+        code: "ORDER_ALREADY_SCHEDULED",
+        conflicts: activeConflicts,
+      });
+    }
+  }
   const normalizedSelections = normalizeSelections(body.data.selectedItems, nextOrderNbrs);
   const invalidQty = await validateSelectedItemQty(normalizedSelections);
   if (invalidQty) {
