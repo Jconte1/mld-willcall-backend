@@ -13,6 +13,15 @@ const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const loginThrottle_1 = require("../lib/loginThrottle");
 const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 exports.customerAuthRouter = (0, express_1.Router)();
+const REGISTER_REASON = {
+    InvalidBody: "INVALID_REQUEST_BODY",
+    PasswordTooShort: "PASSWORD_TOO_SHORT",
+    PasswordNumberRequired: "PASSWORD_NUMBER_REQUIRED",
+    PasswordSymbolRequired: "PASSWORD_SYMBOL_REQUIRED",
+    EmailAlreadyExists: "EMAIL_ALREADY_EXISTS",
+    DetailsNotConfirmed: "DETAILS_NOT_CONFIRMED",
+    RegisterFailed: "REGISTER_FAILED",
+};
 const BAID_REGEX = /^BA\d{7}$/;
 const REGISTER_BODY = zod_1.z.object({
     name: zod_1.z.string().min(2),
@@ -98,10 +107,14 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
     const parsed = REGISTER_BODY.safeParse(req.body);
     if (!parsed.success) {
         console.warn("[willcall][customer][register] invalid body", {
+            reasonCode: REGISTER_REASON.InvalidBody,
             issues: parsed.error.issues,
             ms: msSince(t0),
         });
-        return res.status(400).json({ message: "Invalid request body" });
+        return res.status(400).json({
+            message: "Invalid request body",
+            reasonCode: REGISTER_REASON.InvalidBody,
+        });
     }
     const name = parsed.data.name.trim();
     const email = parsed.data.email.toLowerCase().trim();
@@ -115,22 +128,32 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
     });
     const rule = (0, passwords_1.validatePasswordRules)(parsed.data.password);
     if (!rule.ok) {
+        const reasonCode = rule.message === "Password must be at least 8 characters."
+            ? REGISTER_REASON.PasswordTooShort
+            : rule.message === "Password must include at least 1 number."
+                ? REGISTER_REASON.PasswordNumberRequired
+                : REGISTER_REASON.PasswordSymbolRequired;
         console.warn("[willcall][customer][register] password rules failed", {
             email,
             baid,
+            reasonCode,
             reason: rule.message,
             ms: msSince(t0),
         });
-        return res.status(400).json({ message: rule.message });
+        return res.status(400).json({ message: rule.message, reasonCode });
     }
     const existing = await prisma_1.prisma.users.findUnique({ where: { email } });
     if (existing) {
         console.warn("[willcall][customer][register] email already exists", {
             email,
             userId: existing.id,
+            reasonCode: REGISTER_REASON.EmailAlreadyExists,
             ms: msSince(t0),
         });
-        return res.status(409).json({ message: "An account with that email already exists" });
+        return res.status(409).json({
+            message: "An account with that email already exists",
+            reasonCode: REGISTER_REASON.EmailAlreadyExists,
+        });
     }
     const passwordHash = await (0, passwords_1.hashPassword)(parsed.data.password);
     try {
@@ -139,10 +162,12 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
             console.warn("[willcall][customer][register] baid verification failed", {
                 email,
                 baid,
+                reasonCode: REGISTER_REASON.DetailsNotConfirmed,
                 ms: msSince(t0),
             });
             return res.status(400).json({
                 message: "We couldn't confirm these details. Please contact your salesperson.",
+                reasonCode: REGISTER_REASON.DetailsNotConfirmed,
             });
         }
         const now = new Date();
@@ -159,10 +184,12 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
             console.warn("[willcall][customer][register] invite invalid", {
                 email,
                 baid,
+                reasonCode: REGISTER_REASON.DetailsNotConfirmed,
                 ms: msSince(t0),
             });
             return res.status(400).json({
                 message: "We couldn't confirm these details. Please contact your salesperson.",
+                reasonCode: REGISTER_REASON.DetailsNotConfirmed,
             });
         }
         if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
@@ -171,10 +198,12 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
                 console.warn("[willcall][customer][register] invite email mismatch", {
                     email,
                     baid,
+                    reasonCode: REGISTER_REASON.DetailsNotConfirmed,
                     ms: msSince(t0),
                 });
                 return res.status(400).json({
                     message: "We couldn't confirm these details. Please contact your salesperson.",
+                    reasonCode: REGISTER_REASON.DetailsNotConfirmed,
                 });
             }
         }
@@ -224,6 +253,7 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
             userId: user.id,
             email: user.email,
             baid: user.baid,
+            reasonCode: "REGISTER_SUCCESS",
             ms: msSince(t0),
         });
         return res.json({
@@ -242,10 +272,14 @@ exports.customerAuthRouter.post("/register", async (req, res) => {
         console.error("[willcall][customer][register] error", {
             email,
             baid,
+            reasonCode: REGISTER_REASON.RegisterFailed,
             ms: msSince(t0),
             error: err?.message ?? String(err),
         });
-        return res.status(500).json({ message: "Failed to register" });
+        return res.status(500).json({
+            message: "Failed to register",
+            reasonCode: REGISTER_REASON.RegisterFailed,
+        });
     }
 });
 /**
