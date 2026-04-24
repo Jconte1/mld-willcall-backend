@@ -10,6 +10,8 @@ const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const passwords_1 = require("../lib/passwords");
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
+const loginThrottle_1 = require("../lib/loginThrottle");
+const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 exports.customerAuthRouter = (0, express_1.Router)();
 const BAID_REGEX = /^BA\d{7}$/;
 const REGISTER_BODY = zod_1.z.object({
@@ -47,6 +49,9 @@ const LOGIN_BODY = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().min(1),
 });
+const REGISTER_PREFILL_BODY = zod_1.z.object({
+    token: zod_1.z.string().min(20),
+});
 function msSince(t0) {
     return Date.now() - t0;
 }
@@ -54,6 +59,35 @@ function hashInviteCode(code) {
     const secret = process.env.INVITE_CODE_SECRET || "";
     return node_crypto_1.default.createHash("sha256").update(`${code}:${secret}`).digest("hex");
 }
+/**
+ * POST /api/customer/register/prefill
+ * Body: { token }
+ * Returns: { baid, zip, inviteCode, email, orderNbr }
+ */
+exports.customerAuthRouter.post("/register/prefill", async (req, res) => {
+    const parsed = REGISTER_PREFILL_BODY.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid request body" });
+    }
+    try {
+        const prefill = (0, registrationPrefillToken_1.verifyRegistrationPrefillToken)(parsed.data.token);
+        const existing = await prisma_1.prisma.users.findUnique({
+            where: { email: prefill.email.toLowerCase().trim() },
+            select: { id: true },
+        });
+        return res.json({
+            baid: prefill.baid,
+            zip: prefill.zip,
+            inviteCode: prefill.inviteCode,
+            email: prefill.email,
+            orderNbr: prefill.orderNbr,
+            existingAccount: Boolean(existing),
+        });
+    }
+    catch {
+        return res.status(400).json({ message: "Invalid or expired link" });
+    }
+});
 /**
  * POST /api/customer/register
  * Body: { name, email, phone, baid, zip, inviteCode, password }
@@ -277,32 +311,77 @@ exports.customerAuthRouter.post("/login", async (req, res) => {
     const email = parsed.data.email.toLowerCase().trim();
     const password = parsed.data.password;
     console.log("[willcall][customer][login] start", { email });
+    const throttle = await (0, loginThrottle_1.getLoginThrottleState)("customer", email);
+    if (throttle.blocked) {
+        return res.status(429).json({
+            message: "Too many failed attempts. Account temporarily locked.",
+            attemptsLeft: 0,
+            lockedUntil: throttle.lockedUntil?.toISOString(),
+        });
+    }
     const user = await prisma_1.prisma.users.findUnique({ where: { email } });
     if (!user) {
+        const failed = await (0, loginThrottle_1.recordFailedLogin)("customer", email);
         console.warn("[willcall][customer][login] invalid credentials (no user)", {
             email,
+            attemptsLeft: failed.attemptsLeft,
             ms: msSince(t0),
         });
-        return res.status(401).json({ message: "Invalid credentials" });
+        if (failed.blocked) {
+            return res.status(429).json({
+                message: "Too many failed attempts. Account temporarily locked.",
+                attemptsLeft: 0,
+                lockedUntil: failed.lockedUntil?.toISOString(),
+            });
+        }
+        return res.status(401).json({
+            message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+            attemptsLeft: failed.attemptsLeft,
+        });
     }
     const cred = await prisma_1.prisma.customerCredential.findUnique({ where: { userId: user.id } });
     if (!cred) {
+        const failed = await (0, loginThrottle_1.recordFailedLogin)("customer", email);
         console.warn("[willcall][customer][login] invalid credentials (no cred)", {
             email,
             userId: user.id,
+            attemptsLeft: failed.attemptsLeft,
             ms: msSince(t0),
         });
-        return res.status(401).json({ message: "Invalid credentials" });
+        if (failed.blocked) {
+            return res.status(429).json({
+                message: "Too many failed attempts. Account temporarily locked.",
+                attemptsLeft: 0,
+                lockedUntil: failed.lockedUntil?.toISOString(),
+            });
+        }
+        return res.status(401).json({
+            message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+            attemptsLeft: failed.attemptsLeft,
+        });
     }
     const ok = await (0, passwords_1.verifyPassword)(password, cred.passwordHash);
     if (!ok) {
+        const failed = await (0, loginThrottle_1.recordFailedLogin)("customer", email);
         console.warn("[willcall][customer][login] invalid credentials (bad password)", {
             email,
             userId: user.id,
+            attemptsLeft: failed.attemptsLeft,
             ms: msSince(t0),
         });
-        return res.status(401).json({ message: "Invalid credentials" });
+        if (failed.blocked) {
+            return res.status(429).json({
+                message: "Too many failed attempts. Account temporarily locked.",
+                attemptsLeft: 0,
+                lockedUntil: failed.lockedUntil?.toISOString(),
+            });
+        }
+        return res.status(401).json({
+            message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+            attemptsLeft: failed.attemptsLeft,
+        });
     }
+    await (0, loginThrottle_1.clearFailedLogin)("customer", email);
     console.log("[willcall][customer][login] success", {
         userId: user.id,
         email,

@@ -73,7 +73,6 @@ function normalizeWarehouseToLocationId(warehouse) {
         canonical = "jackson-willcall";
     else if (PROVO_WAREHOUSES.has(normalized))
         canonical = "provo-willcall";
-    // TODO: Keep this mapping focused on pickup-site canonical IDs only.
     // Acumatica has multiple "location" concepts: warehouse text (pickup context) vs SalesOrder LocationID
     // (often job/site/customer context like MAIN, LOT 20, etc.). This function must only translate warehouse
     // labels to pickup-site IDs. If new warehouse labels appear in ERP logs, add explicit mappings here rather

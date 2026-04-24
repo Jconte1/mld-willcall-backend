@@ -25,6 +25,15 @@ async function getCustomerOrders(baid) {
             buyerGroup: true,
             shipVia: true,
             locationId: true,
+            ErpOrderAddress: {
+                select: {
+                    addressLine1: true,
+                    addressLine2: true,
+                    city: true,
+                    state: true,
+                    postalCode: true,
+                },
+            },
             salesPersonNumber: true,
             ErpOrderPayment: {
                 select: {
@@ -213,6 +222,15 @@ async function getCustomerOrders(baid) {
             buyerGroup: summary.buyerGroup,
             shipVia: summary.shipVia,
             locationId: summary.locationId,
+            jobsiteAddress: summary.ErpOrderAddress
+                ? {
+                    addressLine1: summary.ErpOrderAddress.addressLine1 ?? null,
+                    addressLine2: summary.ErpOrderAddress.addressLine2 ?? null,
+                    city: summary.ErpOrderAddress.city ?? null,
+                    state: summary.ErpOrderAddress.state ?? null,
+                    postalCode: summary.ErpOrderAddress.postalCode ?? null,
+                }
+                : null,
             salesPersonNumber: summary.salesPersonNumber ?? null,
             salesPerson: summary.salesPersonNumber
                 ? salesByNumber.get(summary.salesPersonNumber) ?? null

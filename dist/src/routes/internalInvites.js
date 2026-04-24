@@ -9,6 +9,7 @@ const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
+const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
 exports.internalInvitesRouter = (0, express_1.Router)();
@@ -86,7 +87,26 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
     try {
         const verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
         if (!verified) {
-            console.info("[internal-invites] verify failed", { baid });
+            let diagnostics = null;
+            try {
+                diagnostics = await (0, verifyBaid_1.diagnoseBaidZipInAcumatica)(baid, zip);
+            }
+            catch (diagErr) {
+                console.info("[internal-invites] verify diagnostics error", {
+                    baid,
+                    zipSent: parsed.data.billingZip,
+                    zipNormalized: zip,
+                    message: String(diagErr?.message || diagErr),
+                });
+            }
+            console.info("[internal-invites] verify failed", {
+                baid,
+                zipSent: parsed.data.billingZip,
+                zipNormalized: zip,
+                compareMode: diagnostics?.mode || "unknown",
+                acumaticaMatched: diagnostics?.matched ?? false,
+                acumaticaCandidateZip5: diagnostics?.candidateZip5 || [],
+            });
             return res.status(400).json({ message: "Invalid Customer ID# or ZIP" });
         }
     }
@@ -148,7 +168,23 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
     }
     if (shouldSendEmail && code) {
         const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
-        const message = (0, buildInviteEmail_1.buildInviteEmail)(code, baid, "Manager", frontendUrl, zip);
+        let prefillToken = null;
+        try {
+            prefillToken = (0, registrationPrefillToken_1.createRegistrationPrefillToken)({
+                customerId: baid,
+                billingZip: zip,
+                inviteCode: code,
+                email,
+            });
+        }
+        catch (err) {
+            console.warn("[internal-invites] failed to create prefill token; using fallback link", {
+                baid,
+                email,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+        const message = (0, buildInviteEmail_1.buildInviteEmail)(code, baid, "Manager", frontendUrl, zip, prefillToken);
         await (0, sendEmail_1.sendEmail)(email, message.subject, message.body, {
             allowTestOverride: false,
             allowNonProdSend: true,

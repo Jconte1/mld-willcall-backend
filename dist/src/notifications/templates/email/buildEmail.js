@@ -51,7 +51,7 @@ function formatSubjectOrderSummary(payload) {
         return `${items[0]}, ${items[1]}`;
     return `${items[0]}, ${items[1]} +${items.length - 2}`;
 }
-function renderTemplate({ title, preheader, message, when, orders, location, link, unsubscribeLink, staffNote, logoUrl, }) {
+function renderTemplate({ title, preheader, message, when, orders, location, link, staffNote, logoUrl, }) {
     const locationBlock = location
         ? `<tr>
                     <td style="font-size:13px;color:#6b7280;padding-top:10px;">Pickup location</td>
@@ -114,7 +114,6 @@ function renderTemplate({ title, preheader, message, when, orders, location, lin
             <tr>
               <td style="padding:20px 28px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;">
                 If you did not request this, you can ignore this email.
-                ${unsubscribeLink ? `<div style="margin-top:10px;"><a href="${unsubscribeLink}" style="color:#6b7280;text-decoration:underline;">Unsubscribe from email updates</a></div>` : ""}
               </td>
             </tr>
           </table>
@@ -149,7 +148,6 @@ function buildEmailMessage(type, payload) {
                     orders,
                     location: locationLine,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -165,7 +163,6 @@ function buildEmailMessage(type, payload) {
                     orders,
                     location: locationLine,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -181,7 +178,6 @@ function buildEmailMessage(type, payload) {
                     orders,
                     location: locationLine,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -198,7 +194,6 @@ function buildEmailMessage(type, payload) {
                     orders,
                     location: locationLine,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -215,7 +210,6 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -231,7 +225,6 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -246,7 +239,6 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -262,7 +254,6 @@ function buildEmailMessage(type, payload) {
                     orders,
                     location: locationLine,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),
@@ -277,7 +268,6 @@ function buildEmailMessage(type, payload) {
                     when,
                     orders,
                     link: payload.link,
-                    unsubscribeLink: payload.unsubscribeLink,
                     staffNote,
                     logoUrl,
                 }),

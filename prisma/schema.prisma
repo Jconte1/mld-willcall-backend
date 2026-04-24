@@ -462,6 +462,10 @@ model PickupAppointment {
   emailOptInAt      DateTime?
   emailOptInSource  String?                  @db.VarChar(128)
   emailOptInEmail   String?                  @db.VarChar(256)
+  noShowEmailAttemptedAt DateTime?
+  noShowEmailSentAt DateTime?
+  noShowSmsAttemptedAt DateTime?
+  noShowNotificationProcessedAt DateTime?
   vehicleInfo       String?
   customerNotes     String?
   users             users?                   @relation(fields: [userId], references: [id], onDelete: SetNull)

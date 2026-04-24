@@ -6,7 +6,6 @@ const buildSms_1 = require("../templates/sms/buildSms");
 const buildEmail_1 = require("../templates/email/buildEmail");
 const sendSms_1 = require("../providers/sms/sendSms");
 const sendEmail_1 = require("../providers/email/sendEmail");
-const buildLink_1 = require("../links/buildLink");
 const pickupLocations_1 = require("../../lib/pickupLocations");
 const orderDisplay_1 = require("../orderReady/orderDisplay");
 const orderNotificationLabel_1 = require("../orderReady/orderNotificationLabel");
@@ -79,7 +78,6 @@ async function buildPayload(prisma, appointment, job, link) {
             jobDisplay,
         };
     });
-    const unsubscribeLink = snapshot.unsubscribeLink || buildUnsubscribeFromLink(link, appointment.id);
     const location = (0, pickupLocations_1.getPickupLocation)(appointment.locationId);
     const locationName = location?.name ?? appointment.locationId;
     return {
@@ -93,25 +91,11 @@ async function buildPayload(prisma, appointment, job, link) {
         orderNbrs: normalizedOrderNbrs,
         orderDisplays,
         link,
-        unsubscribeLink: unsubscribeLink || undefined,
         oldStartAt: snapshot.oldStartAt ? new Date(snapshot.oldStartAt) : undefined,
         oldEndAt: snapshot.oldEndAt ? new Date(snapshot.oldEndAt) : undefined,
         cancelReason: snapshot.cancelReason ?? null,
         staffInitiated: Boolean(snapshot.staffInitiated),
     };
-}
-function buildUnsubscribeFromLink(link, appointmentId) {
-    try {
-        const base = (process.env.FRONTEND_URL || "").replace(/\/+$/, "") || "http://localhost";
-        const url = new URL(link, base);
-        const token = url.searchParams.get("token");
-        if (!token)
-            return "";
-        return (0, buildLink_1.buildUnsubscribeLink)(appointmentId, token);
-    }
-    catch {
-        return "";
-    }
 }
 async function sendJob(prisma, job, appointment) {
     const link = job.payloadSnapshot?.link;

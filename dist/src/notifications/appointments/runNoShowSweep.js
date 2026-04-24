@@ -124,7 +124,7 @@ async function sendNoShowNotifications(prisma, appointment) {
     });
     const token = await (0, tokens_1.rotateAppointmentToken)(prisma, appointment.id, appointment.endAt);
     const link = (0, buildLink_1.buildAppointmentLink)(appointment.id, token.token);
-    if (appointment.emailOptIn) {
+    if (appointment.emailOptIn && !appointment.noShowEmailAttemptedAt) {
         const recipient = appointment.emailOptInEmail || appointment.customerEmail;
         const message = (0, buildNoShowEmail_1.buildNoShowEmail)({
             when,
@@ -133,11 +133,24 @@ async function sendNoShowNotifications(prisma, appointment) {
             locationName: location?.name ?? appointment.locationId,
             locationAddress: location?.address,
         });
+        const attemptedAt = new Date();
+        await prisma.pickupAppointment.update({
+            where: { id: appointment.id },
+            data: { noShowEmailAttemptedAt: attemptedAt },
+        });
         await (0, sendEmail_1.sendEmail)(recipient, message.subject, message.body, { allowTestOverride: false });
+        await prisma.pickupAppointment.update({
+            where: { id: appointment.id },
+            data: { noShowEmailSentAt: new Date() },
+        });
     }
-    if (appointment.smsOptIn) {
+    if (appointment.smsOptIn && !appointment.noShowSmsAttemptedAt) {
         const smsTo = appointment.smsOptInPhone || appointment.customerPhone || "";
         if (smsTo) {
+            await prisma.pickupAppointment.update({
+                where: { id: appointment.id },
+                data: { noShowSmsAttemptedAt: new Date() },
+            });
             const smsBody = `We missed you at your pickup on ${when}. ${orderList} Your items are being returned to stock. Please reschedule ASAP. Manage: ${link}`;
             await (0, sendSms_1.sendSms)(smsTo, smsBody, { allowTestOverride: false });
         }
@@ -151,6 +164,7 @@ async function runNoShowSweep(prisma) {
     const appointments = await prisma.pickupAppointment.findMany({
         where: {
             status: { in: ACTIVE_STATUSES },
+            noShowNotificationProcessedAt: null,
             endAt: { gte: startOfToday, lt: now },
         },
         include: { orders: true },
@@ -160,32 +174,54 @@ async function runNoShowSweep(prisma) {
         return;
     }
     for (const appointment of appointments) {
-        const updated = appointment.status === client_1.PickupAppointmentStatus.NoShow
-            ? appointment
-            : await prisma.pickupAppointment.update({
+        try {
+            const updated = appointment.status === client_1.PickupAppointmentStatus.NoShow
+                ? appointment
+                : await prisma.pickupAppointment.update({
+                    where: { id: appointment.id },
+                    data: { status: client_1.PickupAppointmentStatus.NoShow },
+                });
+            await (0, cancelJobs_1.cancelPendingJobs)(prisma, updated.id);
+            if (appointment.orders.length) {
+                await prisma.orderReadyNotice.updateMany({
+                    where: { orderNbr: { in: appointment.orders.map((order) => order.orderNbr) } },
+                    data: { scheduledAppointmentId: null },
+                });
+            }
+            try {
+                await sendNoShowNotifications(prisma, {
+                    id: updated.id,
+                    startAt: updated.startAt,
+                    endAt: updated.endAt,
+                    locationId: updated.locationId,
+                    emailOptIn: updated.emailOptIn,
+                    emailOptInEmail: updated.emailOptInEmail,
+                    customerEmail: updated.customerEmail,
+                    smsOptIn: updated.smsOptIn,
+                    smsOptInPhone: updated.smsOptInPhone,
+                    customerPhone: updated.customerPhone,
+                    orders: appointment.orders,
+                    noShowEmailAttemptedAt: updated.noShowEmailAttemptedAt,
+                    noShowSmsAttemptedAt: updated.noShowSmsAttemptedAt,
+                });
+            }
+            catch (err) {
+                console.error("[appointments] no-show notification failed", {
+                    appointmentId: appointment.id,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+            await prisma.pickupAppointment.update({
                 where: { id: appointment.id },
-                data: { status: client_1.PickupAppointmentStatus.NoShow },
-            });
-        await (0, cancelJobs_1.cancelPendingJobs)(prisma, updated.id);
-        if (appointment.orders.length) {
-            await prisma.orderReadyNotice.updateMany({
-                where: { orderNbr: { in: appointment.orders.map((order) => order.orderNbr) } },
-                data: { scheduledAppointmentId: null },
+                data: { noShowNotificationProcessedAt: new Date() },
             });
         }
-        await sendNoShowNotifications(prisma, {
-            id: updated.id,
-            startAt: updated.startAt,
-            endAt: updated.endAt,
-            locationId: updated.locationId,
-            emailOptIn: updated.emailOptIn,
-            emailOptInEmail: updated.emailOptInEmail,
-            customerEmail: updated.customerEmail,
-            smsOptIn: updated.smsOptIn,
-            smsOptInPhone: updated.smsOptInPhone,
-            customerPhone: updated.customerPhone,
-            orders: appointment.orders,
-        });
+        catch (err) {
+            console.error("[appointments] no-show prep failed", {
+                appointmentId: appointment.id,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
     }
     await markRun(prisma, now);
     console.log("[appointments] no-show sweep", { count: appointments.length });

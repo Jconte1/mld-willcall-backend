@@ -10,6 +10,8 @@ const ingestOrderReadyDetails_1 = require("../lib/acumatica/ingest/ingestOrderRe
 const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
 const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaService");
 const erpClient_1 = require("../lib/queue/erpClient");
+const pickupHours_1 = require("../lib/pickupHours");
+const pickupClosures_1 = require("../lib/pickupClosures");
 const prisma_1 = require("../lib/prisma");
 const notifications_1 = require("../notifications");
 exports.pickupsRouter = (0, express_1.Router)();
@@ -46,10 +48,9 @@ const selectedItemsSchema = zod_1.z.object({
 });
 const SHIPMENT_FORMAT = /^SMT\d{7}$/;
 const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const PREPAY_MIN_DUE = 1;
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
-const OPEN_HOUR = 7;
-const CLOSE_HOUR = 17;
 const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
@@ -138,43 +139,59 @@ function isWeekend(dateStr) {
     }).format(date);
     return weekday === "Sat" || weekday === "Sun";
 }
-function nextBusinessDateStr(dateStr) {
+function isClosedDate(dateStr, locationId) {
+    return isWeekend(dateStr) || (0, pickupClosures_1.isHolidayClosure)(dateStr, locationId);
+}
+function nextBusinessDateStr(dateStr, locationId) {
     let cursor = parseDateOnly(dateStr);
     while (true) {
         cursor = addMinutes(cursor, 24 * 60);
         const next = formatDateInDenver(cursor);
-        if (!isWeekend(next))
+        if (!isClosedDate(next, locationId))
             return next;
     }
 }
 function ceilToSlot(minutes) {
     return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 }
-function getMinAllowedSlot(now) {
-    const todayStr = formatDateInDenver(now);
-    const nowMinutes = timeToMinutes(formatTimeInDenver(now));
-    const closeMinutes = CLOSE_HOUR * 60;
-    const lastStartMinutes = closeMinutes - SLOT_MINUTES;
-    if (isWeekend(todayStr)) {
-        return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+function getMinAllowedSlot(now, locationId) {
+    let cursorDateStr = formatDateInDenver(now);
+    let cursorMinutes = timeToMinutes(formatTimeInDenver(now));
+    let remainingAdvance = MIN_ADVANCE_MINUTES;
+    while (true) {
+        const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
+        const openMinutes = openHour * 60;
+        const closeMinutes = closeHour * 60;
+        if (isClosedDate(cursorDateStr, locationId)) {
+            cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+            cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
+            continue;
+        }
+        if (cursorMinutes < openMinutes)
+            cursorMinutes = openMinutes;
+        if (cursorMinutes >= closeMinutes) {
+            cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+            cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
+            continue;
+        }
+        const availableToday = closeMinutes - cursorMinutes;
+        if (remainingAdvance <= availableToday) {
+            let minMinutes = ceilToSlot(cursorMinutes + remainingAdvance);
+            const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+            if (minMinutes > lastStartMinutes) {
+                cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+                const { openHour: nextOpenHour } = (0, pickupHours_1.getPickupHours)(locationId);
+                minMinutes = nextOpenHour * 60;
+            }
+            return { dateStr: cursorDateStr, minutes: minMinutes };
+        }
+        remainingAdvance -= availableToday;
+        cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+        cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
     }
-    let minDateStr = todayStr;
-    let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
-    if (minMinutes > closeMinutes) {
-        const remaining = minMinutes - closeMinutes;
-        minDateStr = nextBusinessDateStr(todayStr);
-        minMinutes = OPEN_HOUR * 60 + remaining;
-    }
-    if (minMinutes < OPEN_HOUR * 60)
-        minMinutes = OPEN_HOUR * 60;
-    if (minMinutes > lastStartMinutes) {
-        minDateStr = nextBusinessDateStr(minDateStr);
-        minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
-    }
-    return { dateStr: minDateStr, minutes: ceilToSlot(minMinutes) };
 }
-function isBeforeMinAdvance(startAt, now) {
-    const minAllowed = getMinAllowedSlot(now);
+function isBeforeMinAdvance(startAt, now, locationId) {
+    const minAllowed = getMinAllowedSlot(now, locationId);
     const startDateStr = formatDateInDenver(startAt);
     const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
     return (startDateStr < minAllowed.dateStr ||
@@ -304,8 +321,9 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput) {
     });
     return true;
 }
-async function getOrRefreshOrderDetail(orderNbrInput) {
+async function getOrRefreshOrderDetail(orderNbrInput, options) {
     const orderNbr = normalizeOrderNbr(orderNbrInput);
+    const forceFresh = Boolean(options?.forceFresh);
     console.info("[staff-pickups][lookup] start", { orderNbr });
     let summary = await findOrderSummary(orderNbr);
     if (summary) {
@@ -319,6 +337,33 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
     }
     else {
         console.info("[staff-pickups][lookup] db miss", { orderNbr });
+    }
+    if (summary && forceFresh) {
+        try {
+            console.info("[staff-pickups][lookup] forced refresh start", {
+                orderNbr,
+                baid: summary.baid,
+            });
+            await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
+                baid: summary.baid,
+                orderNbr,
+                status: summary.status,
+                shipVia: summary.shipVia,
+                erpLocationId: summary.locationId,
+            });
+            summary = await findOrderSummary(orderNbr);
+            console.info("[staff-pickups][lookup] forced refresh result", {
+                orderNbr,
+                found: Boolean(summary),
+                lineCount: summary?.ErpOrderLine?.length ?? 0,
+            });
+        }
+        catch (err) {
+            console.error("[staff-pickups][lookup] forced refresh failed", {
+                orderNbr,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
     }
     if (!summary) {
         const notice = await prisma_1.prisma.orderReadyNotice.findUnique({
@@ -400,12 +445,14 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
         select: {
             orderTotal: true,
             unpaidBalance: true,
+            otherFees: true,
             terms: true,
             status: true,
         },
     });
     const payment = {
         orderTotal: toNumber(paymentRow?.orderTotal),
+        otherFees: toNumber(paymentRow?.otherFees),
         unpaidBalance: toNumber(paymentRow?.unpaidBalance),
         terms: paymentRow?.terms ?? null,
         status: paymentRow?.status ?? null,
@@ -433,6 +480,17 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
         amount: toNumber(line.amount),
         taxRate: toNumber(line.taxRate),
     })).sort((a, b) => (a.inventoryId ?? "").localeCompare(b.inventoryId ?? ""));
+    const lineAmountTotal = lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+    const lineTaxTotal = lines.reduce((sum, line) => {
+        const orderQty = line.orderQty || 0;
+        if (orderQty <= 0)
+            return sum;
+        const perUnitPreTax = (line.amount || 0) / orderQty;
+        const perUnitTax = perUnitPreTax * ((line.taxRate || 0) / 100);
+        return sum + perUnitTax * orderQty;
+    }, 0);
+    const computedOtherFees = Math.max(0, Math.round((payment.orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100);
+    payment.otherFees = computedOtherFees;
     return {
         orderNbr,
         baid: summary.baid,
@@ -451,12 +509,15 @@ async function getOrRefreshOrderDetail(orderNbrInput) {
     };
 }
 function findPrepayBlock(detail, selectedItems) {
+    if (String(detail.orderNbr || "").trim().toUpperCase().startsWith("R1"))
+        return null;
     const terms = (detail.payment.terms ?? "").trim().toUpperCase();
     if (!PREPAY_TERMS.has(terms))
         return null;
     const selectedMap = new Map((selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item]));
     const unpaidBalance = detail.payment.unpaidBalance;
-    const remainingGoodsPreTax = detail.lines.reduce((sum, line) => {
+    const otherFees = detail.payment.otherFees;
+    const remainingGoodsWithTax = detail.lines.reduce((sum, line) => {
         const key = line.id || line.inventoryId || "";
         const selected = selectedMap.get(key);
         const selectedQty = selected ? selected.qty : 0;
@@ -465,11 +526,13 @@ function findPrepayBlock(detail, selectedItems) {
         if (orderQty <= 0 || remainingQty <= 0)
             return sum;
         const perUnitPreTax = line.amount / orderQty;
-        return sum + remainingQty * perUnitPreTax;
+        const perUnitTax = perUnitPreTax * (line.taxRate / 100);
+        return sum + remainingQty * (perUnitPreTax + perUnitTax);
     }, 0);
-    const retainRequired = remainingGoodsPreTax * 0.5;
+    const remainingWithFees = remainingGoodsWithTax + otherFees;
+    const retainRequired = remainingWithFees * 0.5;
     const amountOwed = Math.max(0, unpaidBalance - retainRequired);
-    if (amountOwed <= 0)
+    if (amountOwed < PREPAY_MIN_DUE)
         return null;
     return {
         orderNbr: detail.orderNbr,
@@ -644,7 +707,7 @@ exports.pickupsRouter.post("/orders/lookup", async (req, res) => {
         role: req.auth?.role,
     });
     const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
-    const detail = await getOrRefreshOrderDetail(body.data.orderNbr);
+    const detail = await getOrRefreshOrderDetail(body.data.orderNbr, { forceFresh: true });
     if (!detail) {
         console.warn("[staff-pickups][lookup] endpoint not found", {
             orderNbr: body.data.orderNbr,
@@ -719,7 +782,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
     if (startAt <= new Date()) {
         return res.status(400).json({ message: "Appointment start time must be in the future." });
     }
-    if (isSalesperson && isBeforeMinAdvance(startAt, new Date())) {
+    if (isSalesperson && isBeforeMinAdvance(startAt, new Date(), body.data.locationId)) {
         return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
     }
     const slotConflict = await prisma_1.prisma.pickupAppointment.findFirst({

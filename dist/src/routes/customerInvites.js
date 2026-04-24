@@ -9,6 +9,7 @@ const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
+const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
 exports.customerInvitesRouter = (0, express_1.Router)();
@@ -177,7 +178,25 @@ async function recordAttempt(key, ok) {
 }
 async function sendInviteEmail(opts) {
     const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
-    const message = (0, buildInviteEmail_1.buildInviteEmail)(opts.code, opts.baid, opts.roleLabel, frontendUrl, opts.zipCode);
+    let prefillToken = null;
+    if (opts.zipCode && opts.recipient) {
+        try {
+            prefillToken = (0, registrationPrefillToken_1.createRegistrationPrefillToken)({
+                customerId: opts.baid,
+                billingZip: opts.zipCode,
+                inviteCode: opts.code,
+                email: opts.recipient,
+            });
+        }
+        catch (err) {
+            console.warn("[customer-invites] failed to create prefill token; using fallback link", {
+                baid: opts.baid,
+                recipient: opts.recipient,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
+    const message = (0, buildInviteEmail_1.buildInviteEmail)(opts.code, opts.baid, opts.roleLabel, frontendUrl, opts.zipCode, prefillToken);
     await (0, sendEmail_1.sendEmail)(opts.recipient, message.subject, message.body, {
         allowTestOverride: opts.allowTestOverride,
         allowNonProdSend: opts.allowTestOverride === false,
@@ -277,9 +296,7 @@ exports.customerInvitesRouter.post("/request", async (req, res) => {
     const code = generateInviteCode();
     const codeHash = hashInviteCode(code);
     const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
-    const recipient = resolveInviteRecipient(process.env.NOTIFICATIONS_TEST_EMAIL, {
-        allowTestOverride: true,
-    });
+    const recipient = "";
     await prisma_1.prisma.inviteCode.create({
         data: {
             baid,
@@ -299,7 +316,7 @@ exports.customerInvitesRouter.post("/request", async (req, res) => {
             baid,
             roleLabel: "Admin",
             zipCode: zip,
-            allowTestOverride: true,
+            allowTestOverride: false,
         });
     }
     await logInviteRequest({

@@ -9,6 +9,7 @@ const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const passwords_1 = require("../lib/passwords");
+const loginThrottle_1 = require("../lib/loginThrottle");
 function logInstance(label) {
     const raw = process.env.DATABASE_URL || "";
     let safeDb = "unknown";
@@ -53,12 +54,45 @@ exports.staffAuthRouter.post("/login", async (req, res) => {
     const email = parsed.data.email.toLowerCase();
     if (!email.endsWith("@mld.com"))
         return res.status(401).json({ message: "Invalid credentials" });
+    const throttle = await (0, loginThrottle_1.getLoginThrottleState)("staff", email);
+    if (throttle.blocked) {
+        return res.status(429).json({
+            message: "Too many failed attempts. Account temporarily locked.",
+            attemptsLeft: 0,
+            lockedUntil: throttle.lockedUntil?.toISOString(),
+        });
+    }
     const user = await prisma_1.prisma.staffUser.findUnique({ where: { email } });
-    if (!user || !user.isActive)
-        return res.status(401).json({ message: "Invalid credentials" });
+    if (!user || !user.isActive) {
+        const failed = await (0, loginThrottle_1.recordFailedLogin)("staff", email);
+        if (failed.blocked) {
+            return res.status(429).json({
+                message: "Too many failed attempts. Account temporarily locked.",
+                attemptsLeft: 0,
+                lockedUntil: failed.lockedUntil?.toISOString(),
+            });
+        }
+        return res.status(401).json({
+            message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+            attemptsLeft: failed.attemptsLeft,
+        });
+    }
     const ok = await (0, passwords_1.verifyPassword)(parsed.data.password, user.passwordHash);
-    if (!ok)
-        return res.status(401).json({ message: "Invalid credentials" });
+    if (!ok) {
+        const failed = await (0, loginThrottle_1.recordFailedLogin)("staff", email);
+        if (failed.blocked) {
+            return res.status(429).json({
+                message: "Too many failed attempts. Account temporarily locked.",
+                attemptsLeft: 0,
+                lockedUntil: failed.lockedUntil?.toISOString(),
+            });
+        }
+        return res.status(401).json({
+            message: `Invalid credentials. ${failed.attemptsLeft} attempts left.`,
+            attemptsLeft: failed.attemptsLeft,
+        });
+    }
+    await (0, loginThrottle_1.clearFailedLogin)("staff", email);
     const secret = process.env.JWT_SECRET;
     if (!secret)
         return res.status(500).json({ message: "Server misconfigured: JWT_SECRET missing" });

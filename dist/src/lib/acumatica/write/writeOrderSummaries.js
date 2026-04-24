@@ -27,7 +27,6 @@ function shouldBeActive(status) {
 }
 function mapOrderSummaryRows(rawRows) {
     const incoming = [];
-    const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
     for (const row of Array.isArray(rawRows) ? rawRows : []) {
         const orderNbr = firstVal(row, ["OrderNbr", "orderNbr", "nbr"]);
         const status = firstVal(row, ["Status", "status"]);
@@ -85,24 +84,6 @@ function mapOrderSummaryRows(rawRows) {
             noteId: optStr(noteId),
             salesPersonNumber: optStr(salesPersonNumber),
         };
-        if (debugOrderNbr && mapped.orderNbr.trim().toUpperCase() === debugOrderNbr) {
-            console.log("[upsertOrderSummaries][debug-map]", {
-                orderNbr: mapped.orderNbr,
-                rowKeys: Object.keys(row || {}),
-                fetched: {
-                    defaultSalespersonField: row?.DefaultSalesperson ?? null,
-                    defaultSalespersonFieldAlt: row?.DefaultSalesPerson ?? null,
-                    defaultSalesperson,
-                    salesPersonAttr,
-                    salesPersonIdField,
-                },
-                mapped: {
-                    salesPersonNumber: mapped.salesPersonNumber,
-                    shipVia: mapped.shipVia,
-                    customerName: mapped.customerName,
-                },
-            });
-        }
         incoming.push(mapped);
     }
     return incoming;
@@ -129,7 +110,6 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     const byNbr = new Map(existing.map((r) => [r.orderNbr, r]));
     const toInsert = [];
     const toUpdate = [];
-    const debugOrderNbr = String(process.env.DEBUG_ORDER_NBR || "").trim().toUpperCase();
     for (const r of incoming) {
         const prev = byNbr.get(r.orderNbr);
         if (!prev) {
@@ -151,11 +131,6 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     }
     let inserted = 0;
     if (toInsert.length) {
-        if (debugOrderNbr) {
-            const row = toInsert.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
-            if (row)
-                console.log("[upsertOrderSummaries][debug-insert]", row);
-        }
         const { count } = await prisma_1.prisma.erpOrderSummary.createMany({
             data: toInsert.map((r) => ({
                 id: (0, node_crypto_1.randomUUID)(),
@@ -181,11 +156,6 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
     }
     let updated = 0;
     if (toUpdate.length) {
-        if (debugOrderNbr) {
-            const row = toUpdate.find((r) => String(r.orderNbr || "").trim().toUpperCase() === debugOrderNbr);
-            if (row)
-                console.log("[upsertOrderSummaries][debug-update]", row);
-        }
         await runWithConcurrency(toUpdate, concurrency, async (r) => {
             await prisma_1.prisma.erpOrderSummary.update({
                 where: { baid_orderNbr: { baid, orderNbr: r.orderNbr } },
@@ -217,13 +187,6 @@ async function upsertOrderSummariesForBAID(baid, rawRows, cutoff, { concurrency 
         },
         data: { isActive: false, updatedAt: now },
     });
-    if (debugOrderNbr) {
-        const persisted = await prisma_1.prisma.erpOrderSummary.findFirst({
-            where: { baid, orderNbr: debugOrderNbr },
-            select: { orderNbr: true, salesPersonNumber: true, shipVia: true, updatedAt: true },
-        });
-        console.log("[upsertOrderSummaries][debug-persisted]", { baid, row: persisted ?? null });
-    }
     return { inserted, updated, inactivated };
 }
 async function upsertOrderSummariesDelta(baid, rawRows, { concurrency = 10 } = {}) {

@@ -160,7 +160,7 @@ async function runOrderReadyEscalations(prisma) {
             const message = (0, buildOrderReadyEscalationEmail_1.buildOrderReadyEscalationEmail)({
                 orderNbr: notice.orderNbr,
                 customerId: notice.customerId ?? notice.baid ?? null,
-                customerName: summary?.customerName ?? notice.customerIdDescription ?? null,
+                customerName: notice.customerIdDescription ?? summary?.customerName ?? null,
                 contactName: notice.contactName ?? null,
                 contactEmail: notice.contactEmail ?? null,
                 contactPhone: notice.contactPhone ?? null,

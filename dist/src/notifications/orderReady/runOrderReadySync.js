@@ -27,7 +27,7 @@ const ACTIVE_APPOINTMENT_STATUSES = [
 ];
 const JACKSON_SHIP_VIAS = new Set(["TRANS JACKSON", "WILL CALL JX"]);
 const PROVO_SHIP_VIAS = new Set(["TRANS PROVO", "WILL CALL PR"]);
-const JACKSON_WAREHOUSE = "JACKSON SHOWROOM";
+const JACKSON_WAREHOUSES = new Set(["JACKSON SHOWROOM", "JACKSON WAREHOUSE"]);
 const PROVO_WAREHOUSE = "PROVO SHOWROOM";
 function normalizePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
@@ -70,10 +70,10 @@ function evaluateOrderReadyLocationEligibility(input) {
     const shipVia = normalizeText(input.shipVia);
     const warehouse = normalizeText(input.warehouse);
     if (JACKSON_SHIP_VIAS.has(shipVia)) {
-        const ok = warehouse === JACKSON_WAREHOUSE;
+        const ok = JACKSON_WAREHOUSES.has(warehouse);
         return {
             eligible: ok,
-            reason: ok ? null : "jackson-shipvia-requires-jackson-showroom",
+            reason: ok ? null : "jackson-shipvia-requires-jackson-showroom-or-warehouse",
             specialTransit: "jackson",
         };
     }
@@ -268,7 +268,7 @@ async function runOrderReadySync(prisma) {
             attributeSmsOptIn: row.attributeSmsOptIn ?? null,
             attributeEmailOptIn: row.attributeEmailOptIn ?? null,
             contactName: row.attributeOsContact ?? null,
-            contactPhone, // TODO: replace with actual contact phone field
+            contactPhone,
             contactEmail,
             locationId,
             smsOptIn: smsEligible,
@@ -323,7 +323,7 @@ async function runOrderReadySync(prisma) {
             attributeSmsOptIn: row.attributeSmsOptIn ?? null,
             attributeEmailOptIn: row.attributeEmailOptIn ?? null,
             contactName: row.attributeOsContact ?? null,
-            contactPhone, // TODO: replace with actual contact phone field
+            contactPhone,
             contactEmail,
             locationId,
             smsOptIn: smsEligible,
@@ -421,8 +421,12 @@ async function runOrderReadySync(prisma) {
             });
             continue;
         }
+        const todayKey = getAttemptDateKey(now);
+        const nextEligibleDayKey = notice.nextEligibleNotifyAt
+            ? getAttemptDateKey(notice.nextEligibleNotifyAt)
+            : null;
         const eligible = !notice.lastNotifiedAt ||
-            (notice.nextEligibleNotifyAt && notice.nextEligibleNotifyAt <= now);
+            (nextEligibleDayKey != null && nextEligibleDayKey <= todayKey);
         if (!eligible)
             continue;
         const activeToken = await (0, tokens_1.getActiveOrderReadyToken)(prisma, notice.id);

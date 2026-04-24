@@ -10,14 +10,13 @@ const buildLink_1 = require("../notifications/links/buildLink");
 const tokens_1 = require("../notifications/links/tokens");
 const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
+const pickupHours_1 = require("../lib/pickupHours");
+const pickupClosures_1 = require("../lib/pickupClosures");
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_MINUTES = 15;
-const OPEN_HOUR = 7;
-const CLOSE_HOUR = 17;
 const MIN_ADVANCE_MINUTES = 4 * 60;
-const NEXT_DAY_EARLIEST_MINUTES = 10 * 60;
 const tokenSchema = zod_1.z.object({
     token: zod_1.z.string().min(1),
 });
@@ -44,6 +43,9 @@ function isWeekend(dateStr) {
         weekday: "short",
     }).format(date);
     return weekday === "Sat" || weekday === "Sun";
+}
+function isClosedDate(dateStr, locationId) {
+    return isWeekend(dateStr) || (0, pickupClosures_1.isHolidayClosure)(dateStr, locationId);
 }
 function formatDateInDenver(date) {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -81,23 +83,24 @@ function parseDateOnly(dateStr) {
 function addMinutes(date, minutes) {
     return new Date(date.getTime() + minutes * 60000);
 }
-function nextBusinessDateStr(dateStr) {
+function nextBusinessDateStr(dateStr, locationId) {
     let cursor = parseDateOnly(dateStr);
     while (true) {
         cursor = addMinutes(cursor, 24 * 60);
         const next = formatDateInDenver(cursor);
-        if (!isWeekend(next))
+        if (!isClosedDate(next, locationId))
             return next;
     }
 }
 function ceilToSlot(minutes) {
     return Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 }
-function ensureWithinBusinessHours(dateStr, slots) {
-    if (isWeekend(dateStr))
+function ensureWithinBusinessHours(locationId, dateStr, slots) {
+    if (isClosedDate(dateStr, locationId))
         return false;
-    const startMinutes = OPEN_HOUR * 60;
-    const lastStartMinutes = (CLOSE_HOUR * 60) - SLOT_MINUTES;
+    const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
+    const startMinutes = openHour * 60;
+    const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
     return slots.every((slot) => {
         const minutes = timeToMinutes(slot.startTime);
         return minutes >= startMinutes && minutes <= lastStartMinutes;
@@ -112,7 +115,7 @@ function areSlotsContiguous(slots) {
 function makeDateTime(dateStr, time) {
     return (0, denverLocalDateTime_1.makeDenverDateTime)(dateStr, time);
 }
-function getMinAllowedSlot(now) {
+function getMinAllowedSlot(now, locationId) {
     const timeStr = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/Denver",
         hour: "2-digit",
@@ -120,28 +123,40 @@ function getMinAllowedSlot(now) {
         hour12: false,
     }).format(now);
     const [hour, minute] = timeStr.split(":").map((part) => Number(part));
-    const todayStr = formatDateInDenver(now);
-    const closeMinutes = CLOSE_HOUR * 60;
-    const lastStartMinutes = closeMinutes - SLOT_MINUTES;
-    if (isWeekend(todayStr)) {
-        return { dateStr: nextBusinessDateStr(todayStr), minutes: OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES };
+    let cursorDateStr = formatDateInDenver(now);
+    let cursorMinutes = hour * 60 + minute;
+    let remainingAdvance = MIN_ADVANCE_MINUTES;
+    while (true) {
+        const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
+        const openMinutes = openHour * 60;
+        const closeMinutes = closeHour * 60;
+        if (isClosedDate(cursorDateStr, locationId)) {
+            cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+            cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
+            continue;
+        }
+        if (cursorMinutes < openMinutes)
+            cursorMinutes = openMinutes;
+        if (cursorMinutes >= closeMinutes) {
+            cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+            cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
+            continue;
+        }
+        const availableToday = closeMinutes - cursorMinutes;
+        if (remainingAdvance <= availableToday) {
+            let minMinutes = ceilToSlot(cursorMinutes + remainingAdvance);
+            const lastStartMinutes = closeMinutes - SLOT_MINUTES;
+            if (minMinutes > lastStartMinutes) {
+                cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+                const { openHour: nextOpenHour } = (0, pickupHours_1.getPickupHours)(locationId);
+                minMinutes = nextOpenHour * 60;
+            }
+            return { dateStr: cursorDateStr, minutes: minMinutes };
+        }
+        remainingAdvance -= availableToday;
+        cursorDateStr = nextBusinessDateStr(cursorDateStr, locationId);
+        cursorMinutes = (0, pickupHours_1.getPickupHours)(locationId).openHour * 60;
     }
-    const nowMinutes = hour * 60 + minute;
-    let minMinutes = nowMinutes + MIN_ADVANCE_MINUTES;
-    let minDateStr = todayStr;
-    if (minMinutes > closeMinutes) {
-        const remaining = minMinutes - closeMinutes;
-        minDateStr = nextBusinessDateStr(todayStr);
-        minMinutes = OPEN_HOUR * 60 + remaining;
-    }
-    if (minMinutes < OPEN_HOUR * 60)
-        minMinutes = OPEN_HOUR * 60;
-    if (minMinutes > lastStartMinutes) {
-        minDateStr = nextBusinessDateStr(minDateStr);
-        minMinutes = OPEN_HOUR * 60 + MIN_ADVANCE_MINUTES;
-    }
-    minMinutes = ceilToSlot(minMinutes);
-    return { dateStr: minDateStr, minutes: minMinutes };
 }
 async function validateToken(appointmentId, token) {
     return prisma_1.prisma.appointmentAccessToken.findFirst({
@@ -222,29 +237,8 @@ exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
  * GET /api/public/appointments/:id/unsubscribe?token=...
  */
 exports.publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
-    const parsed = tokenSchema.safeParse(req.query);
     const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
-    if (!parsed.success) {
-        return res.redirect(`${frontend}/unsubscribe?status=invalid`);
-    }
-    const token = await prisma_1.prisma.appointmentAccessToken.findFirst({
-        where: {
-            appointmentId: req.params.id,
-            token: parsed.data.token,
-        },
-    });
-    if (!token) {
-        return res.redirect(`${frontend}/unsubscribe?status=invalid`);
-    }
-    await prisma_1.prisma.pickupAppointment.update({
-        where: { id: req.params.id },
-        data: {
-            emailOptIn: false,
-            emailOptInAt: null,
-            emailOptInSource: "unsubscribe",
-        },
-    });
-    return res.redirect(`${frontend}/unsubscribe?status=success`);
+    return res.redirect(`${frontend}/`);
 });
 /**
  * PATCH /api/public/appointments/:id?token=...
@@ -298,10 +292,10 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     if (parsed.data.selectedSlots.length !== requiredSlots) {
         return res.status(400).json({ message: "Selected slots do not match appointment size." });
     }
-    if (!ensureWithinBusinessHours(parsed.data.selectedDate, parsed.data.selectedSlots)) {
+    if (!ensureWithinBusinessHours(appointment.locationId, parsed.data.selectedDate, parsed.data.selectedSlots)) {
         return res.status(400).json({ message: "Selected time is outside business hours." });
     }
-    const minAllowed = getMinAllowedSlot(new Date());
+    const minAllowed = getMinAllowedSlot(new Date(), appointment.locationId);
     const now = new Date();
     console.log("[public-appointments][min-advance]", {
         now: now.toISOString(),

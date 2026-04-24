@@ -350,11 +350,33 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         },
         select: {
             orderTotal: true,
+            otherFees: true,
             unpaidBalance: true,
             terms: true,
             status: true,
         },
     });
+    const lineAmountSum = await prisma_1.prisma.erpOrderLine.aggregate({
+        where: { orderNbr },
+        _sum: { amount: true },
+    });
+    const orderTotal = payment ? (0, orderHelpers_1.toNumber)(payment.orderTotal) : null;
+    const lineAmountTotal = (0, orderHelpers_1.toNumber)(lineAmountSum._sum.amount) ?? 0;
+    const taxRows = await prisma_1.prisma.erpOrderLine.findMany({
+        where: { orderNbr },
+        select: { orderQty: true, amount: true, taxRate: true },
+    });
+    const lineTaxTotal = taxRows.reduce((sum, line) => {
+        const orderQty = Number(line.orderQty ?? 0) || 0;
+        if (orderQty <= 0)
+            return sum;
+        const perUnitPreTax = (Number(line.amount ?? 0) || 0) / orderQty;
+        const perUnitTax = perUnitPreTax * ((Number(line.taxRate ?? 0) || 0) / 100);
+        return sum + perUnitTax * orderQty;
+    }, 0);
+    const computedOtherFees = payment && orderTotal != null
+        ? Math.max(0, Math.round((orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100)
+        : null;
     const salesPerson = salesPersonNumber
         ? await prisma_1.prisma.staffUser.findFirst({
             where: { salespersonNumber: salesPersonNumber },
@@ -399,7 +421,8 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         appointment,
         payment: payment
             ? {
-                orderTotal: (0, orderHelpers_1.toNumber)(payment.orderTotal),
+                orderTotal: orderTotal,
+                otherFees: computedOtherFees,
                 unpaidBalance: (0, orderHelpers_1.toNumber)(payment.unpaidBalance),
                 terms: payment.terms,
                 status: payment.status,
