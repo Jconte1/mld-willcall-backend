@@ -516,6 +516,23 @@ function findPrepayBlock(detail, selectedItems) {
     const selectedMap = new Map((selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item]));
     const unpaidBalance = detail.payment.unpaidBalance;
     const otherFees = detail.payment.otherFees;
+    const openLines = detail.lines.filter((line) => Math.max(0, line.openQty) > 0);
+    const allOpenQtySelected = openLines.length > 0 &&
+        openLines.every((line) => {
+            const key = line.id || line.inventoryId || "";
+            const selected = selectedMap.get(key);
+            const selectedQty = selected ? selected.qty : 0;
+            return selectedQty >= Math.max(0, line.openQty);
+        });
+    if (allOpenQtySelected) {
+        const amountOwed = Math.max(0, unpaidBalance);
+        if (amountOwed < PREPAY_MIN_DUE)
+            return null;
+        return {
+            orderNbr: detail.orderNbr,
+            amountOwed: Math.round(amountOwed * 100) / 100,
+        };
+    }
     const remainingGoodsWithTax = detail.lines.reduce((sum, line) => {
         const key = line.id || line.inventoryId || "";
         const selected = selectedMap.get(key);
