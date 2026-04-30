@@ -51,13 +51,19 @@ const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 const PREPAY_MIN_DUE = 1;
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
-const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES = [
     client_1.PickupAppointmentStatus.Scheduled,
     client_1.PickupAppointmentStatus.Confirmed,
     client_1.PickupAppointmentStatus.InProgress,
     client_1.PickupAppointmentStatus.Ready,
 ];
+function getMinAdvanceMinutes(locationId) {
+    if (locationId === "boise-willcall")
+        return 2 * 60;
+    if (locationId === "jackson-willcall")
+        return 0;
+    return 4 * 60;
+}
 const shipmentUpdateSchema = zod_1.z.object({
     orderNbr: zod_1.z.string().min(1),
     shipmentNbrs: zod_1.z.array(zod_1.z.string().min(1)).default([]),
@@ -157,7 +163,7 @@ function ceilToSlot(minutes) {
 function getMinAllowedSlot(now, locationId) {
     let cursorDateStr = formatDateInDenver(now);
     let cursorMinutes = timeToMinutes(formatTimeInDenver(now));
-    let remainingAdvance = MIN_ADVANCE_MINUTES;
+    let remainingAdvance = getMinAdvanceMinutes(locationId);
     while (true) {
         const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
         const openMinutes = openHour * 60;

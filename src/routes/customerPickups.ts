@@ -119,7 +119,12 @@ type PendingAppointment = {
 
 const DENVER_TZ = "America/Denver";
 const SLOT_MINUTES = 15;
-const MIN_ADVANCE_MINUTES = 4 * 60;
+
+function getMinAdvanceMinutes(locationId: string) {
+  if (locationId === "boise-willcall") return 2 * 60;
+  if (locationId === "jackson-willcall") return 0;
+  return 4 * 60;
+}
 
 type ActiveOrderConflict = {
   orderNbr: string;
@@ -354,7 +359,7 @@ function getMinAllowedSlot(now: Date, locationId: string) {
   const parts = getDenverParts(now);
   let cursorDateStr = parts.dateStr;
   let cursorMinutes = parts.hour * 60 + parts.minute;
-  let remainingAdvance = MIN_ADVANCE_MINUTES;
+  let remainingAdvance = getMinAdvanceMinutes(locationId);
 
   while (true) {
     const { openHour, closeHour } = getPickupHours(locationId);

@@ -80,7 +80,13 @@ const BLOCKING_STATUSES = [
 ];
 const DENVER_TZ = "America/Denver";
 const SLOT_MINUTES = 15;
-const MIN_ADVANCE_MINUTES = 4 * 60;
+function getMinAdvanceMinutes(locationId) {
+    if (locationId === "boise-willcall")
+        return 2 * 60;
+    if (locationId === "jackson-willcall")
+        return 0;
+    return 4 * 60;
+}
 async function hasAccountAccess(userId, appointmentId) {
     const user = await prisma_1.prisma.users.findUnique({
         where: { id: userId },
@@ -270,7 +276,7 @@ function getMinAllowedSlot(now, locationId) {
     const parts = getDenverParts(now);
     let cursorDateStr = parts.dateStr;
     let cursorMinutes = parts.hour * 60 + parts.minute;
-    let remainingAdvance = MIN_ADVANCE_MINUTES;
+    let remainingAdvance = getMinAdvanceMinutes(locationId);
     while (true) {
         const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
         const openMinutes = openHour * 60;

@@ -16,7 +16,13 @@ exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_MINUTES = 15;
-const MIN_ADVANCE_MINUTES = 4 * 60;
+function getMinAdvanceMinutes(locationId) {
+    if (locationId === "boise-willcall")
+        return 2 * 60;
+    if (locationId === "jackson-willcall")
+        return 0;
+    return 4 * 60;
+}
 const tokenSchema = zod_1.z.object({
     token: zod_1.z.string().min(1),
 });
@@ -125,7 +131,7 @@ function getMinAllowedSlot(now, locationId) {
     const [hour, minute] = timeStr.split(":").map((part) => Number(part));
     let cursorDateStr = formatDateInDenver(now);
     let cursorMinutes = hour * 60 + minute;
-    let remainingAdvance = MIN_ADVANCE_MINUTES;
+    let remainingAdvance = getMinAdvanceMinutes(locationId);
     while (true) {
         const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
         const openMinutes = openHour * 60;

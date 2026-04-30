@@ -63,13 +63,18 @@ const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 const PREPAY_MIN_DUE = 1;
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
-const MIN_ADVANCE_MINUTES = 4 * 60;
 const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
   PickupAppointmentStatus.Confirmed,
   PickupAppointmentStatus.InProgress,
   PickupAppointmentStatus.Ready,
 ];
+
+function getMinAdvanceMinutes(locationId: string) {
+  if (locationId === "boise-willcall") return 2 * 60;
+  if (locationId === "jackson-willcall") return 0;
+  return 4 * 60;
+}
 
 type StaffOrderDetail = {
   orderNbr: string;
@@ -217,7 +222,7 @@ function ceilToSlot(minutes: number) {
 function getMinAllowedSlot(now: Date, locationId: string) {
   let cursorDateStr = formatDateInDenver(now);
   let cursorMinutes = timeToMinutes(formatTimeInDenver(now));
-  let remainingAdvance = MIN_ADVANCE_MINUTES;
+  let remainingAdvance = getMinAdvanceMinutes(locationId);
 
   while (true) {
     const { openHour, closeHour } = getPickupHours(locationId);
