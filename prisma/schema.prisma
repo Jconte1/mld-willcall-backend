@@ -524,6 +524,19 @@ model PickupAppointmentLine {
     @@index([shipmentNbr])
   }
 
+model PickupManualBlock {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  locationId      String   @db.VarChar(64)
+  date            String   @db.VarChar(10)
+  startTime       String   @db.VarChar(5)
+  createdByUserId String?  @db.VarChar(64)
+
+  @@unique([locationId, date, startTime])
+  @@index([locationId, date])
+}
+
 model Pickup {
   /// Legacy pickup table; staff scheduling uses PickupAppointment.
   id                String       @id @default(cuid())

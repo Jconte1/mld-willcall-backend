@@ -433,7 +433,21 @@ customerPickupsRouter.get("/availability", async (req, res) => {
     select: { startAt: true, endAt: true },
   });
 
+  const manualBlocks = await prisma.pickupManualBlock.findMany({
+    where: {
+      locationId,
+      date: { gte: from, lte: to },
+    },
+    select: { date: true, startTime: true },
+  });
+
   const blockedByDate = new Map<string, Set<string>>();
+
+  for (const manualBlock of manualBlocks) {
+    const blocked = blockedByDate.get(manualBlock.date) ?? new Set<string>();
+    blocked.add(manualBlock.startTime);
+    blockedByDate.set(manualBlock.date, blocked);
+  }
 
   for (const appointment of appointments) {
     const startDateStr = formatDateInDenver(appointment.startAt);

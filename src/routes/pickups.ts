@@ -845,6 +845,82 @@ pickupsRouter.get("/", async (req, res) => {
 });
 
 /**
+ * PATCH /api/staff/pickups/availability
+ * Body: { locationId, changes: [{ date, startTime, available }] }
+ */
+pickupsRouter.patch("/availability", async (req, res) => {
+  if (!canModifyPickups(req)) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+
+  const body = z
+    .object({
+      locationId: z.enum(LOCATION_IDS),
+      changes: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            startTime: z.string().regex(/^\d{2}:\d{2}$/),
+            available: z.boolean(),
+          })
+        )
+        .nonempty(),
+    })
+    .safeParse(req.body);
+
+  if (!body.success) return res.status(400).json({ message: "Invalid request body" });
+
+  if (!canAccessLocation(req, body.data.locationId)) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+
+  const invalidChange = body.data.changes.find((change) => {
+    if (isClosedDate(change.date, body.data.locationId)) return true;
+    const [hours, minutes] = change.startTime.split(":").map(Number);
+    const startMinutes = hours * 60 + minutes;
+    const { openHour, closeHour } = getPickupHours(body.data.locationId);
+    return (
+      Number.isNaN(startMinutes) ||
+      minutes % SLOT_MINUTES !== 0 ||
+      startMinutes < openHour * 60 ||
+      startMinutes >= closeHour * 60
+    );
+  });
+
+  if (invalidChange) {
+    return res.status(400).json({ message: "Invalid availability change." });
+  }
+
+  const blocksToCreate = body.data.changes.filter((change) => !change.available);
+  const blocksToRemove = body.data.changes.filter((change) => change.available);
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    if (blocksToRemove.length) {
+      await tx.pickupManualBlock.deleteMany({
+        where: {
+          locationId: body.data.locationId,
+          OR: blocksToRemove.map((change) => ({ date: change.date, startTime: change.startTime })),
+        },
+      });
+    }
+
+    if (blocksToCreate.length) {
+      await tx.pickupManualBlock.createMany({
+        data: blocksToCreate.map((change) => ({
+          locationId: body.data.locationId,
+          date: change.date,
+          startTime: change.startTime,
+          createdByUserId: req.auth?.id ?? null,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  });
+
+  return res.json({ updated: body.data.changes.length });
+});
+
+/**
  * POST /api/staff/pickups/orders/lookup
  * Body: { orderNbr }
  */
