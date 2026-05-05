@@ -550,6 +550,18 @@ customerPickupsRouter.post("/", async (req, res) => {
       return res.status(400).json({ message: "Selected slots must be consecutive." });
     }
 
+    const manualBlock = await prisma.pickupManualBlock.findFirst({
+      where: {
+        locationId: group.locationId,
+        date: group.selectedDate,
+        startTime: { in: group.selectedSlots.map((slot) => slot.startTime) },
+      },
+      select: { id: true },
+    });
+    if (manualBlock) {
+      return res.status(409).json({ message: "Time slot no longer available." });
+    }
+
     const orderedSlots = [...group.selectedSlots].sort(
       (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime)
     );

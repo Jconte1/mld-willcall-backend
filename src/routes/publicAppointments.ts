@@ -379,6 +379,18 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   const startAt = makeDateTime(parsed.data.selectedDate, orderedSlots[0].startTime);
   const endAt = makeDateTime(parsed.data.selectedDate, orderedSlots[orderedSlots.length - 1].endTime);
 
+  const manualBlock = await prisma.pickupManualBlock.findFirst({
+    where: {
+      locationId: appointment.locationId,
+      date: parsed.data.selectedDate,
+      startTime: { in: parsed.data.selectedSlots.map((slot) => slot.startTime) },
+    },
+    select: { id: true },
+  });
+  if (manualBlock) {
+    return res.status(409).json({ message: "Time slot no longer available." });
+  }
+
   const conflict = await prisma.pickupAppointment.findFirst({
     where: {
       id: { not: appointment.id },
