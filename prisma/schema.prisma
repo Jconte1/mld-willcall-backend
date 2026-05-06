@@ -353,6 +353,8 @@ model users {
   image              String?
   baid               String?             @db.VarChar(64)
   isDeveloper        Boolean             @default(false)
+  mustChangePassword Boolean             @default(false)
+  mustCompleteProfile Boolean            @default(false)
   AccountUserRole    AccountUserRole[]
   customerCredential CustomerCredential?
   Device             Device[]

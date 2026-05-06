@@ -65,6 +65,16 @@ const REGISTER_PREFILL_BODY = z.object({
   token: z.string().min(20),
 });
 
+const AUTO_REGISTER_PREFILL_BODY = z.object({
+  token: z.string().min(20),
+});
+
+const COMPLETE_SETUP_BODY = z.object({
+  userId: z.string().min(1),
+  name: z.string().min(2),
+  password: z.string().min(1),
+});
+
 function msSince(t0: number) {
   return Date.now() - t0;
 }
@@ -72,6 +82,12 @@ function msSince(t0: number) {
 function hashInviteCode(code: string) {
   const secret = process.env.INVITE_CODE_SECRET || "";
   return crypto.createHash("sha256").update(`${code}:${secret}`).digest("hex");
+}
+
+function generateTempPassword() {
+  const raw = crypto.randomBytes(18).toString("base64url");
+  // Ensure all customer password rules are met.
+  return `Tmp!${raw}9`;
 }
 
 /**
@@ -87,10 +103,12 @@ customerAuthRouter.post("/register/prefill", async (req, res) => {
 
   try {
     const prefill = verifyRegistrationPrefillToken(parsed.data.token);
-    const existing = await prisma.users.findUnique({
-      where: { email: prefill.email.toLowerCase().trim() },
-      select: { id: true },
-    });
+    const existing = prefill.email
+      ? await prisma.users.findUnique({
+          where: { email: prefill.email.toLowerCase().trim() },
+          select: { id: true },
+        })
+      : null;
     return res.json({
       baid: prefill.baid,
       zip: prefill.zip,
@@ -309,6 +327,276 @@ customerAuthRouter.post("/register", async (req, res) => {
 });
 
 /**
+ * POST /api/customer/auto-register-from-prefill
+ * Body: { token }
+ * Returns: { email, password, userId, created, baid, mustChangePassword, mustCompleteProfile }
+ */
+customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
+  const t0 = Date.now();
+  const parsed = AUTO_REGISTER_PREFILL_BODY.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  let prefill: {
+    baid: string;
+    zip: string;
+    inviteCode: string;
+    email: string | null;
+    orderNbr: string | null;
+  };
+  try {
+    prefill = verifyRegistrationPrefillToken(parsed.data.token);
+  } catch {
+    return res.status(400).json({ message: "Invalid or expired link" });
+  }
+
+  const email = String(prefill.email || "").toLowerCase().trim();
+  if (!email) {
+    return res.status(400).json({ message: "Invite is missing an email." });
+  }
+
+  const baid = prefill.baid;
+  const zip = prefill.zip;
+  const inviteCode = prefill.inviteCode;
+
+  try {
+    const existing = await prisma.users.findUnique({
+      where: { email },
+      include: { customerCredential: true },
+    });
+
+    if (
+      existing &&
+      existing.customerCredential &&
+      existing.baid?.toUpperCase() === baid &&
+      !existing.mustChangePassword &&
+      !existing.mustCompleteProfile
+    ) {
+      return res.status(409).json({
+        message: "Your account is already set up. Please sign in.",
+        reasonCode: REGISTER_REASON.EmailAlreadyExists,
+        email,
+      });
+    }
+
+    const verified = await verifyBaidInAcumatica(baid, zip);
+    if (!verified) {
+      return res.status(400).json({
+        message: "We couldn't confirm these details. Please contact your salesperson.",
+        reasonCode: REGISTER_REASON.DetailsNotConfirmed,
+      });
+    }
+
+    const now = new Date();
+    const codeHash = hashInviteCode(inviteCode);
+    const invite = await prisma.inviteCode.findFirst({
+      where: {
+        baid,
+        status: "Pending",
+        expiresAt: { gt: now },
+        codeHash,
+      },
+    });
+
+    if (!invite) {
+      return res.status(400).json({
+        message: "We couldn't confirm these details. Please contact your salesperson.",
+        reasonCode: REGISTER_REASON.DetailsNotConfirmed,
+      });
+    }
+
+    if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
+      const match = invite.recipientEmail.toLowerCase().trim() === email;
+      if (!match) {
+        return res.status(400).json({
+          message: "We couldn't confirm these details. Please contact your salesperson.",
+          reasonCode: REGISTER_REASON.DetailsNotConfirmed,
+        });
+      }
+    }
+
+    const tempPassword = generateTempPassword();
+    const tempHash = await hashPassword(tempPassword);
+
+    if (existing) {
+      await prisma.$transaction(async (tx) => {
+        if (!existing.customerCredential) {
+          await tx.customerCredential.create({
+            data: {
+              userId: existing.id,
+              passwordHash: tempHash,
+              phone: "0000000000",
+            },
+          });
+        } else {
+          await tx.customerCredential.update({
+            where: { userId: existing.id },
+            data: { passwordHash: tempHash },
+          });
+        }
+
+        await tx.users.update({
+          where: { id: existing.id },
+          data: {
+            baid,
+            mustChangePassword: true,
+            mustCompleteProfile: true,
+          },
+        });
+      });
+
+      console.log("[willcall][customer][auto-register] existing account prepared", {
+        userId: existing.id,
+        email,
+        baid,
+        ms: msSince(t0),
+      });
+
+      return res.json({
+        userId: existing.id,
+        email,
+        password: tempPassword,
+        baid,
+        created: false,
+        mustChangePassword: true,
+        mustCompleteProfile: true,
+      });
+    }
+
+    const adminCount = await prisma.accountUserRole.count({
+      where: { baid, role: "ADMIN", isActive: true },
+    });
+    const assignedRole = adminCount > 0 ? invite.role : "ADMIN";
+
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.users.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: "Complete Profile",
+          email,
+          baid,
+          emailVerified: false,
+          updatedAt: now,
+          mustChangePassword: true,
+          mustCompleteProfile: true,
+        },
+      });
+
+      await tx.customerCredential.create({
+        data: {
+          userId: created.id,
+          passwordHash: tempHash,
+          phone: "0000000000",
+        },
+      });
+
+      await tx.accountUserRole.create({
+        data: {
+          id: crypto.randomUUID(),
+          baid,
+          userId: created.id,
+          role: assignedRole,
+          isActive: true,
+          updatedAt: now,
+        },
+      });
+
+      await tx.inviteCode.update({
+        where: { id: invite.id },
+        data: {
+          status: "Used",
+          usedAt: now,
+          usedByUserId: created.id,
+        },
+      });
+
+      return created;
+    });
+
+    console.log("[willcall][customer][auto-register] created", {
+      userId: user.id,
+      email,
+      baid,
+      ms: msSince(t0),
+    });
+
+    return res.json({
+      userId: user.id,
+      email,
+      password: tempPassword,
+      baid,
+      created: true,
+      mustChangePassword: true,
+      mustCompleteProfile: true,
+    });
+  } catch (err: any) {
+    console.error("[willcall][customer][auto-register] error", {
+      email,
+      baid,
+      ms: msSince(t0),
+      error: err?.message ?? String(err),
+    });
+    return res.status(500).json({ message: "Failed to complete account setup." });
+  }
+});
+
+/**
+ * POST /api/customer/complete-setup
+ * Body: { userId, name, password }
+ */
+customerAuthRouter.post("/complete-setup", async (req, res) => {
+  const parsed = COMPLETE_SETUP_BODY.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  const userId = parsed.data.userId;
+  const name = parsed.data.name.trim();
+  const passwordRule = validatePasswordRules(parsed.data.password);
+  if (!passwordRule.ok) {
+    return res.status(400).json({ message: passwordRule.message });
+  }
+
+  const passwordHash = await hashPassword(parsed.data.password);
+  const existing = await prisma.users.findUnique({
+    where: { id: userId },
+    include: { customerCredential: true },
+  });
+  if (!existing) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.users.update({
+      where: { id: userId },
+      data: {
+        name,
+        mustChangePassword: false,
+        mustCompleteProfile: false,
+      },
+    });
+
+    if (existing.customerCredential) {
+      await tx.customerCredential.update({
+        where: { userId },
+        data: { passwordHash },
+      });
+    } else {
+      await tx.customerCredential.create({
+        data: {
+          userId,
+          passwordHash,
+          phone: "0000000000",
+        },
+      });
+    }
+  });
+
+  return res.json({ ok: true });
+});
+
+/**
  * POST /api/customer/verify-baid
  * Body: { baid }
  * Returns: { ok: true } if BAID exists in Acumatica
@@ -482,6 +770,8 @@ customerAuthRouter.post("/login", async (req, res) => {
       emailVerified: user.emailVerified,
       accountRole,
       isDeveloper: Boolean(user.isDeveloper),
+      mustChangePassword: Boolean(user.mustChangePassword),
+      mustCompleteProfile: Boolean(user.mustCompleteProfile),
     },
   });
 });

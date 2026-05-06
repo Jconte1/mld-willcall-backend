@@ -5,8 +5,7 @@ const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
 const OUTER_BG = "#f8f2e9";
-function renderInviteTemplate({ title, preheader, message, code, baid, zipCode, roleLabel, link, logoUrl, }) {
-    const zipLine = zipCode ? `<tr><td style="font-size:14px;color:#374151;">Billing ZIP: ${zipCode}</td></tr>` : "";
+function renderInviteTemplate({ title, preheader, message, link, logoUrl, }) {
     return `<!doctype html>
 <html>
   <head>
@@ -26,7 +25,7 @@ function renderInviteTemplate({ title, preheader, message, code, baid, zipCode, 
                   <img src="${logoUrl}" alt="MLD" style="height:32px;display:block;margin:0 auto;" />
                 </div>
                 <div style="font-size:18px;font-weight:700;color:${BRAND_COLOR};">${BRAND_NAME}</div>
-                <div style="font-size:12px;color:#6b7280;margin-top:4px;">Account invite</div>
+                <div style="font-size:12px;color:#6b7280;margin-top:4px;">Customer dashboard access</div>
               </td>
             </tr>
             <tr>
@@ -34,29 +33,10 @@ function renderInviteTemplate({ title, preheader, message, code, baid, zipCode, 
                 <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:${BRAND_COLOR};">${title}</h1>
                 <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#374151;">${message}</p>
 
-                <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:20px;">
-                  <tr>
-                    <td style="font-size:13px;color:#6b7280;padding-bottom:6px;">Invite code</td>
-                  </tr>
-                  <tr>
-                    <td style="font-size:18px;font-weight:700;color:${BRAND_COLOR};letter-spacing:0.5px;">${code}</td>
-                  </tr>
-                  <tr>
-                    <td style="font-size:13px;color:#6b7280;padding-top:12px;">Account</td>
-                  </tr>
-                  <tr>
-                    <td style="font-size:14px;color:#374151;">Customer ID#: ${baid}</td>
-                  </tr>
-                  ${zipLine}
-                  <tr>
-                    <td style="font-size:14px;color:#374151;">Role: ${roleLabel}</td>
-                  </tr>
-                </table>
-
-                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Open Will Call</a>
+                <a href="${link}" style="display:inline-block;background:${ACCENT_COLOR};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;">Go to Dashboard</a>
 
                 <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#6b7280;">
-                  This invite code expires in 48 hours.
+                  This secure link will take you to your customer dashboard.
                 </p>
               </td>
             </tr>
@@ -79,15 +59,11 @@ function buildInviteEmail(code, baid, roleLabel, link, zipCode, prefillToken) {
         ? `${frontendUrl}/?register=1&prefillToken=${encodeURIComponent(prefillToken)}`
         : link;
     return {
-        subject: "MLD Will Call Invite Code",
+        subject: "You've been invited to the MLD Customer Dashboard",
         body: renderInviteTemplate({
-            title: "You're invited to Will Call",
-            preheader: "Use your invite code to create your account.",
-            message: "Use the invite code below to create your Will Call account.",
-            code,
-            baid,
-            zipCode,
-            roleLabel,
+            title: "You've been invited to the MLD Customer Dashboard",
+            preheader: "Track order status and schedule pickup in your dashboard.",
+            message: "You’ve been invited to access your MLD Customer Dashboard. From your dashboard, you can track product and order status and schedule pickup. Click below to continue.",
             link: ctaLink,
             logoUrl,
         }),

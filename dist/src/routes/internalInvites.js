@@ -65,8 +65,8 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
         select: { id: true, baid: true },
     });
     const existingUserBaid = normalizeBaid(existingUser?.baid || "");
-    if (existingUser && existingUserBaid) {
-        console.info("[internal-invites] blocked existing synced user", {
+    if (existingUser && existingUserBaid && existingUserBaid !== baid) {
+        console.info("[internal-invites] blocked existing linked user with different BAID", {
             email,
             existingUserId: existingUser.id,
             existingBaid: existingUserBaid,
