@@ -34,6 +34,11 @@ const STATUS = zod_1.z.enum([
     "Cancelled",
     "NoShow",
 ]);
+const availabilityQuerySchema = zod_1.z.object({
+    locationId: zod_1.z.enum(LOCATION_IDS),
+    from: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
 const selectedItemSchema = zod_1.z.object({
     lineId: zod_1.z.string().optional(),
     inventoryId: zod_1.z.string().min(1),
@@ -137,6 +142,36 @@ function timeToMinutes(time) {
     const [hh, mm] = time.split(":").map((part) => Number(part));
     return hh * 60 + mm;
 }
+function pad(num) {
+    return String(num).padStart(2, "0");
+}
+function minutesToTime(totalMinutes) {
+    const hh = Math.floor(totalMinutes / 60);
+    const mm = totalMinutes % 60;
+    return `${pad(hh)}:${pad(mm)}`;
+}
+function getSlotStarts(startAt, endAt) {
+    const starts = [];
+    for (let cursor = new Date(startAt); cursor < endAt; cursor = addMinutes(cursor, SLOT_MINUTES)) {
+        starts.push({
+            date: formatDateInDenver(cursor),
+            startTime: formatTimeInDenver(cursor),
+        });
+    }
+    return starts;
+}
+async function findManualBlockConflict(client, locationId, startAt, endAt) {
+    const slots = getSlotStarts(startAt, endAt);
+    if (!slots.length)
+        return null;
+    return client.pickupManualBlock.findFirst({
+        where: {
+            locationId,
+            OR: slots.map((slot) => ({ date: slot.date, startTime: slot.startTime })),
+        },
+        select: { date: true, startTime: true },
+    });
+}
 function isWeekend(dateStr) {
     const date = parseDateOnly(dateStr);
     const weekday = new Intl.DateTimeFormat("en-US", {
@@ -202,6 +237,31 @@ function isBeforeMinAdvance(startAt, now, locationId) {
     const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
     return (startDateStr < minAllowed.dateStr ||
         (startDateStr === minAllowed.dateStr && startMinutes < minAllowed.minutes));
+}
+function buildStaffSlotsForDate(locationId, dateStr, manualBlocks, appointmentBlocks, minStartMinutes) {
+    if (isClosedDate(dateStr, locationId))
+        return [];
+    const slots = [];
+    const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
+    const startMinutes = openHour * 60;
+    const lastStartMinutes = closeHour * 60 - SLOT_MINUTES;
+    for (let minutes = startMinutes; minutes <= lastStartMinutes; minutes += SLOT_MINUTES) {
+        const startTime = minutesToTime(minutes);
+        const endTime = minutesToTime(minutes + SLOT_MINUTES);
+        const manuallyBlocked = manualBlocks.has(startTime);
+        const occupied = appointmentBlocks.has(startTime);
+        const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
+        slots.push({
+            id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
+            startTime,
+            endTime,
+            available: !tooEarly && !manuallyBlocked && !occupied,
+            manuallyBlocked,
+            occupied,
+            tooEarly,
+        });
+    }
+    return slots;
 }
 async function findActiveOrderConflicts(orderNbrs, excludeAppointmentId) {
     if (!orderNbrs.length)
@@ -707,6 +767,136 @@ exports.pickupsRouter.get("/", async (req, res) => {
     return res.json({ pickups: normalized });
 });
 /**
+ * GET /api/staff/pickups/availability?locationId=...&from=YYYY-MM-DD&to=YYYY-MM-DD
+ */
+exports.pickupsRouter.get("/availability", async (req, res) => {
+    if (!req.auth)
+        return res.status(401).json({ message: "Unauthenticated" });
+    const parsed = availabilityQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid query parameters" });
+    }
+    const { locationId, from, to } = parsed.data;
+    if (!canAccessLocation(req, locationId)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const now = new Date();
+    const minAllowed = getMinAllowedSlot(now, locationId);
+    const rangeStart = parseDateOnly(from);
+    const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
+    const appointments = await prisma_1.prisma.pickupAppointment.findMany({
+        where: {
+            locationId,
+            status: { in: ACTIVE_APPOINTMENT_STATUSES },
+            startAt: { lt: rangeEnd },
+            endAt: { gt: rangeStart },
+        },
+        select: { startAt: true, endAt: true },
+    });
+    const manualBlocks = await prisma_1.prisma.pickupManualBlock.findMany({
+        where: {
+            locationId,
+            date: { gte: from, lte: to },
+        },
+        select: { date: true, startTime: true },
+    });
+    const manualBlocksByDate = new Map();
+    for (const block of manualBlocks) {
+        const slots = manualBlocksByDate.get(block.date) ?? new Set();
+        slots.add(block.startTime);
+        manualBlocksByDate.set(block.date, slots);
+    }
+    const appointmentBlocksByDate = new Map();
+    for (const appointment of appointments) {
+        for (const slot of getSlotStarts(appointment.startAt, appointment.endAt)) {
+            const slots = appointmentBlocksByDate.get(slot.date) ?? new Set();
+            slots.add(slot.startTime);
+            appointmentBlocksByDate.set(slot.date, slots);
+        }
+    }
+    const availability = [];
+    for (let cursor = new Date(rangeStart); cursor < rangeEnd; cursor = addMinutes(cursor, 24 * 60)) {
+        const dateStr = formatDateInDenver(cursor);
+        let minStartMinutes = null;
+        if (dateStr < minAllowed.dateStr) {
+            minStartMinutes = Infinity;
+        }
+        else if (dateStr === minAllowed.dateStr) {
+            minStartMinutes = minAllowed.minutes;
+        }
+        availability.push({
+            date: dateStr,
+            isBlackedOut: isClosedDate(dateStr, locationId),
+            slots: buildStaffSlotsForDate(locationId, dateStr, manualBlocksByDate.get(dateStr) ?? new Set(), appointmentBlocksByDate.get(dateStr) ?? new Set(), minStartMinutes),
+        });
+    }
+    return res.json({ availability });
+});
+/**
+ * PATCH /api/staff/pickups/availability
+ * Body: { locationId, changes: [{ date, startTime, available }] }
+ */
+exports.pickupsRouter.patch("/availability", async (req, res) => {
+    if (!canModifyPickups(req)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const body = zod_1.z
+        .object({
+        locationId: zod_1.z.enum(LOCATION_IDS),
+        changes: zod_1.z
+            .array(zod_1.z.object({
+            date: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            startTime: zod_1.z.string().regex(/^\d{2}:\d{2}$/),
+            available: zod_1.z.boolean(),
+        }))
+            .nonempty(),
+    })
+        .safeParse(req.body);
+    if (!body.success)
+        return res.status(400).json({ message: "Invalid request body" });
+    if (!canAccessLocation(req, body.data.locationId)) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+    const invalidChange = body.data.changes.find((change) => {
+        if (isClosedDate(change.date, body.data.locationId))
+            return true;
+        const [hours, minutes] = change.startTime.split(":").map(Number);
+        const startMinutes = hours * 60 + minutes;
+        const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(body.data.locationId);
+        return (Number.isNaN(startMinutes) ||
+            minutes % SLOT_MINUTES !== 0 ||
+            startMinutes < openHour * 60 ||
+            startMinutes >= closeHour * 60);
+    });
+    if (invalidChange) {
+        return res.status(400).json({ message: "Invalid availability change." });
+    }
+    const blocksToCreate = body.data.changes.filter((change) => !change.available);
+    const blocksToRemove = body.data.changes.filter((change) => change.available);
+    await prisma_1.prisma.$transaction(async (tx) => {
+        if (blocksToRemove.length) {
+            await tx.pickupManualBlock.deleteMany({
+                where: {
+                    locationId: body.data.locationId,
+                    OR: blocksToRemove.map((change) => ({ date: change.date, startTime: change.startTime })),
+                },
+            });
+        }
+        if (blocksToCreate.length) {
+            await tx.pickupManualBlock.createMany({
+                data: blocksToCreate.map((change) => ({
+                    locationId: body.data.locationId,
+                    date: change.date,
+                    startTime: change.startTime,
+                    createdByUserId: req.auth?.id ?? null,
+                })),
+                skipDuplicates: true,
+            });
+        }
+    });
+    return res.json({ updated: body.data.changes.length });
+});
+/**
  * POST /api/staff/pickups/orders/lookup
  * Body: { orderNbr }
  */
@@ -825,6 +1015,14 @@ exports.pickupsRouter.post("/", async (req, res) => {
                 startAt: slotConflict.startAt,
                 endAt: slotConflict.endAt,
             },
+        });
+    }
+    const manualBlockConflict = await findManualBlockConflict(prisma_1.prisma, body.data.locationId, startAt, endAt);
+    if (manualBlockConflict) {
+        return res.status(409).json({
+            message: "Time slot is manually blocked.",
+            code: "SLOT_MANUALLY_BLOCKED",
+            conflict: manualBlockConflict,
         });
     }
     const user = await prisma_1.prisma.users.findUnique({ where: { email: customerEmail } });
@@ -1188,6 +1386,59 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
     const nextLocationId = body.data.locationId ? (0, locationIds_1.normalizeLocationId)(body.data.locationId) : undefined;
     if (nextLocationId && !canAccessLocation(req, nextLocationId)) {
         return res.status(403).json({ message: "Forbidden" });
+    }
+    const nextStartAt = body.data.startAt ? new Date(body.data.startAt) : existing.startAt;
+    const nextEndAt = body.data.endAt ? new Date(body.data.endAt) : existing.endAt;
+    const nextScheduleLocationId = nextLocationId ?? existing.locationId;
+    const nextStatus = body.data.status ? body.data.status : existing.status;
+    const scheduleChanged = Boolean((body.data.startAt && nextStartAt.getTime() !== existing.startAt.getTime()) ||
+        (body.data.endAt && nextEndAt.getTime() !== existing.endAt.getTime()) ||
+        (nextLocationId && nextScheduleLocationId !== existing.locationId));
+    const activatingAppointment = Boolean(body.data.status &&
+        ACTIVE_APPOINTMENT_STATUSES.includes(nextStatus) &&
+        !ACTIVE_APPOINTMENT_STATUSES.includes(existing.status));
+    if (body.data.startAt || body.data.endAt) {
+        if (Number.isNaN(nextStartAt.getTime()) ||
+            Number.isNaN(nextEndAt.getTime()) ||
+            nextEndAt <= nextStartAt) {
+            return res.status(400).json({ message: "Invalid appointment time range." });
+        }
+        if (nextStartAt.getSeconds() !== 0 ||
+            nextStartAt.getMilliseconds() !== 0 ||
+            nextStartAt.getMinutes() % SLOT_MINUTES !== 0) {
+            return res.status(400).json({ message: "Start time must be on a 15-minute interval." });
+        }
+    }
+    if ((scheduleChanged || activatingAppointment) && ACTIVE_APPOINTMENT_STATUSES.includes(nextStatus)) {
+        const slotConflict = await prisma_1.prisma.pickupAppointment.findFirst({
+            where: {
+                id: { not: existing.id },
+                locationId: nextScheduleLocationId,
+                status: { in: ACTIVE_APPOINTMENT_STATUSES },
+                startAt: { lt: nextEndAt },
+                endAt: { gt: nextStartAt },
+            },
+            select: { id: true, startAt: true, endAt: true },
+        });
+        if (slotConflict) {
+            return res.status(409).json({
+                message: "Time slot no longer available.",
+                code: "SLOT_UNAVAILABLE",
+                conflict: {
+                    appointmentId: slotConflict.id,
+                    startAt: slotConflict.startAt,
+                    endAt: slotConflict.endAt,
+                },
+            });
+        }
+        const manualBlockConflict = await findManualBlockConflict(prisma_1.prisma, nextScheduleLocationId, nextStartAt, nextEndAt);
+        if (manualBlockConflict) {
+            return res.status(409).json({
+                message: "Time slot is manually blocked.",
+                code: "SLOT_MANUALLY_BLOCKED",
+                conflict: manualBlockConflict,
+            });
+        }
     }
     const nextOrderNbrs = body.data.orderNbrs ?? existing.orders.map((o) => o.orderNbr);
     if (body.data.orderNbrs) {

@@ -318,7 +318,8 @@ function buildStaffSlotsForDate(
   locationId: string,
   dateStr: string,
   manualBlocks: Set<string>,
-  appointmentBlocks: Set<string>
+  appointmentBlocks: Set<string>,
+  minStartMinutes: number | null
 ) {
   if (isClosedDate(dateStr, locationId)) return [];
 
@@ -332,14 +333,16 @@ function buildStaffSlotsForDate(
     const endTime = minutesToTime(minutes + SLOT_MINUTES);
     const manuallyBlocked = manualBlocks.has(startTime);
     const occupied = appointmentBlocks.has(startTime);
+    const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
 
     slots.push({
       id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
       startTime,
       endTime,
-      available: !manuallyBlocked && !occupied,
+      available: !tooEarly && !manuallyBlocked && !occupied,
       manuallyBlocked,
       occupied,
+      tooEarly,
     });
   }
 
@@ -935,6 +938,8 @@ pickupsRouter.get("/availability", async (req, res) => {
   if (!canAccessLocation(req, locationId)) {
     return res.status(403).json({ message: "Forbidden" });
   }
+  const now = new Date();
+  const minAllowed = getMinAllowedSlot(now, locationId);
 
   const rangeStart = parseDateOnly(from);
   const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
@@ -976,6 +981,13 @@ pickupsRouter.get("/availability", async (req, res) => {
   const availability = [];
   for (let cursor = new Date(rangeStart); cursor < rangeEnd; cursor = addMinutes(cursor, 24 * 60)) {
     const dateStr = formatDateInDenver(cursor);
+    let minStartMinutes: number | null = null;
+    if (dateStr < minAllowed.dateStr) {
+      minStartMinutes = Infinity;
+    } else if (dateStr === minAllowed.dateStr) {
+      minStartMinutes = minAllowed.minutes;
+    }
+
     availability.push({
       date: dateStr,
       isBlackedOut: isClosedDate(dateStr, locationId),
@@ -983,7 +995,8 @@ pickupsRouter.get("/availability", async (req, res) => {
         locationId,
         dateStr,
         manualBlocksByDate.get(dateStr) ?? new Set<string>(),
-        appointmentBlocksByDate.get(dateStr) ?? new Set<string>()
+        appointmentBlocksByDate.get(dateStr) ?? new Set<string>(),
+        minStartMinutes
       ),
     });
   }

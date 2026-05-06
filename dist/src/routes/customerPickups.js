@@ -342,7 +342,19 @@ exports.customerPickupsRouter.get("/availability", async (req, res) => {
         },
         select: { startAt: true, endAt: true },
     });
+    const manualBlocks = await prisma_1.prisma.pickupManualBlock.findMany({
+        where: {
+            locationId,
+            date: { gte: from, lte: to },
+        },
+        select: { date: true, startTime: true },
+    });
     const blockedByDate = new Map();
+    for (const manualBlock of manualBlocks) {
+        const blocked = blockedByDate.get(manualBlock.date) ?? new Set();
+        blocked.add(manualBlock.startTime);
+        blockedByDate.set(manualBlock.date, blocked);
+    }
     for (const appointment of appointments) {
         const startDateStr = formatDateInDenver(appointment.startAt);
         const startTime = formatTimeInDenver(appointment.startAt);
@@ -430,6 +442,17 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         }
         if (!areSlotsContiguous(group.selectedSlots)) {
             return res.status(400).json({ message: "Selected slots must be consecutive." });
+        }
+        const manualBlock = await prisma_1.prisma.pickupManualBlock.findFirst({
+            where: {
+                locationId: group.locationId,
+                date: group.selectedDate,
+                startTime: { in: group.selectedSlots.map((slot) => slot.startTime) },
+            },
+            select: { id: true },
+        });
+        if (manualBlock) {
+            return res.status(409).json({ message: "Time slot no longer available." });
         }
         const orderedSlots = [...group.selectedSlots].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
         const startAt = makeDateTime(group.selectedDate, orderedSlots[0].startTime);
