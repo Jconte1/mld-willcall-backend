@@ -382,6 +382,11 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
 
     const verified = await verifyBaidInAcumatica(baid, zip);
     if (!verified) {
+      console.info("[willcall][customer][auto-register] verify failed", {
+        email,
+        baid,
+        zip,
+      });
       return res.status(400).json({
         message: "We couldn't confirm these details. Please contact your salesperson.",
         reasonCode: REGISTER_REASON.DetailsNotConfirmed,
@@ -400,6 +405,11 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     });
 
     if (!invite) {
+      console.info("[willcall][customer][auto-register] invite lookup failed", {
+        email,
+        baid,
+        hasCodeHash: Boolean(codeHash),
+      });
       return res.status(400).json({
         message: "We couldn't confirm these details. Please contact your salesperson.",
         reasonCode: REGISTER_REASON.DetailsNotConfirmed,
@@ -409,6 +419,11 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
       const match = invite.recipientEmail.toLowerCase().trim() === email;
       if (!match) {
+        console.info("[willcall][customer][auto-register] invite email mismatch", {
+          baid,
+          tokenEmail: email,
+          inviteEmail: invite.recipientEmail.toLowerCase().trim(),
+        });
         return res.status(400).json({
           message: "We couldn't confirm these details. Please contact your salesperson.",
           reasonCode: REGISTER_REASON.DetailsNotConfirmed,
