@@ -361,6 +361,29 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
   const inviteCode = prefill.inviteCode;
 
   try {
+    const existingByEmail = await prisma.users.findUnique({
+      where: { email },
+      include: { customerCredential: true },
+    });
+
+    if (
+      existingByEmail &&
+      existingByEmail.customerCredential &&
+      existingByEmail.baid?.toUpperCase() === baid &&
+      !existingByEmail.mustChangePassword &&
+      !existingByEmail.mustCompleteProfile
+    ) {
+      console.info("[willcall][customer][auto-register] existing-ready-account", {
+        email,
+        baid,
+      });
+      return res.status(409).json({
+        message: "Your account is already set up. Please sign in.",
+        reasonCode: REGISTER_REASON.EmailAlreadyExists,
+        email,
+      });
+    }
+
     const existing = await prisma.users.findUnique({
       where: { email },
       include: { customerCredential: true },
@@ -405,6 +428,24 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     });
 
     if (!invite) {
+      if (
+        existingByEmail &&
+        existingByEmail.customerCredential &&
+        existingByEmail.baid?.toUpperCase() === baid &&
+        !existingByEmail.mustChangePassword &&
+        !existingByEmail.mustCompleteProfile
+      ) {
+        console.info("[willcall][customer][auto-register] invite-missing-existing-ready", {
+          email,
+          baid,
+        });
+        return res.status(409).json({
+          message: "Your account is already set up. Please sign in.",
+          reasonCode: REGISTER_REASON.EmailAlreadyExists,
+          email,
+        });
+      }
+
       console.info("[willcall][customer][auto-register] invite lookup failed", {
         email,
         baid,

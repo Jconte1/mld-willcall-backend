@@ -78,6 +78,8 @@ const BLOCKING_STATUSES = [
     client_1.PickupAppointmentStatus.InProgress,
     client_1.PickupAppointmentStatus.Ready,
 ];
+const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
+const PREPAY_MIN_DUE = 1;
 const DENVER_TZ = "America/Denver";
 const SLOT_MINUTES = 15;
 function getMinAdvanceMinutes(locationId) {
@@ -174,6 +176,126 @@ function formatDenverDateTime(input) {
 }
 function normalizeOrderNbr(value) {
     return value.trim().toUpperCase();
+}
+function toNumber(value) {
+    if (value == null)
+        return 0;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+async function getCustomerOrderDetail(orderNbrInput) {
+    const orderNbr = normalizeOrderNbr(orderNbrInput);
+    const summary = await prisma_1.prisma.erpOrderSummary.findFirst({
+        where: { orderNbr, isActive: true },
+        orderBy: [{ updatedAt: "desc" }],
+        include: {
+            ErpOrderPayment: true,
+            ErpOrderLine: true,
+        },
+    });
+    if (!summary)
+        return null;
+    const lines = summary.ErpOrderLine.map((line) => ({
+        id: line.id,
+        inventoryId: line.inventoryId,
+        lineDescription: line.lineDescription,
+        openQty: toNumber(line.openQty),
+        orderQty: toNumber(line.orderQty),
+        allocatedQty: toNumber(line.allocatedQty),
+        isAllocated: line.isAllocated,
+        amount: toNumber(line.amount),
+        taxRate: toNumber(line.taxRate),
+    })).sort((a, b) => (a.inventoryId ?? "").localeCompare(b.inventoryId ?? ""));
+    const paymentRow = summary.ErpOrderPayment;
+    const payment = {
+        orderTotal: toNumber(paymentRow?.orderTotal),
+        otherFees: toNumber(paymentRow?.otherFees),
+        unpaidBalance: toNumber(paymentRow?.unpaidBalance),
+        terms: paymentRow?.terms ?? null,
+        status: paymentRow?.status ?? null,
+    };
+    const lineAmountTotal = lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+    const lineTaxTotal = lines.reduce((sum, line) => {
+        const orderQty = line.orderQty || 0;
+        if (orderQty <= 0)
+            return sum;
+        const perUnitPreTax = (line.amount || 0) / orderQty;
+        const perUnitTax = perUnitPreTax * ((line.taxRate || 0) / 100);
+        return sum + perUnitTax * orderQty;
+    }, 0);
+    payment.otherFees = Math.max(0, Math.round((payment.orderTotal - lineAmountTotal - lineTaxTotal) * 100) / 100);
+    return {
+        orderNbr,
+        payment,
+        lines,
+    };
+}
+function normalizeSelections(selectedItems, allowedOrders) {
+    if (!selectedItems?.length)
+        return [];
+    const allowed = new Set(allowedOrders.map(normalizeOrderNbr));
+    const byOrder = new Map();
+    for (const selection of selectedItems) {
+        const orderNbr = normalizeOrderNbr(selection.orderNbr);
+        if (!allowed.has(orderNbr))
+            continue;
+        const items = selection.items.filter((item) => item.inventoryId && item.qty > 0);
+        if (!items.length)
+            continue;
+        byOrder.set(orderNbr, [...(byOrder.get(orderNbr) ?? []), ...items]);
+    }
+    return Array.from(byOrder.entries()).map(([orderNbr, items]) => ({ orderNbr, items }));
+}
+function countSelectedItems(selectedItems) {
+    return selectedItems.reduce((sum, selection) => sum + selection.items.length, 0);
+}
+function findPrepayBlock(detail, selectedItems) {
+    if (detail.orderNbr.startsWith("R1"))
+        return null;
+    const terms = (detail.payment.terms ?? "").trim().toUpperCase();
+    if (!PREPAY_TERMS.has(terms))
+        return null;
+    const selectedMap = new Map((selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item]));
+    const unpaidBalance = detail.payment.unpaidBalance;
+    const otherFees = detail.payment.otherFees;
+    const openLines = detail.lines.filter((line) => Math.max(0, line.openQty) > 0);
+    const allOpenQtySelected = openLines.length > 0 &&
+        openLines.every((line) => {
+            const key = line.id || line.inventoryId || "";
+            const selected = selectedMap.get(key);
+            const selectedQty = selected ? selected.qty : 0;
+            return selectedQty >= Math.max(0, line.openQty);
+        });
+    if (allOpenQtySelected) {
+        const amountOwed = Math.max(0, unpaidBalance);
+        if (amountOwed < PREPAY_MIN_DUE)
+            return null;
+        return {
+            orderNbr: detail.orderNbr,
+            amountOwed: Math.round(amountOwed * 100) / 100,
+        };
+    }
+    const remainingGoodsWithTax = detail.lines.reduce((sum, line) => {
+        const key = line.id || line.inventoryId || "";
+        const selected = selectedMap.get(key);
+        const selectedQty = selected ? selected.qty : 0;
+        const remainingQty = Math.max(0, line.openQty - selectedQty);
+        const orderQty = line.orderQty;
+        if (orderQty <= 0 || remainingQty <= 0)
+            return sum;
+        const perUnitPreTax = line.amount / orderQty;
+        const perUnitTax = perUnitPreTax * (line.taxRate / 100);
+        return sum + remainingQty * (perUnitPreTax + perUnitTax);
+    }, 0);
+    const remainingWithFees = remainingGoodsWithTax + otherFees;
+    const retainRequired = remainingWithFees * 0.5;
+    const amountOwed = Math.max(0, unpaidBalance - retainRequired);
+    if (amountOwed < PREPAY_MIN_DUE)
+        return null;
+    return {
+        orderNbr: detail.orderNbr,
+        amountOwed: Math.round(amountOwed * 100) / 100,
+    };
 }
 async function findActiveOrderConflicts(orderNbrs) {
     if (!orderNbrs.length)
@@ -397,6 +519,12 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
     }
     const payload = parsed.data;
     const orderNbrs = Array.from(new Set(payload.groups.flatMap((group) => group.orderNbrs).map(normalizeOrderNbr).filter(Boolean)));
+    const normalizedSelections = normalizeSelections(payload.selectedItems, orderNbrs);
+    console.info("[customer-pickups][create] start", {
+        orderNbrs,
+        orderReady: Boolean(payload.orderReadyToken),
+        selectedItemCount: countSelectedItems(normalizedSelections),
+    });
     let orderReadyNoticeId = null;
     if (payload.orderReadyToken) {
         if (orderNbrs.length !== 1) {
@@ -406,7 +534,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             where: { token: payload.orderReadyToken, revokedAt: null },
             include: { orderReady: { select: { id: true, orderNbr: true } } },
         });
-        if (!token || token.orderReady.orderNbr !== orderNbrs[0]) {
+        if (!token || normalizeOrderNbr(token.orderReady.orderNbr) !== orderNbrs[0]) {
             return res.status(403).json({ message: "Invalid order-ready token." });
         }
         orderReadyNoticeId = token.orderReady.id;
@@ -422,7 +550,104 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             conflicts: activeConflicts,
         });
     }
+    const missingSelectionOrders = orderNbrs.filter((orderNbr) => !(normalizedSelections.find((selection) => selection.orderNbr === orderNbr)?.items.length));
+    if (missingSelectionOrders.length) {
+        console.warn("[customer-pickups][create] blocked: missing selected items", {
+            orderNbrs: missingSelectionOrders,
+        });
+        return res.status(400).json({
+            message: "Select at least one item from each order before scheduling pickup.",
+            code: "SELECTED_ITEMS_REQUIRED",
+            orderNbrs: missingSelectionOrders,
+        });
+    }
+    const orderDetails = await Promise.all(orderNbrs.map((orderNbr) => getCustomerOrderDetail(orderNbr)));
+    const detailMap = new Map();
+    for (const detail of orderDetails) {
+        if (detail)
+            detailMap.set(detail.orderNbr, detail);
+    }
+    for (const orderNbr of orderNbrs) {
+        const detail = detailMap.get(orderNbr);
+        if (!detail) {
+            console.warn("[customer-pickups][create] blocked: order not found", { orderNbr });
+            return res.status(404).json({ message: `Order ${orderNbr} was not found.` });
+        }
+    }
+    for (const selection of normalizedSelections) {
+        const detail = detailMap.get(selection.orderNbr);
+        if (!detail) {
+            return res.status(404).json({ message: `Order ${selection.orderNbr} was not found.` });
+        }
+        const lineMap = new Map(detail.lines.map((line) => [line.id, line]));
+        const inventoryMap = new Map(detail.lines
+            .filter((line) => line.inventoryId)
+            .map((line) => [String(line.inventoryId), line]));
+        for (const item of selection.items) {
+            const lineId = item.lineId ?? "";
+            const line = lineMap.get(lineId) ?? inventoryMap.get(item.inventoryId);
+            if (!line) {
+                console.warn("[customer-pickups][create] blocked: selected line missing", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: item.inventoryId,
+                    lineId: item.lineId ?? null,
+                });
+                return res.status(400).json({
+                    message: `Selected line is not available on order ${selection.orderNbr}.`,
+                    code: "SELECTED_LINE_UNAVAILABLE",
+                });
+            }
+            if (!line.isAllocated || line.allocatedQty <= 0) {
+                console.warn("[customer-pickups][create] blocked: item not allocated", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: line.inventoryId,
+                    lineId: line.id,
+                    allocatedQty: line.allocatedQty,
+                    isAllocated: line.isAllocated,
+                });
+                return res.status(400).json({
+                    message: `Item ${line.inventoryId ?? "line"} is not ready for pickup on ${selection.orderNbr}.`,
+                    code: "SELECTED_LINE_NOT_READY",
+                });
+            }
+            if (item.qty > line.openQty) {
+                console.warn("[customer-pickups][create] blocked: item qty exceeds open qty", {
+                    orderNbr: selection.orderNbr,
+                    inventoryId: line.inventoryId,
+                    requestedQty: item.qty,
+                    openQty: line.openQty,
+                });
+                return res.status(400).json({
+                    message: `Selected quantity exceeds open quantity for ${selection.orderNbr}.`,
+                    code: "SELECTED_QTY_EXCEEDS_OPEN_QTY",
+                });
+            }
+        }
+    }
+    for (const orderNbr of orderNbrs) {
+        const detail = detailMap.get(orderNbr);
+        if (!detail)
+            continue;
+        const selection = normalizedSelections.find((row) => row.orderNbr === orderNbr);
+        const block = findPrepayBlock(detail, selection);
+        if (block) {
+            console.warn("[customer-pickups][create] blocked: prepay required", {
+                ...block,
+                terms: detail.payment.terms,
+                unpaidBalance: detail.payment.unpaidBalance,
+                otherFees: detail.payment.otherFees,
+                paymentStatus: detail.payment.status,
+            });
+            return res.status(409).json({
+                message: "Payment required before pickup.",
+                code: "PREPAY_BLOCKED",
+                orderNbr: block.orderNbr,
+                amountOwed: block.amountOwed,
+            });
+        }
+    }
     for (const group of payload.groups) {
+        const groupOrderNbrs = Array.from(new Set(group.orderNbrs.map(normalizeOrderNbr).filter(Boolean)));
         if (!ensureWithinBusinessHours(group.locationId, group.selectedDate, group.selectedSlots)) {
             return res.status(400).json({ message: "Selected time is outside business hours." });
         }
@@ -434,10 +659,10 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         if (group.selectedDate === minAllowed.dateStr && selectedStartMinutes < minAllowed.minutes) {
             return res.status(400).json({ message: "Selected time is too soon. Please choose a later slot." });
         }
-        if (group.orderNbrs.length > 6 && group.selectedSlots.length !== 2) {
+        if (groupOrderNbrs.length > 6 && group.selectedSlots.length !== 2) {
             return res.status(400).json({ message: "Two slots required for orders over 6." });
         }
-        if (group.orderNbrs.length <= 6 && group.selectedSlots.length !== 1) {
+        if (groupOrderNbrs.length <= 6 && group.selectedSlots.length !== 1) {
             return res.status(400).json({ message: "One slot required for orders up to 6." });
         }
         if (!areSlotsContiguous(group.selectedSlots)) {
@@ -460,7 +685,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         appointmentsToCreate.push({
             userId: payload.userId ?? null,
             email: payload.email,
-            pickupReference: group.orderNbrs.join(", "),
+            pickupReference: groupOrderNbrs.join(", "),
             locationId: group.locationId,
             startAt,
             endAt,
@@ -479,7 +704,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             emailOptInEmail: payload.email,
             vehicleInfo: payload.vehicleInfo || null,
             customerNotes: payload.notes || null,
-            orderNbrs: group.orderNbrs,
+            orderNbrs: groupOrderNbrs,
         });
     }
     for (const [index, appointment] of appointmentsToCreate.entries()) {
@@ -534,7 +759,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             if (orderNbrs.length) {
                 await tx.pickupAppointmentOrder.createMany({ data: orderNbrs, skipDuplicates: true });
             }
-            const selectionsByOrder = new Map((payload.selectedItems ?? []).map((selection) => [selection.orderNbr, selection.items]));
+            const selectionsByOrder = new Map(normalizedSelections.map((selection) => [selection.orderNbr, selection.items]));
             const lineRows = appointment.orderNbrs.flatMap((orderNbr) => {
                 const items = selectionsByOrder.get(orderNbr) ?? [];
                 return items
@@ -561,6 +786,11 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
             data: { scheduledAppointmentId: created[0].id },
         });
     }
+    console.info("[customer-pickups][create] success", {
+        appointmentIds: created.map((appointment) => appointment.id),
+        orderNbrs,
+        orderReady: Boolean(orderReadyNoticeId),
+    });
     for (const [index, appointment] of created.entries()) {
         const orderNbrs = appointmentsToCreate[index]?.orderNbrs ?? [];
         try {

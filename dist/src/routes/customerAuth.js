@@ -323,8 +323,47 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
     const zip = prefill.zip;
     const inviteCode = prefill.inviteCode;
     try {
+        const existingByEmail = await prisma_1.prisma.users.findUnique({
+            where: { email },
+            include: { customerCredential: true },
+        });
+        if (existingByEmail &&
+            existingByEmail.customerCredential &&
+            existingByEmail.baid?.toUpperCase() === baid &&
+            !existingByEmail.mustChangePassword &&
+            !existingByEmail.mustCompleteProfile) {
+            console.info("[willcall][customer][auto-register] existing-ready-account", {
+                email,
+                baid,
+            });
+            return res.status(409).json({
+                message: "Your account is already set up. Please sign in.",
+                reasonCode: REGISTER_REASON.EmailAlreadyExists,
+                email,
+            });
+        }
+        const existing = await prisma_1.prisma.users.findUnique({
+            where: { email },
+            include: { customerCredential: true },
+        });
+        if (existing &&
+            existing.customerCredential &&
+            existing.baid?.toUpperCase() === baid &&
+            !existing.mustChangePassword &&
+            !existing.mustCompleteProfile) {
+            return res.status(409).json({
+                message: "Your account is already set up. Please sign in.",
+                reasonCode: REGISTER_REASON.EmailAlreadyExists,
+                email,
+            });
+        }
         const verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
         if (!verified) {
+            console.info("[willcall][customer][auto-register] verify failed", {
+                email,
+                baid,
+                zip,
+            });
             return res.status(400).json({
                 message: "We couldn't confirm these details. Please contact your salesperson.",
                 reasonCode: REGISTER_REASON.DetailsNotConfirmed,
@@ -341,6 +380,26 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
             },
         });
         if (!invite) {
+            if (existingByEmail &&
+                existingByEmail.customerCredential &&
+                existingByEmail.baid?.toUpperCase() === baid &&
+                !existingByEmail.mustChangePassword &&
+                !existingByEmail.mustCompleteProfile) {
+                console.info("[willcall][customer][auto-register] invite-missing-existing-ready", {
+                    email,
+                    baid,
+                });
+                return res.status(409).json({
+                    message: "Your account is already set up. Please sign in.",
+                    reasonCode: REGISTER_REASON.EmailAlreadyExists,
+                    email,
+                });
+            }
+            console.info("[willcall][customer][auto-register] invite lookup failed", {
+                email,
+                baid,
+                hasCodeHash: Boolean(codeHash),
+            });
             return res.status(400).json({
                 message: "We couldn't confirm these details. Please contact your salesperson.",
                 reasonCode: REGISTER_REASON.DetailsNotConfirmed,
@@ -349,16 +408,17 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
         if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
             const match = invite.recipientEmail.toLowerCase().trim() === email;
             if (!match) {
+                console.info("[willcall][customer][auto-register] invite email mismatch", {
+                    baid,
+                    tokenEmail: email,
+                    inviteEmail: invite.recipientEmail.toLowerCase().trim(),
+                });
                 return res.status(400).json({
                     message: "We couldn't confirm these details. Please contact your salesperson.",
                     reasonCode: REGISTER_REASON.DetailsNotConfirmed,
                 });
             }
         }
-        const existing = await prisma_1.prisma.users.findUnique({
-            where: { email },
-            include: { customerCredential: true },
-        });
         const tempPassword = generateTempPassword();
         const tempHash = await (0, passwords_1.hashPassword)(tempPassword);
         if (existing) {
