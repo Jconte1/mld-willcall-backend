@@ -1,3 +1,5 @@
+import { getFrontendBaseUrl } from "../../../lib/appUrls";
+
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
@@ -96,7 +98,7 @@ export function buildOrderReadyEmail(
   link: string,
   options?: BuildOrderReadyEmailOptions
 ) {
-  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const frontendUrl = getFrontendBaseUrl();
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   const trimmedJob = (options?.jobDisplay || "").trim();
   const trimmedLabel = (options?.orderLabel || "").trim() || `Order ${orderNbr}`;

@@ -19,6 +19,7 @@ const orderDisplay_1 = require("../notifications/orderReady/orderDisplay");
 const orderNotificationLabel_1 = require("../notifications/orderReady/orderNotificationLabel");
 const refreshPrepayPayments_1 = require("../lib/acumatica/sync/refreshPrepayPayments");
 const prisma_1 = require("../lib/prisma");
+const appUrls_1 = require("../lib/appUrls");
 exports.publicOrderReadyRouter = (0, express_1.Router)();
 const tokenSchema = zod_1.z.object({
     token: zod_1.z.string().min(1),
@@ -436,7 +437,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
  */
 exports.publicOrderReadyRouter.get("/short/:token", async (req, res) => {
     const tokenValue = req.params.token;
-    const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+    const frontend = (0, appUrls_1.getFrontendBaseUrl)();
     const token = await prisma_1.prisma.orderReadyAccessToken.findFirst({
         where: { token: tokenValue, revokedAt: null },
         include: { orderReady: true },

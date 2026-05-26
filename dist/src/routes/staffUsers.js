@@ -10,6 +10,7 @@ const auth_1 = require("../middleware/auth");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildStaffOnboardingEmail_1 = require("../notifications/templates/email/buildStaffOnboardingEmail");
 const prisma_1 = require("../lib/prisma");
+const appUrls_1 = require("../lib/appUrls");
 exports.staffUsersRouter = (0, express_1.Router)();
 exports.staffUsersRouter.use(auth_1.requireAuth);
 exports.staffUsersRouter.use((0, auth_1.requireRole)("ADMIN"));
@@ -141,7 +142,7 @@ exports.staffUsersRouter.post("/", async (req, res) => {
         role: created.role,
         locationAccess: created.locationAccess,
     });
-    const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+    const frontendUrl = (0, appUrls_1.getConfiguredFrontendBaseUrl)();
     if (!frontendUrl) {
         return res.status(500).json({ message: "Server misconfigured: FRONTEND_URL missing" });
     }

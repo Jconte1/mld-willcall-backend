@@ -308,6 +308,47 @@ async function findOrderSummary(orderNbr) {
         },
     });
 }
+function toLogDate(value) {
+    return value ? value.toISOString() : null;
+}
+function getLookupProvider() {
+    return (0, erpClient_1.shouldUseQueueErp)() ? "queue" : "direct-acumatica";
+}
+function getLookupErrorDetails(err) {
+    if (err instanceof Error) {
+        return {
+            errorName: err.name,
+            reason: err.message,
+        };
+    }
+    return {
+        errorName: typeof err,
+        reason: String(err),
+    };
+}
+function getOrderSummaryLogSnapshot(summary) {
+    const lineLastUpdatedAt = summary.ErpOrderLine.reduce((latest, line) => {
+        if (!latest || line.updatedAt.getTime() > latest.getTime())
+            return line.updatedAt;
+        return latest;
+    }, null);
+    return {
+        baid: summary.baid,
+        status: summary.status,
+        locationId: summary.locationId,
+        shipVia: summary.shipVia,
+        dbUpdatedAt: toLogDate(summary.updatedAt),
+        lastSeenAt: toLogDate(summary.lastSeenAt),
+        lastAcumaticaPullAt: toLogDate(summary.lastAcumaticaPullAt),
+        lastAcumaticaModifiedAt: toLogDate(summary.lastAcumaticaModifiedAt),
+        lineCount: summary.ErpOrderLine.length,
+        lineLastUpdatedAt: toLogDate(lineLastUpdatedAt),
+        hasPayment: Boolean(summary.ErpOrderPayment),
+        paymentUpdatedAt: toLogDate(summary.ErpOrderPayment?.updatedAt),
+        paymentTerms: summary.ErpOrderPayment?.terms ?? null,
+        paymentUnpaidBalance: toNumber(summary.ErpOrderPayment?.unpaidBalance),
+    };
+}
 async function refreshOrderFromSalesOrderEndpoint(orderNbrInput) {
     const orderNbr = normalizeOrderNbr(orderNbrInput);
     console.info("[staff-pickups][lookup] salesorder fallback start", { orderNbr });
@@ -389,25 +430,28 @@ async function refreshOrderFromSalesOrderEndpoint(orderNbrInput) {
 async function getOrRefreshOrderDetail(orderNbrInput, options) {
     const orderNbr = normalizeOrderNbr(orderNbrInput);
     const forceFresh = Boolean(options?.forceFresh);
-    console.info("[staff-pickups][lookup] start", { orderNbr });
+    const provider = getLookupProvider();
+    const refreshFailures = [];
+    console.info("[staff-pickups][lookup] start", { orderNbr, forceFresh, provider });
     let summary = await findOrderSummary(orderNbr);
     if (summary) {
         console.info("[staff-pickups][lookup] db hit", {
             orderNbr,
-            baid: summary.baid,
-            status: summary.status,
-            lineCount: summary.ErpOrderLine.length,
-            hasPayment: Boolean(summary.ErpOrderPayment),
+            ...getOrderSummaryLogSnapshot(summary),
         });
     }
     else {
-        console.info("[staff-pickups][lookup] db miss", { orderNbr });
+        console.info("[staff-pickups][lookup] db miss", { orderNbr, provider });
     }
     if (summary && forceFresh) {
+        const fallbackSummary = summary;
+        const startedAt = Date.now();
         try {
             console.info("[staff-pickups][lookup] forced refresh start", {
                 orderNbr,
                 baid: summary.baid,
+                provider,
+                dbSnapshot: getOrderSummaryLogSnapshot(summary),
             });
             await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
                 baid: summary.baid,
@@ -417,16 +461,34 @@ async function getOrRefreshOrderDetail(orderNbrInput, options) {
                 erpLocationId: summary.locationId,
             });
             summary = await findOrderSummary(orderNbr);
-            console.info("[staff-pickups][lookup] forced refresh result", {
-                orderNbr,
-                found: Boolean(summary),
-                lineCount: summary?.ErpOrderLine?.length ?? 0,
-            });
+            if (summary) {
+                console.info("[staff-pickups][lookup] fresh refresh succeeded; using refreshed db snapshot", {
+                    orderNbr,
+                    provider,
+                    durationMs: Date.now() - startedAt,
+                    ...getOrderSummaryLogSnapshot(summary),
+                });
+            }
+            else {
+                console.warn("[staff-pickups][lookup] fresh refresh completed but db summary was not found", {
+                    orderNbr,
+                    provider,
+                    durationMs: Date.now() - startedAt,
+                });
+            }
         }
         catch (err) {
-            console.error("[staff-pickups][lookup] forced refresh failed", {
+            const failure = {
+                phase: "forced-refresh",
+                provider,
+                ...getLookupErrorDetails(err),
+            };
+            refreshFailures.push(failure);
+            console.warn("[staff-pickups][lookup] fresh refresh failed; returning existing db snapshot", {
                 orderNbr,
-                error: err instanceof Error ? err.message : String(err),
+                durationMs: Date.now() - startedAt,
+                ...failure,
+                ...getOrderSummaryLogSnapshot(fallbackSummary),
             });
         }
     }
@@ -444,7 +506,9 @@ async function getOrRefreshOrderDetail(orderNbrInput, options) {
             console.info("[staff-pickups][lookup] orderReadyNotice fallback start", {
                 orderNbr,
                 baid: notice.baid,
+                provider,
             });
+            const startedAt = Date.now();
             try {
                 await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
                     baid: notice.baid,
@@ -454,38 +518,65 @@ async function getOrRefreshOrderDetail(orderNbrInput, options) {
                 });
             }
             catch (err) {
-                console.error("[staff-pickups] refresh from orderReadyNotice failed", {
+                const failure = {
+                    phase: "orderReadyNotice-refresh",
+                    provider,
+                    ...getLookupErrorDetails(err),
+                };
+                refreshFailures.push(failure);
+                console.warn("[staff-pickups][lookup] orderReadyNotice refresh failed", {
                     orderNbr,
-                    error: err instanceof Error ? err.message : String(err),
+                    durationMs: Date.now() - startedAt,
+                    noticeBaid: notice.baid,
+                    ...failure,
                 });
             }
             summary = await findOrderSummary(orderNbr);
             console.info("[staff-pickups][lookup] orderReadyNotice fallback result", {
                 orderNbr,
+                provider,
+                durationMs: Date.now() - startedAt,
                 found: Boolean(summary),
+                ...(summary ? getOrderSummaryLogSnapshot(summary) : { refreshFailures }),
             });
         }
     }
     if (!summary) {
+        const startedAt = Date.now();
         try {
             const refreshed = await refreshOrderFromSalesOrderEndpoint(orderNbr);
-            console.info("[staff-pickups][lookup] salesorder fallback result", {
-                orderNbr,
-                refreshed,
-            });
             if (refreshed) {
                 summary = await findOrderSummary(orderNbr);
             }
+            console.info("[staff-pickups][lookup] salesorder fallback result", {
+                orderNbr,
+                provider,
+                durationMs: Date.now() - startedAt,
+                refreshed,
+                found: Boolean(summary),
+                ...(summary ? getOrderSummaryLogSnapshot(summary) : { refreshFailures }),
+            });
         }
         catch (err) {
-            console.error("[staff-pickups] refresh from order-ready report failed", {
+            const failure = {
+                phase: "salesorder-header-refresh",
+                provider,
+                ...getLookupErrorDetails(err),
+            };
+            refreshFailures.push(failure);
+            console.warn("[staff-pickups][lookup] salesorder fallback refresh failed", {
                 orderNbr,
-                error: err instanceof Error ? err.message : String(err),
+                durationMs: Date.now() - startedAt,
+                ...failure,
             });
         }
     }
     if (!summary) {
-        console.warn("[staff-pickups][lookup] not found after all fallbacks", { orderNbr });
+        console.warn("[staff-pickups][lookup] no db fallback available after lookup attempts", {
+            orderNbr,
+            provider,
+            refreshFailures,
+        });
         return null;
     }
     try {
@@ -496,10 +587,16 @@ async function getOrRefreshOrderDetail(orderNbrInput, options) {
         });
     }
     catch (err) {
-        console.warn("[payment-refresh][staff-pickups-order-lookup] fallback to DB payment", {
-            baid: summary.baid,
+        const failure = {
+            phase: "payment-refresh",
+            provider,
+            ...getLookupErrorDetails(err),
+        };
+        refreshFailures.push(failure);
+        console.warn("[payment-refresh][staff-pickups-order-lookup] payment refresh failed; returning DB payment snapshot", {
             orderNbr,
-            error: err instanceof Error ? err.message : String(err),
+            ...failure,
+            ...getOrderSummaryLogSnapshot(summary),
         });
     }
     const paymentRow = await prisma_1.prisma.erpOrderPayment.findFirst({

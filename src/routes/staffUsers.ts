@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildStaffOnboardingEmail } from "../notifications/templates/email/buildStaffOnboardingEmail";
 import { prisma } from "../lib/prisma";
+import { getConfiguredFrontendBaseUrl } from "../lib/appUrls";
 
 export const staffUsersRouter = Router();
 
@@ -156,7 +157,7 @@ staffUsersRouter.post("/", async (req, res) => {
     locationAccess: created.locationAccess,
   });
 
-  const frontendUrl = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+  const frontendUrl = getConfiguredFrontendBaseUrl();
   if (!frontendUrl) {
     return res.status(500).json({ message: "Server misconfigured: FRONTEND_URL missing" });
   }

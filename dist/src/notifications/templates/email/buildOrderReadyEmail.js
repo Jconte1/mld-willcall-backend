@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildOrderReadyEmail = buildOrderReadyEmail;
+const appUrls_1 = require("../../../lib/appUrls");
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
@@ -70,7 +71,7 @@ function renderOrderReadyTemplate({ title, preheader, message, orderNbr, jobDisp
 </html>`;
 }
 function buildOrderReadyEmail(orderNbr, link, options) {
-    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const frontendUrl = (0, appUrls_1.getFrontendBaseUrl)();
     const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
     const trimmedJob = (options?.jobDisplay || "").trim();
     const trimmedLabel = (options?.orderLabel || "").trim() || `Order ${orderNbr}`;

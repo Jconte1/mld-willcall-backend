@@ -13,6 +13,7 @@ import { toNumber } from "../lib/orders/orderHelpers";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
+import { getFrontendBaseUrl } from "../lib/appUrls";
 
 export const publicAppointmentsRouter = Router();
 
@@ -209,7 +210,7 @@ async function getLatestLink(appointmentId: string) {
  */
 publicAppointmentsRouter.get("/short/:token", async (req, res) => {
   const tokenValue = req.params.token;
-  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+  const frontend = getFrontendBaseUrl();
 
   const token = await prisma.appointmentAccessToken.findFirst({
     where: {
@@ -275,7 +276,7 @@ publicAppointmentsRouter.get("/:id", async (req, res) => {
  * GET /api/public/appointments/:id/unsubscribe?token=...
  */
 publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
-  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+  const frontend = getFrontendBaseUrl();
   return res.redirect(`${frontend}/`);
 });
 

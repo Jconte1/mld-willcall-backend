@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildStaffOnboardingEmail = buildStaffOnboardingEmail;
+const appUrls_1 = require("../../../lib/appUrls");
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
@@ -64,7 +65,7 @@ function renderStaffOnboardingTemplate({ title, preheader, name, loginUrl, tempP
 </html>`;
 }
 function buildStaffOnboardingEmail(name, loginUrl, tempPassword) {
-    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const frontendUrl = (0, appUrls_1.getFrontendBaseUrl)();
     const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
     const safeName = name?.trim() || "there";
     return {

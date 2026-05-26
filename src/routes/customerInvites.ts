@@ -8,6 +8,7 @@ import { verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
 import { createRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
+import { getFrontendBaseUrl } from "../lib/appUrls";
 
 export const customerInvitesRouter = Router();
 
@@ -203,7 +204,7 @@ async function sendInviteEmail(opts: {
   zipCode?: string | null;
   allowTestOverride?: boolean;
 }) {
-  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const frontendUrl = getFrontendBaseUrl();
   let prefillToken: string | null = null;
   if (opts.zipCode && opts.recipient) {
     try {
