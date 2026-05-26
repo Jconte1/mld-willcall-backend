@@ -18,14 +18,13 @@ import { acumaticaRouter } from "./routes/acumatica";
 import { publicAppointmentsRouter } from "./routes/publicAppointments";
 import { publicOrderReadyRouter } from "./routes/publicOrderReady";
 import { twilioInboundRouter } from "./routes/twilioInbound";
+import { getCorsOrigins } from "./lib/appUrls";
 
 const app = express();
 
-const frontend = process.env.FRONTEND_URL ?? "https://mld-willcall.vercel.app";
-
 app.use(helmet());
 app.use(cors({
-  origin: frontend,
+  origin: getCorsOrigins(),
   credentials: true
 }));
 app.use(express.json({ limit: "1mb" }));

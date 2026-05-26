@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildEmailMessage = buildEmailMessage;
 const client_1 = require("@prisma/client");
 const format_1 = require("../../format");
+const appUrls_1 = require("../../../lib/appUrls");
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
@@ -134,7 +135,7 @@ function buildEmailMessage(type, payload) {
     const locationLine = payload.locationAddress && payload.locationName
         ? `${payload.locationName} - ${payload.locationAddress}`
         : payload.locationAddress || payload.locationName;
-    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const frontendUrl = (0, appUrls_1.getFrontendBaseUrl)();
     const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
     switch (type) {
         case client_1.AppointmentNotificationType.ScheduledConfirm:

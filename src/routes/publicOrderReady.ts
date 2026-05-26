@@ -16,6 +16,7 @@ import { resolveOrderReadyJobDisplay } from "../notifications/orderReady/orderDi
 import { buildOrderNotificationLabel } from "../notifications/orderReady/orderNotificationLabel";
 import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
 import { prisma } from "../lib/prisma";
+import { getFrontendBaseUrl } from "../lib/appUrls";
 
 export const publicOrderReadyRouter = Router();
 
@@ -476,7 +477,7 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
  */
 publicOrderReadyRouter.get("/short/:token", async (req, res) => {
   const tokenValue = req.params.token;
-  const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+  const frontend = getFrontendBaseUrl();
 
   const token = await prisma.orderReadyAccessToken.findFirst({
     where: { token: tokenValue, revokedAt: null },

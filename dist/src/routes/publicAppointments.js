@@ -12,6 +12,7 @@ const orderHelpers_1 = require("../lib/orders/orderHelpers");
 const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
 const pickupHours_1 = require("../lib/pickupHours");
 const pickupClosures_1 = require("../lib/pickupClosures");
+const appUrls_1 = require("../lib/appUrls");
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -185,7 +186,7 @@ async function getLatestLink(appointmentId) {
  */
 exports.publicAppointmentsRouter.get("/short/:token", async (req, res) => {
     const tokenValue = req.params.token;
-    const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+    const frontend = (0, appUrls_1.getFrontendBaseUrl)();
     const token = await prisma_1.prisma.appointmentAccessToken.findFirst({
         where: {
             token: tokenValue,
@@ -243,7 +244,7 @@ exports.publicAppointmentsRouter.get("/:id", async (req, res) => {
  * GET /api/public/appointments/:id/unsubscribe?token=...
  */
 exports.publicAppointmentsRouter.get("/:id/unsubscribe", async (req, res) => {
-    const frontend = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/+$/, "");
+    const frontend = (0, appUrls_1.getFrontendBaseUrl)();
     return res.redirect(`${frontend}/`);
 });
 /**

@@ -12,6 +12,7 @@ const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
 const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
+const appUrls_1 = require("../lib/appUrls");
 exports.internalInvitesRouter = (0, express_1.Router)();
 const INTERNAL_TOKEN = process.env.INTERNAL_INVITE_TOKEN || "";
 const BAID_REGEX = /^BA\d{7}$/;
@@ -167,7 +168,7 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
         }
     }
     if (shouldSendEmail && code) {
-        const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+        const frontendUrl = (0, appUrls_1.getFrontendBaseUrl)();
         let prefillToken = null;
         try {
             prefillToken = (0, registrationPrefillToken_1.createRegistrationPrefillToken)({

@@ -1,6 +1,7 @@
 import { AppointmentNotificationType } from "@prisma/client";
 import { formatDenverDateTime } from "../../format";
 import { NotificationPayload } from "../../types";
+import { getFrontendBaseUrl } from "../../../lib/appUrls";
 
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
@@ -155,7 +156,7 @@ export function buildEmailMessage(type: AppointmentNotificationType, payload: No
     payload.locationAddress && payload.locationName
       ? `${payload.locationName} - ${payload.locationAddress}`
       : payload.locationAddress || payload.locationName;
-  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const frontendUrl = getFrontendBaseUrl();
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
 
   switch (type) {
