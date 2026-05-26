@@ -15,7 +15,7 @@ async function main() {
 
   if (!email.toLowerCase().endsWith("@mld.com")) {
     throw new Error("INITIAL_ADMIN_EMAIL must end with @mld.com");
-  }
+  }//
 
   const existing = await prisma.staffUser.findUnique({ where: { email: email.toLowerCase() } });
   if (existing) {
