@@ -14,6 +14,7 @@ import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocal
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
 import { getFrontendBaseUrl } from "../lib/appUrls";
+import { equivalentPickupLocationIds } from "../lib/locationIds";
 
 export const publicAppointmentsRouter = Router();
 
@@ -382,7 +383,7 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
 
   const manualBlock = await prisma.pickupManualBlock.findFirst({
     where: {
-      locationId: appointment.locationId,
+      locationId: { in: equivalentPickupLocationIds(appointment.locationId) },
       date: parsed.data.selectedDate,
       startTime: { in: parsed.data.selectedSlots.map((slot) => slot.startTime) },
     },
@@ -395,7 +396,7 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   const conflict = await prisma.pickupAppointment.findFirst({
     where: {
       id: { not: appointment.id },
-      locationId: appointment.locationId,
+      locationId: { in: equivalentPickupLocationIds(appointment.locationId) },
       status: { in: [PickupAppointmentStatus.Scheduled, PickupAppointmentStatus.Confirmed] },
       startAt: { lt: endAt },
       endAt: { gt: startAt },

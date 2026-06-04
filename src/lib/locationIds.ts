@@ -92,3 +92,9 @@ export function expandLocationIds(ids: string[] = []) {
 
   return Array.from(expanded);
 }
+
+export function equivalentPickupLocationIds(id?: string | null) {
+  if (!id) return [];
+  const canonical = normalizeLocationId(id) ?? id;
+  return expandLocationIds([id]).filter((value) => (normalizeLocationId(value) ?? value) === canonical);
+}
