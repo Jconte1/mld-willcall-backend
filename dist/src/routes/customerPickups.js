@@ -249,21 +249,31 @@ function normalizeSelections(selectedItems, allowedOrders) {
 function countSelectedItems(selectedItems) {
     return selectedItems.reduce((sum, selection) => sum + selection.items.length, 0);
 }
+function getSelectedQtyForLine(line, selectedItems) {
+    const items = selectedItems?.items ?? [];
+    const exactLineQty = items
+        .filter((item) => item.lineId && item.lineId === line.id)
+        .reduce((sum, item) => sum + item.qty, 0);
+    if (exactLineQty > 0)
+        return exactLineQty;
+    if (!line.inventoryId)
+        return 0;
+    return items
+        .filter((item) => item.inventoryId === line.inventoryId)
+        .reduce((sum, item) => sum + item.qty, 0);
+}
 function findPrepayBlock(detail, selectedItems) {
     if (detail.orderNbr.startsWith("R1"))
         return null;
     const terms = (detail.payment.terms ?? "").trim().toUpperCase();
     if (!PREPAY_TERMS.has(terms))
         return null;
-    const selectedMap = new Map((selectedItems?.items ?? []).map((item) => [item.lineId ?? item.inventoryId, item]));
     const unpaidBalance = detail.payment.unpaidBalance;
     const otherFees = detail.payment.otherFees;
     const openLines = detail.lines.filter((line) => Math.max(0, line.openQty) > 0);
     const allOpenQtySelected = openLines.length > 0 &&
         openLines.every((line) => {
-            const key = line.id || line.inventoryId || "";
-            const selected = selectedMap.get(key);
-            const selectedQty = selected ? selected.qty : 0;
+            const selectedQty = getSelectedQtyForLine(line, selectedItems);
             return selectedQty >= Math.max(0, line.openQty);
         });
     if (allOpenQtySelected) {
@@ -276,9 +286,7 @@ function findPrepayBlock(detail, selectedItems) {
         };
     }
     const remainingGoodsWithTax = detail.lines.reduce((sum, line) => {
-        const key = line.id || line.inventoryId || "";
-        const selected = selectedMap.get(key);
-        const selectedQty = selected ? selected.qty : 0;
+        const selectedQty = getSelectedQtyForLine(line, selectedItems);
         const remainingQty = Math.max(0, line.openQty - selectedQty);
         const orderQty = line.orderQty;
         if (orderQty <= 0 || remainingQty <= 0)
