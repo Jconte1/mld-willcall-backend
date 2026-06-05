@@ -13,6 +13,7 @@ const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
 const pickupHours_1 = require("../lib/pickupHours");
 const pickupClosures_1 = require("../lib/pickupClosures");
 const appUrls_1 = require("../lib/appUrls");
+const locationIds_1 = require("../lib/locationIds");
 exports.publicAppointmentsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -333,7 +334,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     const endAt = makeDateTime(parsed.data.selectedDate, orderedSlots[orderedSlots.length - 1].endTime);
     const manualBlock = await prisma_1.prisma.pickupManualBlock.findFirst({
         where: {
-            locationId: appointment.locationId,
+            locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(appointment.locationId) },
             date: parsed.data.selectedDate,
             startTime: { in: parsed.data.selectedSlots.map((slot) => slot.startTime) },
         },
@@ -345,7 +346,7 @@ exports.publicAppointmentsRouter.patch("/:id", async (req, res) => {
     const conflict = await prisma_1.prisma.pickupAppointment.findFirst({
         where: {
             id: { not: appointment.id },
-            locationId: appointment.locationId,
+            locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(appointment.locationId) },
             status: { in: [client_1.PickupAppointmentStatus.Scheduled, client_1.PickupAppointmentStatus.Confirmed] },
             startAt: { lt: endAt },
             endAt: { gt: startAt },

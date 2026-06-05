@@ -4,6 +4,7 @@ exports.normalizeLocationIds = normalizeLocationIds;
 exports.normalizeLocationId = normalizeLocationId;
 exports.normalizeWarehouseToLocationId = normalizeWarehouseToLocationId;
 exports.expandLocationIds = expandLocationIds;
+exports.equivalentPickupLocationIds = equivalentPickupLocationIds;
 const LEGACY_LOCATION_IDS = {
     slc: ["slc-hq", "slc-outlet"],
     boise: ["boise-willcall"],
@@ -93,4 +94,10 @@ function expandLocationIds(ids = []) {
         }
     });
     return Array.from(expanded);
+}
+function equivalentPickupLocationIds(id) {
+    if (!id)
+        return [];
+    const canonical = normalizeLocationId(id) ?? id;
+    return expandLocationIds([id]).filter((value) => (normalizeLocationId(value) ?? value) === canonical);
 }

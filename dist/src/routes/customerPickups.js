@@ -9,6 +9,8 @@ const notifications_1 = require("../notifications");
 const denverLocalDateTime_1 = require("../lib/time/denverLocalDateTime");
 const pickupHours_1 = require("../lib/pickupHours");
 const pickupClosures_1 = require("../lib/pickupClosures");
+const availability_1 = require("../lib/pickups/availability");
+const locationIds_1 = require("../lib/locationIds");
 exports.customerPickupsRouter = (0, express_1.Router)();
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -365,26 +367,6 @@ function ceilToSlot(minutes) {
 function makeDateTime(dateStr, time) {
     return (0, denverLocalDateTime_1.makeDenverDateTime)(dateStr, time);
 }
-function buildSlotsForDate(locationId, dateStr, blocked, minStartMinutes) {
-    const slots = [];
-    const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
-    const startMinutes = openHour * 60;
-    const lastStartMinutes = (closeHour * 60) - SLOT_MINUTES;
-    for (let minutes = startMinutes; minutes <= lastStartMinutes; minutes += SLOT_MINUTES) {
-        const startTime = minutesToTime(minutes);
-        const endTime = minutesToTime(minutes + SLOT_MINUTES);
-        const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
-        const available = !tooEarly && !blocked.has(startTime);
-        slots.push({
-            id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
-            startTime,
-            endTime,
-            available,
-            capacityRemaining: available ? 1 : 0,
-        });
-    }
-    return slots;
-}
 function ensureWithinBusinessHours(locationId, dateStr, slots) {
     if (isClosedDate(dateStr, locationId))
         return false;
@@ -448,73 +430,7 @@ exports.customerPickupsRouter.get("/availability", async (req, res) => {
         return res.status(400).json({ message: "Invalid query parameters" });
     }
     const { locationId, from, to } = parsed.data;
-    const now = new Date();
-    const minAllowed = getMinAllowedSlot(now, locationId);
-    console.log("[availability][min-advance]", {
-        now: now.toISOString(),
-        denverDate: formatDateInDenver(now),
-        denverTime: formatTimeInDenver(now),
-        from,
-        to,
-        locationId,
-        minAllowedDate: minAllowed.dateStr,
-        minAllowedMinutes: minAllowed.minutes,
-        minAllowedTime: minutesToTime(minAllowed.minutes),
-    });
-    const rangeStart = parseDateOnly(from);
-    const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
-    const appointments = await prisma_1.prisma.pickupAppointment.findMany({
-        where: {
-            locationId,
-            status: { in: BLOCKING_STATUSES },
-            startAt: { lt: rangeEnd },
-            endAt: { gt: rangeStart },
-        },
-        select: { startAt: true, endAt: true },
-    });
-    const manualBlocks = await prisma_1.prisma.pickupManualBlock.findMany({
-        where: {
-            locationId,
-            date: { gte: from, lte: to },
-        },
-        select: { date: true, startTime: true },
-    });
-    const blockedByDate = new Map();
-    for (const manualBlock of manualBlocks) {
-        const blocked = blockedByDate.get(manualBlock.date) ?? new Set();
-        blocked.add(manualBlock.startTime);
-        blockedByDate.set(manualBlock.date, blocked);
-    }
-    for (const appointment of appointments) {
-        const startDateStr = formatDateInDenver(appointment.startAt);
-        const startTime = formatTimeInDenver(appointment.startAt);
-        const endTime = formatTimeInDenver(appointment.endAt);
-        const startMinutes = timeToMinutes(startTime);
-        const endMinutes = timeToMinutes(endTime);
-        const blocked = blockedByDate.get(startDateStr) ?? new Set();
-        for (let minutes = startMinutes; minutes < endMinutes; minutes += SLOT_MINUTES) {
-            blocked.add(minutesToTime(minutes));
-        }
-        blockedByDate.set(startDateStr, blocked);
-    }
-    const availability = [];
-    for (let cursor = new Date(rangeStart); cursor < rangeEnd; cursor = addMinutes(cursor, 24 * 60)) {
-        const dateStr = formatDateInDenver(cursor);
-        const isBlackedOut = isClosedDate(dateStr, locationId);
-        const blocked = blockedByDate.get(dateStr) ?? new Set();
-        let minStartMinutes = null;
-        if (dateStr < minAllowed.dateStr) {
-            minStartMinutes = Infinity;
-        }
-        else if (dateStr === minAllowed.dateStr) {
-            minStartMinutes = minAllowed.minutes;
-        }
-        availability.push({
-            date: dateStr,
-            slots: isBlackedOut ? [] : buildSlotsForDate(locationId, dateStr, blocked, minStartMinutes),
-            isBlackedOut,
-        });
-    }
+    const availability = await (0, availability_1.getPickupAvailability)({ locationId, from, to });
     return res.json({ availability });
 });
 /**
@@ -678,7 +594,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
         }
         const manualBlock = await prisma_1.prisma.pickupManualBlock.findFirst({
             where: {
-                locationId: group.locationId,
+                locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(group.locationId) },
                 date: group.selectedDate,
                 startTime: { in: group.selectedSlots.map((slot) => slot.startTime) },
             },
@@ -718,7 +634,7 @@ exports.customerPickupsRouter.post("/", async (req, res) => {
     for (const [index, appointment] of appointmentsToCreate.entries()) {
         const conflict = await prisma_1.prisma.pickupAppointment.findFirst({
             where: {
-                locationId: appointment.locationId,
+                locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(appointment.locationId) },
                 status: { in: BLOCKING_STATUSES },
                 startAt: { lt: appointment.endAt },
                 endAt: { gt: appointment.startAt },

@@ -12,6 +12,7 @@ const createAcumaticaService_1 = require("../lib/acumatica/createAcumaticaServic
 const erpClient_1 = require("../lib/queue/erpClient");
 const pickupHours_1 = require("../lib/pickupHours");
 const pickupClosures_1 = require("../lib/pickupClosures");
+const availability_1 = require("../lib/pickups/availability");
 const prisma_1 = require("../lib/prisma");
 const notifications_1 = require("../notifications");
 exports.pickupsRouter = (0, express_1.Router)();
@@ -166,7 +167,7 @@ async function findManualBlockConflict(client, locationId, startAt, endAt) {
         return null;
     return client.pickupManualBlock.findFirst({
         where: {
-            locationId,
+            locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(locationId) },
             OR: slots.map((slot) => ({ date: slot.date, startTime: slot.startTime })),
         },
         select: { date: true, startTime: true },
@@ -237,31 +238,6 @@ function isBeforeMinAdvance(startAt, now, locationId) {
     const startMinutes = timeToMinutes(formatTimeInDenver(startAt));
     return (startDateStr < minAllowed.dateStr ||
         (startDateStr === minAllowed.dateStr && startMinutes < minAllowed.minutes));
-}
-function buildStaffSlotsForDate(locationId, dateStr, manualBlocks, appointmentBlocks, minStartMinutes) {
-    if (isClosedDate(dateStr, locationId))
-        return [];
-    const slots = [];
-    const { openHour, closeHour } = (0, pickupHours_1.getPickupHours)(locationId);
-    const startMinutes = openHour * 60;
-    const lastStartMinutes = closeHour * 60 - SLOT_MINUTES;
-    for (let minutes = startMinutes; minutes <= lastStartMinutes; minutes += SLOT_MINUTES) {
-        const startTime = minutesToTime(minutes);
-        const endTime = minutesToTime(minutes + SLOT_MINUTES);
-        const manuallyBlocked = manualBlocks.has(startTime);
-        const occupied = appointmentBlocks.has(startTime);
-        const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
-        slots.push({
-            id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
-            startTime,
-            endTime,
-            available: !tooEarly && !manuallyBlocked && !occupied,
-            manuallyBlocked,
-            occupied,
-            tooEarly,
-        });
-    }
-    return slots;
 }
 async function findActiveOrderConflicts(orderNbrs, excludeAppointmentId) {
     if (!orderNbrs.length)
@@ -885,56 +861,12 @@ exports.pickupsRouter.get("/availability", async (req, res) => {
     if (!canAccessLocation(req, locationId)) {
         return res.status(403).json({ message: "Forbidden" });
     }
-    const now = new Date();
-    const minAllowed = getMinAllowedSlot(now, locationId);
-    const rangeStart = parseDateOnly(from);
-    const rangeEnd = addMinutes(parseDateOnly(to), 24 * 60);
-    const appointments = await prisma_1.prisma.pickupAppointment.findMany({
-        where: {
-            locationId,
-            status: { in: ACTIVE_APPOINTMENT_STATUSES },
-            startAt: { lt: rangeEnd },
-            endAt: { gt: rangeStart },
-        },
-        select: { startAt: true, endAt: true },
+    const availability = await (0, availability_1.getPickupAvailability)({
+        locationId,
+        from,
+        to,
+        includeStaffMetadata: true,
     });
-    const manualBlocks = await prisma_1.prisma.pickupManualBlock.findMany({
-        where: {
-            locationId,
-            date: { gte: from, lte: to },
-        },
-        select: { date: true, startTime: true },
-    });
-    const manualBlocksByDate = new Map();
-    for (const block of manualBlocks) {
-        const slots = manualBlocksByDate.get(block.date) ?? new Set();
-        slots.add(block.startTime);
-        manualBlocksByDate.set(block.date, slots);
-    }
-    const appointmentBlocksByDate = new Map();
-    for (const appointment of appointments) {
-        for (const slot of getSlotStarts(appointment.startAt, appointment.endAt)) {
-            const slots = appointmentBlocksByDate.get(slot.date) ?? new Set();
-            slots.add(slot.startTime);
-            appointmentBlocksByDate.set(slot.date, slots);
-        }
-    }
-    const availability = [];
-    for (let cursor = new Date(rangeStart); cursor < rangeEnd; cursor = addMinutes(cursor, 24 * 60)) {
-        const dateStr = formatDateInDenver(cursor);
-        let minStartMinutes = null;
-        if (dateStr < minAllowed.dateStr) {
-            minStartMinutes = Infinity;
-        }
-        else if (dateStr === minAllowed.dateStr) {
-            minStartMinutes = minAllowed.minutes;
-        }
-        availability.push({
-            date: dateStr,
-            isBlackedOut: isClosedDate(dateStr, locationId),
-            slots: buildStaffSlotsForDate(locationId, dateStr, manualBlocksByDate.get(dateStr) ?? new Set(), appointmentBlocksByDate.get(dateStr) ?? new Set(), minStartMinutes),
-        });
-    }
     return res.json({ availability });
 });
 /**
@@ -1104,7 +1036,7 @@ exports.pickupsRouter.post("/", async (req, res) => {
     }
     const slotConflict = await prisma_1.prisma.pickupAppointment.findFirst({
         where: {
-            locationId: body.data.locationId,
+            locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(body.data.locationId) },
             status: { in: ACTIVE_APPOINTMENT_STATUSES },
             startAt: { lt: endAt },
             endAt: { gt: startAt },
@@ -1518,7 +1450,7 @@ exports.pickupsRouter.patch("/:id", async (req, res) => {
         const slotConflict = await prisma_1.prisma.pickupAppointment.findFirst({
             where: {
                 id: { not: existing.id },
-                locationId: nextScheduleLocationId,
+                locationId: { in: (0, locationIds_1.equivalentPickupLocationIds)(nextScheduleLocationId) },
                 status: { in: ACTIVE_APPOINTMENT_STATUSES },
                 startAt: { lt: nextEndAt },
                 endAt: { gt: nextStartAt },
