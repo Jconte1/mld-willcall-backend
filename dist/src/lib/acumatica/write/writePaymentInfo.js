@@ -6,7 +6,12 @@ const node_crypto_1 = require("node:crypto");
 async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
     const now = new Date();
     const safeRows = Array.isArray(rows) ? rows : [];
-    console.log(`[upsertPaymentInfo] baid=${baid} incoming=${safeRows.length}`);
+    const normalizedBaid = str(baid).trim();
+    console.log(`[upsertPaymentInfo] baid=${normalizedBaid} incoming=${safeRows.length}`);
+    if (!normalizedBaid) {
+        console.log(`[upsertPaymentInfo] baid= missing-baid`);
+        return { processedOrders: 0, paymentUpserts: 0, ms: 0 };
+    }
     const orderNbrs = [];
     for (const row of safeRows) {
         const orderNbr = str(val(row, "OrderNbr"));
@@ -14,17 +19,17 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
             orderNbrs.push(orderNbr);
     }
     const uniqueNbrs = Array.from(new Set(orderNbrs));
-    console.log(`[upsertPaymentInfo] baid=${baid} uniqueOrderNbrs=${uniqueNbrs.length}`);
+    console.log(`[upsertPaymentInfo] baid=${normalizedBaid} uniqueOrderNbrs=${uniqueNbrs.length}`);
     if (!uniqueNbrs.length) {
-        console.log(`[upsertPaymentInfo] baid=${baid} nothing-to-map`);
+        console.log(`[upsertPaymentInfo] baid=${normalizedBaid} nothing-to-map`);
         return { processedOrders: 0, paymentUpserts: 0, ms: 0 };
     }
     const summaries = await prisma_1.prisma.erpOrderSummary.findMany({
-        where: { baid, orderNbr: { in: uniqueNbrs } },
+        where: { baid: normalizedBaid, orderNbr: { in: uniqueNbrs } },
         select: { id: true, orderNbr: true },
     });
     const idByNbr = new Map(summaries.map((s) => [s.orderNbr, s.id]));
-    console.log(`[upsertPaymentInfo] baid=${baid} mappedSummaries=${summaries.length}`);
+    console.log(`[upsertPaymentInfo] baid=${normalizedBaid} mappedSummaries=${summaries.length}`);
     let paymentUpserts = 0;
     const mappedOrderNbrs = new Set();
     const tasks = [];
@@ -50,7 +55,7 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
                 create: {
                     id: (0, node_crypto_1.randomUUID)(),
                     orderSummaryId,
-                    baid,
+                    baid: normalizedBaid,
                     orderNbr,
                     orderTotal,
                     otherFees,
@@ -60,7 +65,7 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
                     updatedAt: now,
                 },
                 update: {
-                    baid,
+                    baid: normalizedBaid,
                     orderNbr,
                     orderTotal,
                     otherFees,
@@ -74,13 +79,13 @@ async function writePaymentInfo(baid, rows, { concurrency = 10 } = {}) {
         });
     }
     if (!tasks.length) {
-        console.log(`[upsertPaymentInfo] baid=${baid} mappedOrders=${mappedOrderNbrs.size} no-upserts`);
+        console.log(`[upsertPaymentInfo] baid=${normalizedBaid} mappedOrders=${mappedOrderNbrs.size} no-upserts`);
         return { processedOrders: mappedOrderNbrs.size, paymentUpserts: 0, ms: 0 };
     }
     const t0 = Date.now();
     await runWithConcurrency(tasks, concurrency, (fn) => fn());
     const ms = Date.now() - t0;
-    console.log(`[upsertPaymentInfo] baid=${baid} processedOrders=${mappedOrderNbrs.size} paymentUpserts=${paymentUpserts} ms=${ms}`);
+    console.log(`[upsertPaymentInfo] baid=${normalizedBaid} processedOrders=${mappedOrderNbrs.size} paymentUpserts=${paymentUpserts} ms=${ms}`);
     return { processedOrders: mappedOrderNbrs.size, paymentUpserts, ms };
 }
 function val(obj, key) {

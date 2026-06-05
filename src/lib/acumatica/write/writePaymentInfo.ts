@@ -11,7 +11,13 @@ export default async function writePaymentInfo(
 ) {
   const now = new Date();
   const safeRows = Array.isArray(rows) ? rows : [];
-  console.log(`[upsertPaymentInfo] baid=${baid} incoming=${safeRows.length}`);
+  const normalizedBaid = str(baid).trim();
+  console.log(`[upsertPaymentInfo] baid=${normalizedBaid} incoming=${safeRows.length}`);
+
+  if (!normalizedBaid) {
+    console.log(`[upsertPaymentInfo] baid= missing-baid`);
+    return { processedOrders: 0, paymentUpserts: 0, ms: 0 };
+  }
 
   const orderNbrs: string[] = [];
   for (const row of safeRows) {
@@ -19,19 +25,19 @@ export default async function writePaymentInfo(
     if (orderNbr) orderNbrs.push(orderNbr);
   }
   const uniqueNbrs = Array.from(new Set(orderNbrs));
-  console.log(`[upsertPaymentInfo] baid=${baid} uniqueOrderNbrs=${uniqueNbrs.length}`);
+  console.log(`[upsertPaymentInfo] baid=${normalizedBaid} uniqueOrderNbrs=${uniqueNbrs.length}`);
 
   if (!uniqueNbrs.length) {
-    console.log(`[upsertPaymentInfo] baid=${baid} nothing-to-map`);
+    console.log(`[upsertPaymentInfo] baid=${normalizedBaid} nothing-to-map`);
     return { processedOrders: 0, paymentUpserts: 0, ms: 0 };
   }
 
   const summaries = await prisma.erpOrderSummary.findMany({
-    where: { baid, orderNbr: { in: uniqueNbrs } },
+    where: { baid: normalizedBaid, orderNbr: { in: uniqueNbrs } },
     select: { id: true, orderNbr: true },
   });
   const idByNbr = new Map(summaries.map((s) => [s.orderNbr, s.id]));
-  console.log(`[upsertPaymentInfo] baid=${baid} mappedSummaries=${summaries.length}`);
+  console.log(`[upsertPaymentInfo] baid=${normalizedBaid} mappedSummaries=${summaries.length}`);
 
   let paymentUpserts = 0;
   const mappedOrderNbrs = new Set<string>();
@@ -59,7 +65,7 @@ export default async function writePaymentInfo(
         create: {
           id: randomUUID(),
           orderSummaryId,
-          baid,
+          baid: normalizedBaid,
           orderNbr,
           orderTotal,
           otherFees,
@@ -69,7 +75,7 @@ export default async function writePaymentInfo(
           updatedAt: now,
         },
         update: {
-          baid,
+          baid: normalizedBaid,
           orderNbr,
           orderTotal,
           otherFees,
@@ -85,7 +91,7 @@ export default async function writePaymentInfo(
 
   if (!tasks.length) {
     console.log(
-      `[upsertPaymentInfo] baid=${baid} mappedOrders=${mappedOrderNbrs.size} no-upserts`
+      `[upsertPaymentInfo] baid=${normalizedBaid} mappedOrders=${mappedOrderNbrs.size} no-upserts`
     );
     return { processedOrders: mappedOrderNbrs.size, paymentUpserts: 0, ms: 0 };
   }
@@ -94,7 +100,7 @@ export default async function writePaymentInfo(
   await runWithConcurrency(tasks, concurrency, (fn) => fn());
   const ms = Date.now() - t0;
   console.log(
-    `[upsertPaymentInfo] baid=${baid} processedOrders=${mappedOrderNbrs.size} paymentUpserts=${paymentUpserts} ms=${ms}`
+    `[upsertPaymentInfo] baid=${normalizedBaid} processedOrders=${mappedOrderNbrs.size} paymentUpserts=${paymentUpserts} ms=${ms}`
   );
 
   return { processedOrders: mappedOrderNbrs.size, paymentUpserts, ms };

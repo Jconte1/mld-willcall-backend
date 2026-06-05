@@ -62,6 +62,10 @@ function normalizeEmail(value) {
     const email = String(value || "").trim().toLowerCase();
     return email || null;
 }
+function normalizeBaid(value) {
+    const baid = String(value || "").trim();
+    return baid || null;
+}
 function resolveNoticePhone(notice) {
     return (normalizePhone(notice.attributeSiteNumber) ||
         normalizePhone(notice.attributeSmsTxt) ||
@@ -139,6 +143,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     mark("notice");
     if (!notice)
         return res.status(404).json({ message: "Not found" });
+    const noticeBaid = normalizeBaid(notice.baid);
     const token = await prisma_1.prisma.orderReadyAccessToken.findFirst({
         where: { orderReadyId: notice.id, token: parsed.data.token, revokedAt: null },
     });
@@ -173,9 +178,9 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     let lastPullAt = null;
     let shouldRefreshDetails = false;
     let salesPersonNumber = null;
-    if (notice.baid) {
+    if (noticeBaid) {
         const summary = await prisma_1.prisma.erpOrderSummary.findUnique({
-            where: { baid_orderNbr: { baid: notice.baid, orderNbr } },
+            where: { baid_orderNbr: { baid: noticeBaid, orderNbr } },
             select: { updatedAt: true, lastAcumaticaPullAt: true, salesPersonNumber: true },
         });
         lastPullAt = summary?.lastAcumaticaPullAt ?? summary?.updatedAt ?? null;
@@ -188,10 +193,10 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     if (shouldRefreshDetails) {
         let acuLastModified = null;
         let lastModifiedCheckFailed = false;
-        if (notice.baid) {
+        if (noticeBaid) {
             try {
                 const restService = (0, erpClient_1.shouldUseQueueErp)() ? undefined : (0, createAcumaticaService_1.createAcumaticaService)();
-                const result = await (0, fetchOrderLastModified_1.fetchOrderLastModified)(notice.baid, orderNbr, restService);
+                const result = await (0, fetchOrderLastModified_1.fetchOrderLastModified)(noticeBaid, orderNbr, restService);
                 acuLastModified = result.lastModified;
             }
             catch (err) {
@@ -204,7 +209,8 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         }
         console.log("[order-ready] last-modified check", {
             orderNbr,
-            baid: notice.baid ?? null,
+            baid: noticeBaid,
+            ...(notice.baid && notice.baid !== noticeBaid ? { rawBaid: notice.baid } : {}),
             lastAcumaticaPullAt: lastPullAt,
             acumaticaLastModified: acuLastModified,
             lastModifiedCheckFailed,
@@ -221,14 +227,14 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             });
         }
         if (shouldRefreshDetails || lastModifiedCheckFailed || !acuLastModified) {
-            if (notice.baid) {
+            if (noticeBaid) {
                 try {
                     console.log("[order-ready] refresh details", {
                         orderNbr,
                         reason: lastModifiedCheckFailed ? "last-modified-failed" : !acuLastModified ? "missing-last-modified" : "stale",
                     });
                     await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
-                        baid: notice.baid,
+                        baid: noticeBaid,
                         orderNbr,
                         status: notice.status,
                         shipVia: notice.shipVia,
@@ -242,10 +248,10 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             }
         }
     }
-    if (notice.baid) {
+    if (noticeBaid) {
         try {
             await (0, refreshPrepayPayments_1.refreshPrepayPaymentsIfNeeded)({
-                baid: notice.baid,
+                baid: noticeBaid,
                 orderNbrs: [orderNbr],
                 context: "public-order-ready",
                 forceRefreshAll: true,
@@ -253,7 +259,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         }
         catch (err) {
             console.warn("[payment-refresh][public-order-ready] fallback to DB payment", {
-                baid: notice.baid,
+                baid: noticeBaid,
                 orderNbr,
                 error: err instanceof Error ? err.message : String(err),
             });
@@ -293,15 +299,15 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             },
             orderBy: { inventoryId: "asc" },
         });
-    if (readyInventoryIds.size > 0 && lines.length === 0 && notice.baid) {
+    if (readyInventoryIds.size > 0 && lines.length === 0 && noticeBaid) {
         console.log("[order-ready] forcing detail refresh because lines are missing", {
             orderNbr,
-            baid: notice.baid,
+            baid: noticeBaid,
             readyInventoryIds: Array.from(readyInventoryIds),
         });
         try {
             await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
-                baid: notice.baid,
+                baid: noticeBaid,
                 orderNbr,
                 status: notice.status,
                 shipVia: notice.shipVia,
@@ -346,7 +352,7 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     const payment = await prisma_1.prisma.erpOrderPayment.findFirst({
         where: {
             orderNbr,
-            ...(notice.baid ? { baid: notice.baid } : {}),
+            ...(noticeBaid ? { baid: noticeBaid } : {}),
         },
         select: {
             orderTotal: true,
@@ -478,6 +484,7 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
     const notice = await prisma_1.prisma.orderReadyNotice.findUnique({
         where: { orderNbr },
     });
+    const noticeBaid = notice ? normalizeBaid(notice.baid) : null;
     const contactEmail = notice ? resolveNoticeEmail(notice) : null;
     const contactPhone = notice ? resolveNoticePhone(notice) : null;
     const match = (email && contactEmail && email === contactEmail) ||
@@ -492,7 +499,7 @@ exports.publicOrderReadyRouter.post("/resend", async (req, res) => {
         const summary = await prisma_1.prisma.erpOrderSummary.findFirst({
             where: {
                 orderNbr,
-                ...(notice.baid ? { baid: notice.baid } : {}),
+                ...(noticeBaid ? { baid: noticeBaid } : {}),
             },
             select: {
                 locationId: true,
