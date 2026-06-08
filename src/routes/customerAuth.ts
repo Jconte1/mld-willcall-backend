@@ -338,6 +338,7 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     return res.status(400).json({ message: "Invalid request body" });
   }
 
+  let phase = "parse-token";
   let prefill: {
     baid: string;
     zip: string;
@@ -361,6 +362,7 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
   const inviteCode = prefill.inviteCode;
 
   try {
+    phase = "lookup-existing-user";
     const existingByEmail = await prisma.users.findUnique({
       where: { email },
       include: { customerCredential: true },
@@ -384,6 +386,7 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
       });
     }
 
+    phase = "lookup-existing-user-repeat";
     const existing = await prisma.users.findUnique({
       where: { email },
       include: { customerCredential: true },
@@ -403,7 +406,23 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
       });
     }
 
-    const verified = await verifyBaidInAcumatica(baid, zip);
+    phase = "verify-baid";
+    let verified = false;
+    try {
+      verified = await verifyBaidInAcumatica(baid, zip);
+    } catch (err: any) {
+      console.error("[willcall][customer][auto-register] verify-baid error", {
+        email,
+        baid,
+        ms: msSince(t0),
+        errorName: err?.name,
+        error: err?.message ?? String(err),
+      });
+      return res.status(503).json({
+        message: "Unable to verify account details right now. Please try again in a few minutes.",
+        reasonCode: REGISTER_REASON.RegisterFailed,
+      });
+    }
     if (!verified) {
       console.info("[willcall][customer][auto-register] verify failed", {
         email,
@@ -417,6 +436,7 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     }
 
     const now = new Date();
+    phase = "invite-lookup";
     const codeHash = hashInviteCode(inviteCode);
     const invite = await prisma.inviteCode.findFirst({
       where: {
@@ -457,6 +477,7 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
       });
     }
 
+    phase = "invite-email-check";
     if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
       const match = invite.recipientEmail.toLowerCase().trim() === email;
       if (!match) {
@@ -472,10 +493,12 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
       }
     }
 
+    phase = "hash-temp-password";
     const tempPassword = generateTempPassword();
     const tempHash = await hashPassword(tempPassword);
 
     if (existing) {
+      phase = "prepare-existing-account";
       await prisma.$transaction(async (tx) => {
         if (!existing.customerCredential) {
           await tx.customerCredential.create({
@@ -520,11 +543,13 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
       });
     }
 
+    phase = "determine-role";
     const adminCount = await prisma.accountUserRole.count({
       where: { baid, role: "ADMIN", isActive: true },
     });
     const assignedRole = adminCount > 0 ? invite.role : "ADMIN";
 
+    phase = "create-account";
     const user = await prisma.$transaction(async (tx) => {
       const created = await tx.users.create({
         data: {
@@ -588,9 +613,12 @@ customerAuthRouter.post("/auto-register-from-prefill", async (req, res) => {
     });
   } catch (err: any) {
     console.error("[willcall][customer][auto-register] error", {
+      phase,
       email,
       baid,
       ms: msSince(t0),
+      errorName: err?.name,
+      errorCode: err?.code,
       error: err?.message ?? String(err),
     });
     return res.status(500).json({ message: "Failed to complete account setup." });

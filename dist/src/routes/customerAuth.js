@@ -308,6 +308,7 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
     if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request body" });
     }
+    let phase = "parse-token";
     let prefill;
     try {
         prefill = (0, registrationPrefillToken_1.verifyRegistrationPrefillToken)(parsed.data.token);
@@ -323,6 +324,7 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
     const zip = prefill.zip;
     const inviteCode = prefill.inviteCode;
     try {
+        phase = "lookup-existing-user";
         const existingByEmail = await prisma_1.prisma.users.findUnique({
             where: { email },
             include: { customerCredential: true },
@@ -342,6 +344,7 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 email,
             });
         }
+        phase = "lookup-existing-user-repeat";
         const existing = await prisma_1.prisma.users.findUnique({
             where: { email },
             include: { customerCredential: true },
@@ -357,7 +360,24 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 email,
             });
         }
-        const verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
+        phase = "verify-baid";
+        let verified = false;
+        try {
+            verified = await (0, verifyBaid_1.verifyBaidInAcumatica)(baid, zip);
+        }
+        catch (err) {
+            console.error("[willcall][customer][auto-register] verify-baid error", {
+                email,
+                baid,
+                ms: msSince(t0),
+                errorName: err?.name,
+                error: err?.message ?? String(err),
+            });
+            return res.status(503).json({
+                message: "Unable to verify account details right now. Please try again in a few minutes.",
+                reasonCode: REGISTER_REASON.RegisterFailed,
+            });
+        }
         if (!verified) {
             console.info("[willcall][customer][auto-register] verify failed", {
                 email,
@@ -370,6 +390,7 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
             });
         }
         const now = new Date();
+        phase = "invite-lookup";
         const codeHash = hashInviteCode(inviteCode);
         const invite = await prisma_1.prisma.inviteCode.findFirst({
             where: {
@@ -405,6 +426,7 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 reasonCode: REGISTER_REASON.DetailsNotConfirmed,
             });
         }
+        phase = "invite-email-check";
         if (!process.env.NOTIFICATIONS_TEST_EMAIL && invite.recipientEmail) {
             const match = invite.recipientEmail.toLowerCase().trim() === email;
             if (!match) {
@@ -419,9 +441,11 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 });
             }
         }
+        phase = "hash-temp-password";
         const tempPassword = generateTempPassword();
         const tempHash = await (0, passwords_1.hashPassword)(tempPassword);
         if (existing) {
+            phase = "prepare-existing-account";
             await prisma_1.prisma.$transaction(async (tx) => {
                 if (!existing.customerCredential) {
                     await tx.customerCredential.create({
@@ -463,10 +487,12 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 mustCompleteProfile: true,
             });
         }
+        phase = "determine-role";
         const adminCount = await prisma_1.prisma.accountUserRole.count({
             where: { baid, role: "ADMIN", isActive: true },
         });
         const assignedRole = adminCount > 0 ? invite.role : "ADMIN";
+        phase = "create-account";
         const user = await prisma_1.prisma.$transaction(async (tx) => {
             const created = await tx.users.create({
                 data: {
@@ -525,9 +551,12 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
     }
     catch (err) {
         console.error("[willcall][customer][auto-register] error", {
+            phase,
             email,
             baid,
             ms: msSince(t0),
+            errorName: err?.name,
+            errorCode: err?.code,
             error: err?.message ?? String(err),
         });
         return res.status(500).json({ message: "Failed to complete account setup." });
