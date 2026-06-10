@@ -7,6 +7,7 @@ const zod_1 = require("zod");
 const tokens_1 = require("../lib/tokens");
 const passwords_1 = require("../lib/passwords");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
+const frontendUrl_1 = require("../lib/frontendUrl");
 exports.authRouter = (0, express_1.Router)();
 const FORGOT_RESPONSE = {
     ok: true,
@@ -191,15 +192,15 @@ exports.authRouter.post("/forgot-password", async (req, res) => {
             },
         });
     });
-    const frontend = process.env.FRONTEND_URL ?? "https://mld-willcall.vercel.app";
     const resetType = targetStaff ? "staff" : "customer";
-    const resetUrl = `${frontend.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(rawToken)}&type=${resetType}`;
+    const resetUrl = (0, frontendUrl_1.buildFrontendPath)(`/reset-password?token=${encodeURIComponent(rawToken)}&type=${resetType}`);
     try {
         await sendPasswordResetGraphEmail(email, resetUrl);
         console.info("[auth][forgot-password] email sent", {
             email,
             ip,
             principal: targetStaff ? "STAFF" : "CUSTOMER",
+            frontendUrl: (0, frontendUrl_1.getFrontendUrl)(),
         });
     }
     catch (err) {

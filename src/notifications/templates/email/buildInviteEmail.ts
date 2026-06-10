@@ -1,3 +1,5 @@
+import { getFrontendUrl } from "../../../lib/frontendUrl";
+
 const BRAND_NAME = "MLD Will Call";
 const BRAND_COLOR = "#111827";
 const ACCENT_COLOR = "#dbaa3c";
@@ -71,7 +73,7 @@ export function buildInviteEmail(
   zipCode?: string | null,
   prefillToken?: string | null
 ) {
-  const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+  const frontendUrl = getFrontendUrl();
   const logoUrl = `${frontendUrl}/brand/MLD-logo-gold.png`;
   const ctaLink = prefillToken
     ? `${frontendUrl}/?register=1&prefillToken=${encodeURIComponent(prefillToken)}`

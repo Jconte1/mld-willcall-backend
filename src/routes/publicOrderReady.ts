@@ -307,33 +307,42 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
     sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "OrderReadyLine (empty)",
   });
 
-  let lines =
+  const lineWhere =
     readyInventoryIds.size === 0
-      ? []
-      : await prisma.erpOrderLine.findMany({
-          where: {
-            orderNbr,
-            inventoryId: { in: Array.from(readyInventoryIds) },
-          },
-          select: {
-            id: true,
-            inventoryId: true,
-            lineDescription: true,
-            warehouse: true,
-            openQty: true,
-            orderQty: true,
-            allocatedQty: true,
-            isAllocated: true,
-            amount: true,
-            taxRate: true,
-          },
-          orderBy: { inventoryId: "asc" },
-        });
-  if (readyInventoryIds.size > 0 && lines.length === 0 && noticeBaid) {
+      ? {
+          orderNbr,
+          ...(noticeBaid ? { baid: noticeBaid } : {}),
+        }
+      : {
+          orderNbr,
+          ...(noticeBaid ? { baid: noticeBaid } : {}),
+          inventoryId: { in: Array.from(readyInventoryIds) },
+        };
+  const lineSelect = {
+    id: true,
+    inventoryId: true,
+    lineDescription: true,
+    warehouse: true,
+    openQty: true,
+    orderQty: true,
+    allocatedQty: true,
+    isAllocated: true,
+    amount: true,
+    taxRate: true,
+  } as const;
+
+  let lines = await prisma.erpOrderLine.findMany({
+    where: lineWhere,
+    select: lineSelect,
+    orderBy: { inventoryId: "asc" },
+  });
+
+  if (lines.length === 0 && noticeBaid) {
     console.log("[order-ready] forcing detail refresh because lines are missing", {
       orderNbr,
       baid: noticeBaid,
       readyInventoryIds: Array.from(readyInventoryIds),
+      usingOrderReadyLine: readyInventoryIds.size > 0,
     });
     try {
       await refreshOrderReadyDetails({
@@ -343,28 +352,19 @@ publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         shipVia: notice.shipVia,
       });
       lines = await prisma.erpOrderLine.findMany({
-        where: {
-          orderNbr,
-          inventoryId: { in: Array.from(readyInventoryIds) },
-        },
-        select: {
-          id: true,
-          inventoryId: true,
-          lineDescription: true,
-          warehouse: true,
-          openQty: true,
-          orderQty: true,
-          allocatedQty: true,
-          isAllocated: true,
-          amount: true,
-          taxRate: true,
-        },
+        where: lineWhere,
+        select: lineSelect,
         orderBy: { inventoryId: "asc" },
       });
     } catch (err) {
       console.error("[order-ready] forced refresh failed", { orderNbr, err });
     }
   }
+  console.log("[order-ready] order lines resolved", {
+    orderNbr,
+    count: lines.length,
+    source: readyInventoryIds.size > 0 ? "ready-line-filter" : "erp-order-line-fallback",
+  });
   mark("orderLinesDb");
 
   const orderLines = lines.map((line) => ({

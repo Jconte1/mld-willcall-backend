@@ -401,6 +401,40 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
             },
         });
         if (!invite) {
+            const usedInvite = await prisma_1.prisma.inviteCode.findFirst({
+                where: {
+                    baid,
+                    status: "Used",
+                    codeHash,
+                },
+                include: {
+                    usedBy: {
+                        select: {
+                            id: true,
+                            email: true,
+                            baid: true,
+                        },
+                    },
+                },
+            });
+            const usedByMatches = usedInvite?.usedBy?.email?.toLowerCase().trim() === email &&
+                usedInvite.usedBy.baid?.toUpperCase() === baid;
+            const existingMatches = existingByEmail?.email?.toLowerCase().trim() === email &&
+                existingByEmail.baid?.toUpperCase() === baid &&
+                Boolean(existingByEmail.customerCredential);
+            if (usedInvite && (usedByMatches || existingMatches)) {
+                console.info("[willcall][customer][auto-register] invite-already-used", {
+                    email,
+                    baid,
+                    inviteId: usedInvite.id,
+                    usedByUserId: usedInvite.usedByUserId,
+                });
+                return res.status(409).json({
+                    message: "This setup link has already been used. Please sign in.",
+                    reasonCode: REGISTER_REASON.EmailAlreadyExists,
+                    email,
+                });
+            }
             if (existingByEmail &&
                 existingByEmail.customerCredential &&
                 existingByEmail.baid?.toUpperCase() === baid &&
@@ -420,6 +454,39 @@ exports.customerAuthRouter.post("/auto-register-from-prefill", async (req, res) 
                 email,
                 baid,
                 hasCodeHash: Boolean(codeHash),
+                diagnostics: await prisma_1.prisma.inviteCode
+                    .findMany({
+                    where: {
+                        baid,
+                        OR: [
+                            { recipientEmail: email },
+                            { codeHash },
+                        ],
+                    },
+                    orderBy: { createdAt: "desc" },
+                    take: 5,
+                    select: {
+                        id: true,
+                        recipientEmail: true,
+                        status: true,
+                        expiresAt: true,
+                        usedAt: true,
+                        createdAt: true,
+                        sentAt: true,
+                        codeHash: true,
+                    },
+                })
+                    .then((rows) => rows.map((row) => ({
+                    id: row.id,
+                    recipientEmail: row.recipientEmail,
+                    status: row.status,
+                    expired: row.expiresAt <= now,
+                    expiresAt: row.expiresAt,
+                    usedAt: row.usedAt,
+                    createdAt: row.createdAt,
+                    sentAt: row.sentAt,
+                    codeHashMatches: row.codeHash === codeHash,
+                }))),
             });
             return res.status(400).json({
                 message: "We couldn't confirm these details. Please contact your salesperson.",

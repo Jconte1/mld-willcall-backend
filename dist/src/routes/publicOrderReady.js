@@ -278,32 +278,39 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
         usingOrderReadyLine: readyInventoryIds.size > 0,
         sourceTable: readyInventoryIds.size > 0 ? "OrderReadyLine" : "OrderReadyLine (empty)",
     });
-    let lines = readyInventoryIds.size === 0
-        ? []
-        : await prisma_1.prisma.erpOrderLine.findMany({
-            where: {
-                orderNbr,
-                inventoryId: { in: Array.from(readyInventoryIds) },
-            },
-            select: {
-                id: true,
-                inventoryId: true,
-                lineDescription: true,
-                warehouse: true,
-                openQty: true,
-                orderQty: true,
-                allocatedQty: true,
-                isAllocated: true,
-                amount: true,
-                taxRate: true,
-            },
-            orderBy: { inventoryId: "asc" },
-        });
-    if (readyInventoryIds.size > 0 && lines.length === 0 && noticeBaid) {
+    const lineWhere = readyInventoryIds.size === 0
+        ? {
+            orderNbr,
+            ...(noticeBaid ? { baid: noticeBaid } : {}),
+        }
+        : {
+            orderNbr,
+            ...(noticeBaid ? { baid: noticeBaid } : {}),
+            inventoryId: { in: Array.from(readyInventoryIds) },
+        };
+    const lineSelect = {
+        id: true,
+        inventoryId: true,
+        lineDescription: true,
+        warehouse: true,
+        openQty: true,
+        orderQty: true,
+        allocatedQty: true,
+        isAllocated: true,
+        amount: true,
+        taxRate: true,
+    };
+    let lines = await prisma_1.prisma.erpOrderLine.findMany({
+        where: lineWhere,
+        select: lineSelect,
+        orderBy: { inventoryId: "asc" },
+    });
+    if (lines.length === 0 && noticeBaid) {
         console.log("[order-ready] forcing detail refresh because lines are missing", {
             orderNbr,
             baid: noticeBaid,
             readyInventoryIds: Array.from(readyInventoryIds),
+            usingOrderReadyLine: readyInventoryIds.size > 0,
         });
         try {
             await (0, ingestOrderReadyDetails_1.refreshOrderReadyDetails)({
@@ -313,22 +320,8 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
                 shipVia: notice.shipVia,
             });
             lines = await prisma_1.prisma.erpOrderLine.findMany({
-                where: {
-                    orderNbr,
-                    inventoryId: { in: Array.from(readyInventoryIds) },
-                },
-                select: {
-                    id: true,
-                    inventoryId: true,
-                    lineDescription: true,
-                    warehouse: true,
-                    openQty: true,
-                    orderQty: true,
-                    allocatedQty: true,
-                    isAllocated: true,
-                    amount: true,
-                    taxRate: true,
-                },
+                where: lineWhere,
+                select: lineSelect,
                 orderBy: { inventoryId: "asc" },
             });
         }
@@ -336,6 +329,11 @@ exports.publicOrderReadyRouter.get("/:orderNbr", async (req, res) => {
             console.error("[order-ready] forced refresh failed", { orderNbr, err });
         }
     }
+    console.log("[order-ready] order lines resolved", {
+        orderNbr,
+        count: lines.length,
+        source: readyInventoryIds.size > 0 ? "ready-line-filter" : "erp-order-line-fallback",
+    });
     mark("orderLinesDb");
     const orderLines = lines.map((line) => ({
         id: line.id,

@@ -9,6 +9,7 @@ const prisma_1 = require("../lib/prisma");
 const zod_1 = require("zod");
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const verifyBaid_1 = require("../lib/acumatica/verifyBaid");
+const frontendUrl_1 = require("../lib/frontendUrl");
 const registrationPrefillToken_1 = require("../lib/registrationPrefillToken");
 const sendEmail_1 = require("../notifications/providers/email/sendEmail");
 const buildInviteEmail_1 = require("../notifications/templates/email/buildInviteEmail");
@@ -130,6 +131,15 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
     let code = existing?.codePlain || null;
     let inviteId = existing?.id || null;
     let expiresAt = existing?.expiresAt || null;
+    console.info("[internal-invites] invite lookup", {
+        baid,
+        email,
+        shouldSendEmail,
+        existingInviteId: existing?.id ?? null,
+        existingStatus: existing?.status ?? null,
+        existingExpiresAt: existing?.expiresAt ?? null,
+        existingHasCodePlain: Boolean(existing?.codePlain),
+    });
     if (!code) {
         console.info("[internal-invites] issuing new code", { baid, hasExisting: Boolean(existing) });
         code = generateInviteCode();
@@ -166,8 +176,16 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
             expiresAt = created.expiresAt;
         }
     }
+    console.info("[internal-invites] invite ready", {
+        baid,
+        email,
+        inviteId,
+        expiresAt,
+        reusedExisting: Boolean(existing?.id && existing?.codePlain),
+        hasCode: Boolean(code),
+    });
     if (shouldSendEmail && code) {
-        const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+        const frontendUrl = (0, frontendUrl_1.getFrontendUrl)();
         let prefillToken = null;
         try {
             prefillToken = (0, registrationPrefillToken_1.createRegistrationPrefillToken)({
@@ -188,6 +206,13 @@ exports.internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req,
         await (0, sendEmail_1.sendEmail)(email, message.subject, message.body, {
             allowTestOverride: false,
             allowNonProdSend: true,
+        });
+        console.info("[internal-invites] invite email sent", {
+            baid,
+            email,
+            inviteId,
+            frontendUrl,
+            hasPrefillToken: Boolean(prefillToken),
         });
     }
     return res.json({

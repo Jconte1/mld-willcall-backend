@@ -5,6 +5,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import { diagnoseBaidZipInAcumatica, verifyBaidInAcumatica } from "../lib/acumatica/verifyBaid";
+import { getFrontendUrl } from "../lib/frontendUrl";
 import { createRegistrationPrefillToken } from "../lib/registrationPrefillToken";
 import { sendEmail } from "../notifications/providers/email/sendEmail";
 import { buildInviteEmail } from "../notifications/templates/email/buildInviteEmail";
@@ -141,6 +142,16 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
   let inviteId = existing?.id || null;
   let expiresAt = existing?.expiresAt || null;
 
+  console.info("[internal-invites] invite lookup", {
+    baid,
+    email,
+    shouldSendEmail,
+    existingInviteId: existing?.id ?? null,
+    existingStatus: existing?.status ?? null,
+    existingExpiresAt: existing?.expiresAt ?? null,
+    existingHasCodePlain: Boolean(existing?.codePlain),
+  });
+
   if (!code) {
     console.info("[internal-invites] issuing new code", { baid, hasExisting: Boolean(existing) });
     code = generateInviteCode();
@@ -178,8 +189,17 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
     }
   }
 
+  console.info("[internal-invites] invite ready", {
+    baid,
+    email,
+    inviteId,
+    expiresAt,
+    reusedExisting: Boolean(existing?.id && existing?.codePlain),
+    hasCode: Boolean(code),
+  });
+
   if (shouldSendEmail && code) {
-    const frontendUrl = (process.env.FRONTEND_URL || "https://mld-willcall.vercel.app").replace(/\/$/, "");
+    const frontendUrl = getFrontendUrl();
     let prefillToken: string | null = null;
     try {
       prefillToken = createRegistrationPrefillToken({
@@ -199,6 +219,13 @@ internalInvitesRouter.post("/dispatch", requireInternalAuth, async (req, res) =>
     await sendEmail(email, message.subject, message.body, {
       allowTestOverride: false,
       allowNonProdSend: true,
+    });
+    console.info("[internal-invites] invite email sent", {
+      baid,
+      email,
+      inviteId,
+      frontendUrl,
+      hasPrefillToken: Boolean(prefillToken),
     });
   }
 
