@@ -9,6 +9,7 @@ import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService"
 import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
+import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { prisma } from "../lib/prisma";
 import {
   cancelAppointmentNotifications,
@@ -69,6 +70,8 @@ const PREPAY_TERMS = new Set(["PP", "PPP", "PPT", "TRADE", "CONTRACT"]);
 const PREPAY_MIN_DUE = 1;
 const SLOT_MINUTES = 15;
 const DENVER_TZ = "America/Denver";
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM_RE = /^\d{2}:\d{2}$/;
 const ACTIVE_APPOINTMENT_STATUSES: PickupAppointmentStatus[] = [
   PickupAppointmentStatus.Scheduled,
   PickupAppointmentStatus.Confirmed,
@@ -187,11 +190,36 @@ function formatTimeInDenver(date: Date) {
 }
 
 function parseDateOnly(dateStr: string) {
-  return new Date(`${dateStr}T12:00:00-07:00`);
+  return parseDenverDateOnly(dateStr);
 }
 
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000);
+}
+
+function resolveStaffScheduleTime(input: {
+  appointmentDate?: string;
+  appointmentStartTime?: string;
+  appointmentEndTime?: string;
+  startAt?: string;
+  endAt?: string;
+}, fallback?: { startAt: Date; endAt: Date }) {
+  if (input.appointmentDate && input.appointmentStartTime) {
+    const startAt = makeDenverDateTime(input.appointmentDate, input.appointmentStartTime);
+    const endAt = input.appointmentEndTime
+      ? makeDenverDateTime(input.appointmentDate, input.appointmentEndTime)
+      : addMinutes(startAt, SLOT_MINUTES);
+    return { startAt, endAt };
+  }
+
+  if (input.startAt) {
+    const startAt = new Date(input.startAt);
+    const endAt = input.endAt ? new Date(input.endAt) : addMinutes(startAt, SLOT_MINUTES);
+    return { startAt, endAt };
+  }
+
+  if (fallback) return fallback;
+  return null;
 }
 
 function timeToMinutes(time: string) {
@@ -1237,7 +1265,7 @@ pickupsRouter.post("/orders/lookup", async (req, res) => {
 
 /**
  * POST /api/staff/pickups
- * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, startAt, endAt, status?, orderNbrs? }
+ * Body: { locationId, customerEmail, customerFirstName, customerLastName?, customerPhone?, appointmentDate?, appointmentStartTime?, appointmentEndTime?, startAt?, endAt?, status?, orderNbrs? }
  */
 pickupsRouter.post("/", async (req, res) => {
   if (!canCreatePickups(req)) {
@@ -1252,7 +1280,10 @@ pickupsRouter.post("/", async (req, res) => {
     customerPhone: z.string().optional(),
     vehicleInfo: z.string().optional(),
     customerNotes: z.string().optional(),
-    startAt: z.string().datetime(),
+    appointmentDate: z.string().regex(DATE_ONLY_RE).optional(),
+    appointmentStartTime: z.string().regex(HHMM_RE).optional(),
+    appointmentEndTime: z.string().regex(HHMM_RE).optional(),
+    startAt: z.string().datetime().optional(),
     endAt: z.string().datetime().optional(),
     status: STATUS.optional(),
     orderNbrs: z.array(z.string()).optional(),
@@ -1282,12 +1313,18 @@ pickupsRouter.post("/", async (req, res) => {
   if (body.data.prepayOverride && !canUsePrepayOverride) {
     return res.status(403).json({ message: "Prepay override is only available to staff/admin." });
   }
-  const startAt = new Date(body.data.startAt);
-  const endAt = new Date(startAt.getTime() + SLOT_MINUTES * 60_000);
-  if (Number.isNaN(startAt.getTime())) {
+  const scheduleTime = resolveStaffScheduleTime(body.data);
+  if (!scheduleTime) {
+    return res.status(400).json({ message: "Appointment date and time are required." });
+  }
+  const { startAt, endAt } = scheduleTime;
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
     console.warn("[staff-pickups][create] invalid time range", {
       startAt: body.data.startAt,
       endAt: body.data.endAt ?? null,
+      appointmentDate: body.data.appointmentDate ?? null,
+      appointmentStartTime: body.data.appointmentStartTime ?? null,
+      appointmentEndTime: body.data.appointmentEndTime ?? null,
     });
     return res.status(400).json({ message: "Invalid appointment time range." });
   }
@@ -1686,7 +1723,7 @@ pickupsRouter.patch("/:id/shipments", async (req, res) => {
 
 /**
  * PATCH /api/staff/pickups/:id
- * Body: { status?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
+ * Body: { status?, appointmentDate?, appointmentStartTime?, appointmentEndTime?, startAt?, endAt?, locationId?, customer fields?, orderNbrs? }
  */
 pickupsRouter.patch("/:id", async (req, res) => {
   if (!canModifyPickups(req)) {
@@ -1695,6 +1732,9 @@ pickupsRouter.patch("/:id", async (req, res) => {
 
   const body = z.object({
     status: STATUS.optional(),
+    appointmentDate: z.string().regex(DATE_ONLY_RE).optional(),
+    appointmentStartTime: z.string().regex(HHMM_RE).optional(),
+    appointmentEndTime: z.string().regex(HHMM_RE).optional(),
     startAt: z.string().datetime().optional(),
     endAt: z.string().datetime().optional(),
     locationId: z.string().optional(),
@@ -1728,13 +1768,25 @@ pickupsRouter.patch("/:id", async (req, res) => {
     return res.status(403).json({ message: "Forbidden" });
   }
 
-  const nextStartAt = body.data.startAt ? new Date(body.data.startAt) : existing.startAt;
-  const nextEndAt = body.data.endAt ? new Date(body.data.endAt) : existing.endAt;
+  const scheduleTime = resolveStaffScheduleTime(body.data, {
+    startAt: existing.startAt,
+    endAt: existing.endAt,
+  });
+  const nextStartAt = scheduleTime?.startAt ?? existing.startAt;
+  const nextEndAt = scheduleTime?.endAt ?? existing.endAt;
   const nextScheduleLocationId = nextLocationId ?? existing.locationId;
   const nextStatus = body.data.status ? (body.data.status as PickupAppointmentStatus) : existing.status;
+  const hasScheduleInput = Boolean(
+    body.data.appointmentDate ||
+    body.data.appointmentStartTime ||
+    body.data.appointmentEndTime ||
+    body.data.startAt ||
+    body.data.endAt
+  );
   const scheduleChanged = Boolean(
-    (body.data.startAt && nextStartAt.getTime() !== existing.startAt.getTime()) ||
-    (body.data.endAt && nextEndAt.getTime() !== existing.endAt.getTime()) ||
+    (hasScheduleInput &&
+      (nextStartAt.getTime() !== existing.startAt.getTime() ||
+        nextEndAt.getTime() !== existing.endAt.getTime())) ||
     (nextLocationId && nextScheduleLocationId !== existing.locationId)
   );
   const activatingAppointment = Boolean(
@@ -1743,7 +1795,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
     !ACTIVE_APPOINTMENT_STATUSES.includes(existing.status)
   );
 
-  if (body.data.startAt || body.data.endAt) {
+  if (hasScheduleInput) {
     if (
       Number.isNaN(nextStartAt.getTime()) ||
       Number.isNaN(nextEndAt.getTime()) ||
@@ -1860,8 +1912,8 @@ pickupsRouter.patch("/:id", async (req, res) => {
       where: { id: req.params.id },
       data: {
         status: body.data.status ? (body.data.status as PickupAppointmentStatus) : undefined,
-        startAt: body.data.startAt ? new Date(body.data.startAt) : undefined,
-        endAt: body.data.endAt ? new Date(body.data.endAt) : undefined,
+        startAt: hasScheduleInput ? nextStartAt : undefined,
+        endAt: hasScheduleInput ? nextEndAt : undefined,
         locationId: nextLocationId ?? undefined,
         customerFirstName: body.data.customerFirstName,
         customerLastName: body.data.customerLastName ?? undefined,
@@ -1880,8 +1932,9 @@ pickupsRouter.patch("/:id", async (req, res) => {
   const effectiveOrderNbrs = nextOrderNbrs;
 
   const timeChanged =
-    (body.data.startAt && new Date(body.data.startAt).getTime() !== existing.startAt.getTime()) ||
-    (body.data.endAt && new Date(body.data.endAt).getTime() !== existing.endAt.getTime());
+    hasScheduleInput &&
+    (nextStartAt.getTime() !== existing.startAt.getTime() ||
+      nextEndAt.getTime() !== existing.endAt.getTime());
 
   const locationChanged =
     body.data.locationId &&
