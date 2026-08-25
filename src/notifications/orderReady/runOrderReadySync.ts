@@ -10,6 +10,11 @@ import { nextAllowedTime } from "../rules/quietHours";
 import { applySmsCompliance } from "../templates/sms/buildSms";
 import { resolveOrderReadyJobDisplay } from "./orderDisplay";
 import { buildOrderNotificationLabel } from "./orderNotificationLabel";
+import {
+  markOrderReadySyncFailed,
+  markOrderReadySyncStarted,
+  markOrderReadySyncSucceeded,
+} from "./syncState";
 
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-daily";
@@ -75,6 +80,11 @@ function normalizeText(value: string | null | undefined) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
+export function isValidOrderReadyEmail(value: string | null | undefined) {
+  const trimmed = String(value ?? "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 function evaluateOrderReadyLocationEligibility(input: {
   shipVia: string | null;
   warehouse: string | null;
@@ -133,41 +143,44 @@ async function markRun(prisma: PrismaClient, now: Date) {
 }
 
 export async function runOrderReadySync(prisma: PrismaClient) {
-  const now = new Date();
+  const startedAt = new Date();
+  const now = startedAt;
   if (!(await shouldRun(prisma, now))) return;
 
+  await markOrderReadySyncStarted(prisma, startedAt);
   console.log("[order-ready] running daily sync");
-  const rows = await fetchOrderReadyReport();
-  console.log("[order-ready] rows fetched", { count: rows.length });
-  if (rows.length) {
-    console.log("[order-ready] sample row", {
-      orderNbr: rows[0]?.orderNbr,
-      orderType: rows[0]?.orderType,
-      status: rows[0]?.status,
-      textNotification: rows[0]?.attributeSiteNumber ?? rows[0]?.attributeSmsTxt,
-      emailNotification: rows[0]?.attributeEmailNoty,
-      textOptIn: rows[0]?.attributeSmsOptIn,
-      emailOptIn: rows[0]?.attributeEmailOptIn,
-      salspersonnumber: rows[0]?.salspersonnumber,
-      warehouse: rows[0]?.warehouse,
-    });
-  }
+  try {
+    const rows = await fetchOrderReadyReport();
+    console.log("[order-ready] rows fetched", { count: rows.length });
+    if (rows.length) {
+      console.log("[order-ready] sample row", {
+        orderNbr: rows[0]?.orderNbr,
+        orderType: rows[0]?.orderType,
+        status: rows[0]?.status,
+        textNotification: rows[0]?.attributeSiteNumber ?? rows[0]?.attributeSmsTxt,
+        emailNotification: rows[0]?.attributeEmailNoty,
+        textOptIn: rows[0]?.attributeSmsOptIn,
+        emailOptIn: rows[0]?.attributeEmailOptIn,
+        salspersonnumber: rows[0]?.salspersonnumber,
+        warehouse: rows[0]?.warehouse,
+      });
+    }
 
-  const grouped = groupOrderReadyRows(rows);
-  const seenOrderNbrs = new Set<string>(Array.from(grouped.keys()));
-  const summaryRows = await prisma.erpOrderSummary.findMany({
-    where: {
-      orderNbr: { in: Array.from(grouped.keys()) },
-    },
-    select: {
-      baid: true,
-      orderNbr: true,
-      locationId: true,
-      jobName: true,
-      updatedAt: true,
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+    const grouped = groupOrderReadyRows(rows);
+    const seenOrderNbrs = new Set<string>(Array.from(grouped.keys()));
+    const summaryRows = await prisma.erpOrderSummary.findMany({
+      where: {
+        orderNbr: { in: Array.from(grouped.keys()) },
+      },
+      select: {
+        baid: true,
+        orderNbr: true,
+        locationId: true,
+        jobName: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
   const summaryByBaidAndOrder = new Map<string, (typeof summaryRows)[number]>();
   const summaryByOrder = new Map<string, (typeof summaryRows)[number]>();
   for (const summary of summaryRows) {
@@ -504,8 +517,20 @@ export async function runOrderReadySync(prisma: PrismaClient) {
           resolvedJobDisplay: jobDisplay,
           subject: message.subject,
         });
-        await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
-        sentEmail = true;
+        if (!isValidOrderReadyEmail(recipient)) {
+          console.error("[order-ready] email skipped (invalid recipient)", { orderNbr, recipient });
+        } else {
+          try {
+            await sendEmail(recipient, message.subject, message.body, { allowTestOverride: false });
+            sentEmail = true;
+          } catch (error) {
+            console.error("[order-ready] email send failed", {
+              orderNbr,
+              recipient,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
     } else {
       console.log("[order-ready] email skipped (email opt-in false)", { orderNbr });
@@ -522,12 +547,20 @@ export async function runOrderReadySync(prisma: PrismaClient) {
       const smsBase = `MLD Will Call: ${orderLabel} is ready for pickup. Schedule here: ${link}`;
       const includeStopLine = !notice.smsFirstSentAt;
       const smsBody = applySmsCompliance(smsBase, includeStopLine);
-      await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });
-      sentSms = true;
-      if (!notice.smsFirstSentAt) {
-        await prisma.orderReadyNotice.update({
-          where: { id: notice.id },
-          data: { smsFirstSentAt: new Date() },
+      try {
+        await sendSms(notice.contactPhone, smsBody, { allowTestOverride: false });
+        sentSms = true;
+        if (!notice.smsFirstSentAt) {
+          await prisma.orderReadyNotice.update({
+            where: { id: notice.id },
+            data: { smsFirstSentAt: new Date() },
+          });
+        }
+      } catch (error) {
+        console.error("[order-ready] sms send failed", {
+          orderNbr,
+          recipient: notice.contactPhone,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     } else if (!notice.smsOptIn) {
@@ -596,7 +629,15 @@ export async function runOrderReadySync(prisma: PrismaClient) {
     console.log("[order-ready] marked not-ready", { count: staleNotices.length });
   }
 
-  await markRun(prisma, now);
+    await markOrderReadySyncSucceeded(prisma, {
+      startedAt,
+      rowCount: rows.length,
+      orderCount: grouped.size,
+    });
+  } catch (error) {
+    await markOrderReadySyncFailed(prisma, { startedAt, error });
+    throw error;
+  }
 }
 
 function groupOrderReadyRows(rows: OrderReadyRow[]) {

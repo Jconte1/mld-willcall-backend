@@ -13,7 +13,8 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "validate:notification-reliability": "ts-node scripts/validate-notification-reliability.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.1",

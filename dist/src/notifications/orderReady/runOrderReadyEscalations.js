@@ -4,6 +4,7 @@ exports.runOrderReadyEscalations = runOrderReadyEscalations;
 const client_1 = require("@prisma/client");
 const sendEmail_1 = require("../providers/email/sendEmail");
 const buildOrderReadyEscalationEmail_1 = require("../templates/email/buildOrderReadyEscalationEmail");
+const syncState_1 = require("./syncState");
 const DENVER_TZ = "America/Denver";
 const JOB_NAME = "order-ready-escalation-daily";
 const RUN_HOUR = 9;
@@ -55,14 +56,59 @@ async function shouldRun(prisma, now) {
 async function markRun(prisma, now) {
     await prisma.orderReadyJobState.upsert({
         where: { name: JOB_NAME },
-        update: { lastRunAt: now },
-        create: { name: JOB_NAME, lastRunAt: now },
+        update: {
+            lastRunAt: now,
+            businessDate: (0, syncState_1.getOrderReadyBusinessDate)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "success",
+            errorSummary: null,
+        },
+        create: {
+            name: JOB_NAME,
+            lastRunAt: now,
+            businessDate: (0, syncState_1.getOrderReadyBusinessDate)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "success",
+        },
+    });
+}
+async function markSkipped(prisma, now, reason) {
+    await prisma.orderReadyJobState.upsert({
+        where: { name: JOB_NAME },
+        update: {
+            businessDate: (0, syncState_1.getOrderReadyBusinessDate)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "skipped",
+            errorSummary: reason,
+        },
+        create: {
+            name: JOB_NAME,
+            businessDate: (0, syncState_1.getOrderReadyBusinessDate)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "skipped",
+            errorSummary: reason,
+        },
     });
 }
 async function runOrderReadyEscalations(prisma) {
     const now = new Date();
     if (!(await shouldRun(prisma, now)))
         return;
+    const freshness = await (0, syncState_1.hasSuccessfulOrderReadySyncForToday)(prisma, now);
+    if (!freshness.ok) {
+        const reason = "missing-successful-order-ready-sync-for-denver-business-date";
+        console.error("[order-ready][escalation] skipped (stale sync state)", {
+            reason,
+            requiredBusinessDate: freshness.businessDate,
+            state: freshness.state,
+        });
+        await markSkipped(prisma, now, reason);
+        return;
+    }
     const candidates = await prisma.orderReadyNotice.findMany({
         where: {
             notifyAttemptCount: { gt: ESCALATION_THRESHOLD },

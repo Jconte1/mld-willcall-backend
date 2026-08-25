@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getAutomaticNoShowWindow = getAutomaticNoShowWindow;
 exports.runNoShowSweep = runNoShowSweep;
 const client_1 = require("@prisma/client");
 const format_1 = require("../format");
@@ -60,9 +61,36 @@ async function shouldRun(prisma, now) {
 async function markRun(prisma, now) {
     await prisma.orderReadyJobState.upsert({
         where: { name: JOB_NAME },
-        update: { lastRunAt: now },
-        create: { name: JOB_NAME, lastRunAt: now },
+        update: {
+            lastRunAt: now,
+            businessDate: (0, denver_1.denverDateKey)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "success",
+            errorSummary: null,
+        },
+        create: {
+            name: JOB_NAME,
+            lastRunAt: now,
+            businessDate: (0, denver_1.denverDateKey)(now),
+            startedAt: now,
+            completedAt: now,
+            status: "success",
+        },
     });
+}
+function getAutomaticNoShowWindow(now) {
+    const todayKey = (0, denver_1.denverDateKey)(now);
+    const yesterdayKey = (0, denver_1.addDaysToDenverDateKey)(todayKey, -1);
+    const todayRange = (0, denver_1.denverDateRangeUtc)(todayKey);
+    const yesterdayRange = (0, denver_1.denverDateRangeUtc)(yesterdayKey);
+    return {
+        todayKey,
+        yesterdayKey,
+        todayRange,
+        yesterdayRange,
+        historicalBefore: yesterdayRange.start,
+    };
 }
 async function sendNoShowNotifications(prisma, appointment) {
     const when = (0, format_1.formatDenverDateTime)(appointment.startAt);
@@ -160,12 +188,28 @@ async function runNoShowSweep(prisma) {
     const now = new Date();
     if (!(await shouldRun(prisma, now)))
         return;
-    const startOfToday = (0, denver_1.startOfDayDenver)(now);
+    const { yesterdayKey, todayRange, yesterdayRange, historicalBefore } = getAutomaticNoShowWindow(now);
+    const olderUnprocessedCount = await prisma.pickupAppointment.count({
+        where: {
+            status: { in: ACTIVE_STATUSES },
+            noShowNotificationProcessedAt: null,
+            endAt: { lt: historicalBefore },
+        },
+    });
+    if (olderUnprocessedCount) {
+        console.warn("[appointments] historical no-show records skipped", {
+            count: olderUnprocessedCount,
+            oldestAutomaticRecoveryDate: yesterdayKey,
+        });
+    }
     const appointments = await prisma.pickupAppointment.findMany({
         where: {
             status: { in: ACTIVE_STATUSES },
             noShowNotificationProcessedAt: null,
-            endAt: { gte: startOfToday, lt: now },
+            OR: [
+                { endAt: { gte: todayRange.start, lt: now } },
+                { endAt: { gte: yesterdayRange.start, lt: yesterdayRange.end } },
+            ],
         },
         include: { orders: true },
     });

@@ -747,7 +747,16 @@ model OrderReadyAccessToken {
 }
 
 model OrderReadyJobState {
-  id         String   @id @default(cuid())
-  name       String   @unique @db.VarChar(64)
-  lastRunAt  DateTime?
+  id            String   @id @default(cuid())
+  name          String   @unique @db.VarChar(64)
+  lastRunAt     DateTime?
+  businessDate  String?  @db.VarChar(10)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  status        String?  @db.VarChar(32)
+  rowCount      Int?
+  orderCount    Int?
+  errorSummary  String?
+
+  @@index([name, businessDate])
 }

@@ -4,7 +4,7 @@ import { sendEmail } from "../providers/email/sendEmail";
 import { sendSms } from "../providers/sms/sendSms";
 import { cancelPendingJobs } from "../scheduler/cancelJobs";
 import { buildNoShowEmail } from "../templates/email/buildNoShowEmail";
-import { startOfDayDenver } from "../../lib/time/denver";
+import { addDaysToDenverDateKey, denverDateKey, denverDateRangeUtc } from "../../lib/time/denver";
 import { buildAppointmentLink } from "../links/buildLink";
 import { rotateAppointmentToken } from "../links/tokens";
 import { getPickupLocation } from "../../lib/pickupLocations";
@@ -61,9 +61,38 @@ async function shouldRun(prisma: PrismaClient, now: Date) {
 async function markRun(prisma: PrismaClient, now: Date) {
   await prisma.orderReadyJobState.upsert({
     where: { name: JOB_NAME },
-    update: { lastRunAt: now },
-    create: { name: JOB_NAME, lastRunAt: now },
+    update: {
+      lastRunAt: now,
+      businessDate: denverDateKey(now),
+      startedAt: now,
+      completedAt: now,
+      status: "success",
+      errorSummary: null,
+    },
+    create: {
+      name: JOB_NAME,
+      lastRunAt: now,
+      businessDate: denverDateKey(now),
+      startedAt: now,
+      completedAt: now,
+      status: "success",
+    },
   });
+}
+
+export function getAutomaticNoShowWindow(now: Date) {
+  const todayKey = denverDateKey(now);
+  const yesterdayKey = addDaysToDenverDateKey(todayKey, -1);
+  const todayRange = denverDateRangeUtc(todayKey);
+  const yesterdayRange = denverDateRangeUtc(yesterdayKey);
+
+  return {
+    todayKey,
+    yesterdayKey,
+    todayRange,
+    yesterdayRange,
+    historicalBefore: yesterdayRange.start,
+  };
 }
 
 async function sendNoShowNotifications(
@@ -182,13 +211,31 @@ export async function runNoShowSweep(prisma: PrismaClient) {
   const now = new Date();
   if (!(await shouldRun(prisma, now))) return;
 
-  const startOfToday = startOfDayDenver(now);
+  const { yesterdayKey, todayRange, yesterdayRange, historicalBefore } =
+    getAutomaticNoShowWindow(now);
+  const olderUnprocessedCount = await prisma.pickupAppointment.count({
+    where: {
+      status: { in: ACTIVE_STATUSES },
+      noShowNotificationProcessedAt: null,
+      endAt: { lt: historicalBefore },
+    },
+  });
+
+  if (olderUnprocessedCount) {
+    console.warn("[appointments] historical no-show records skipped", {
+      count: olderUnprocessedCount,
+      oldestAutomaticRecoveryDate: yesterdayKey,
+    });
+  }
 
   const appointments = await prisma.pickupAppointment.findMany({
     where: {
       status: { in: ACTIVE_STATUSES },
       noShowNotificationProcessedAt: null,
-      endAt: { gte: startOfToday, lt: now },
+      OR: [
+        { endAt: { gte: todayRange.start, lt: now } },
+        { endAt: { gte: yesterdayRange.start, lt: yesterdayRange.end } },
+      ],
     },
     include: { orders: true },
   });

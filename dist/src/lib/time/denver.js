@@ -1,5 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.denverDateKey = denverDateKey;
+exports.addDaysToDenverDateKey = addDaysToDenverDateKey;
+exports.denverLocalDateTimeToUtc = denverLocalDateTimeToUtc;
+exports.denverDateRangeUtc = denverDateRangeUtc;
 exports.startOfDayDenver = startOfDayDenver;
 exports.oneYearAgoDenver = oneYearAgoDenver;
 exports.toDenverDateTimeOffsetLiteral = toDenverDateTimeOffsetLiteral;
@@ -9,10 +13,54 @@ exports.toDenver = toDenver;
 exports.atDenver = atDenver;
 exports.addDaysDenver = addDaysDenver;
 const DENVER_TZ = "America/Denver";
+function denverDateKey(d = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(d);
+    const get = (type) => parts.find((p) => p.type === type)?.value ?? "00";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+}
+function addDaysToDenverDateKey(dateKey, days) {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    const shifted = new Date(Date.UTC(year, month - 1, day + days));
+    return shifted.toISOString().slice(0, 10);
+}
+function denverOffsetMinutes(instant) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: DENVER_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+    }).formatToParts(instant);
+    const get = (type) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+    const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+    return (asUtc - instant.getTime()) / 60000;
+}
+function denverLocalDateTimeToUtc(dateKey, hour = 0, minute = 0, second = 0, ms = 0) {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+    let utcMs = localAsUtc;
+    for (let i = 0; i < 3; i += 1) {
+        utcMs = localAsUtc - denverOffsetMinutes(new Date(utcMs)) * 60000;
+    }
+    return new Date(utcMs);
+}
+function denverDateRangeUtc(dateKey) {
+    const nextDateKey = addDaysToDenverDateKey(dateKey, 1);
+    return {
+        start: denverLocalDateTimeToUtc(dateKey),
+        end: denverLocalDateTimeToUtc(nextDateKey),
+    };
+}
 function startOfDayDenver(d = new Date()) {
-    const local = new Date(d.toLocaleString("en-US", { timeZone: DENVER_TZ }));
-    local.setHours(0, 0, 0, 0);
-    return local;
+    return denverDateRangeUtc(denverDateKey(d)).start;
 }
 function oneYearAgoDenver(d = new Date()) {
     const s = startOfDayDenver(d);
