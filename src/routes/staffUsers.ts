@@ -118,10 +118,7 @@ staffUsersRouter.post("/", async (req, res) => {
             : body.data.role === "SALESPERSON"
               ? StaffRole.SALESPERSON
               : StaffRole.STAFF,
-      locationAccess:
-        body.data.role === "ADMIN"
-          ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
-          : body.data.locationAccess,
+      locationAccess: body.data.locationAccess,
       salespersonNumber,
       salespersonName: body.data.salespersonName ?? null,
       salespersonPhone: body.data.salespersonPhone
@@ -224,7 +221,7 @@ staffUsersRouter.get("/:id", async (req, res) => {
 
 /**
  * PATCH /api/staff/users/:id
- * Edit user and/or disable. Admin role always gets all locations.
+ * Edit user and/or disable. Location selections apply to every role.
  */
 staffUsersRouter.patch("/:id", async (req, res) => {
   const body = z.object({
@@ -286,10 +283,7 @@ staffUsersRouter.patch("/:id", async (req, res) => {
             : nextRole === "SALESPERSON"
               ? StaffRole.SALESPERSON
               : StaffRole.STAFF,
-      locationAccess:
-        nextRole === "ADMIN"
-          ? ["slc-hq", "slc-outlet", "boise-willcall", "jackson-willcall", "provo-willcall"]
-          : (body.data.locationAccess ?? existing.locationAccess),
+      locationAccess: body.data.locationAccess ?? existing.locationAccess,
       isActive: body.data.isActive,
       mustChangePassword: body.data.mustChangePassword,
       salespersonNumber: nextSalespersonNumber ?? null,

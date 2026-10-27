@@ -2,6 +2,7 @@ import { Router } from "express";
 import { PickupAppointmentStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } from "../middleware/auth";
+import { hasLocationAccess } from "../middleware/location";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
 import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
 import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
@@ -123,8 +124,7 @@ const shipmentUpdateSchema = z.object({
 });
 
 function canAccessLocation(req: any, locationId: string): boolean {
-  if (req.auth.role === "ADMIN") return true;
-  return expandLocationIds(req.auth.locationAccess ?? []).includes(locationId);
+  return hasLocationAccess(req.auth.locationAccess ?? [], locationId);
 }
 
 function canCreatePickups(req: any): boolean {
@@ -377,7 +377,11 @@ function buildStaffSlotsForDate(
   return slots;
 }
 
-async function findActiveOrderConflicts(orderNbrs: string[], excludeAppointmentId?: string) {
+async function findActiveOrderConflicts(
+  orderNbrs: string[],
+  excludeAppointmentId?: string,
+  db: Prisma.TransactionClient = prisma
+) {
   if (!orderNbrs.length) return [];
   const appointmentWhere: Prisma.PickupAppointmentWhereInput = {
     status: { in: ACTIVE_APPOINTMENT_STATUSES },
@@ -386,7 +390,7 @@ async function findActiveOrderConflicts(orderNbrs: string[], excludeAppointmentI
     appointmentWhere.id = { not: excludeAppointmentId };
   }
 
-  const rows = await prisma.pickupAppointmentOrder.findMany({
+  const rows = await db.pickupAppointmentOrder.findMany({
     where: {
       orderNbr: { in: orderNbrs },
       appointment: appointmentWhere,
@@ -1014,7 +1018,7 @@ pickupsRouter.get("/", async (req, res) => {
   const where: any = {};
 
   if (locationId) {
-    const expanded = expandLocationIds([locationId]);
+    const expanded = expandLocationIds([locationId]).filter((id) => canAccessLocation(req, id));
     where.locationId = { in: expanded };
   }
 
@@ -1044,9 +1048,9 @@ pickupsRouter.get("/", async (req, res) => {
     where.startAt = { ...(where.startAt ?? {}), lte: toDate };
   }
 
-  // Staff scope by their locations (if no locationId explicitly provided)
-  if (auth.role !== "ADMIN" && !locationId) {
-    where.locationId = { in: expandLocationIds(auth.locationAccess ?? []) };
+  // Roles control actions; the selected stores control visibility for every role.
+  if (!locationId) {
+    where.locationId = { in: expandLocationIds(auth.locationAccess ?? []).filter((id) => canAccessLocation(req, id)) };
   }
 
   const pickups = await prisma.pickupAppointment.findMany({
@@ -1493,7 +1497,37 @@ pickupsRouter.post("/", async (req, res) => {
     }
   }
 
-  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const createResult = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Serialize staff creates; the earlier checks can become stale during ERP refreshes.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(74241845)`;
+    const conflicts = await findActiveOrderConflicts(orderNbrs, undefined, tx);
+    if (conflicts.length) {
+      return { conflict: {
+        message: `Order ${conflicts[0].orderNbr} already has an active pickup appointment scheduled for ${conflicts[0].displayAt}.`,
+        code: "ORDER_ALREADY_SCHEDULED",
+        conflicts,
+      } };
+    }
+    const occupied = await tx.pickupAppointment.findFirst({
+      where: {
+        locationId: body.data.locationId,
+        status: { in: ACTIVE_APPOINTMENT_STATUSES },
+        startAt: { lt: endAt },
+        endAt: { gt: startAt },
+      },
+      select: { id: true, startAt: true, endAt: true },
+    });
+    if (occupied) {
+      return { conflict: {
+        message: "Time slot no longer available.",
+        code: "SLOT_UNAVAILABLE",
+        conflict: { appointmentId: occupied.id, startAt: occupied.startAt, endAt: occupied.endAt },
+      } };
+    }
+    const blocked = await findManualBlockConflict(tx, body.data.locationId, startAt, endAt);
+    if (blocked) {
+      return { conflict: { message: "Time slot is manually blocked.", code: "SLOT_MANUALLY_BLOCKED", conflict: blocked } };
+    }
     const appointment = await tx.pickupAppointment.create({
       data: {
         userId: user?.id ?? null,
@@ -1548,8 +1582,11 @@ pickupsRouter.post("/", async (req, res) => {
       await tx.pickupAppointmentLine.createMany({ data: lineRows });
     }
 
-    return appointment;
-  });
+    return { appointment };
+  }, { maxWait: 5000, timeout: 10000 });
+
+  if (createResult.conflict) return res.status(409).json(createResult.conflict);
+  const created = createResult.appointment!;
 
   try {
     await notifyStaffScheduled(prisma, created, orderNbrs);
@@ -1851,7 +1888,11 @@ pickupsRouter.patch("/:id", async (req, res) => {
   }
 
   const nextOrderNbrs = body.data.orderNbrs ?? existing.orders.map((o) => o.orderNbr);
-  if (body.data.orderNbrs) {
+  const orderListChanged =
+    Array.isArray(body.data.orderNbrs) &&
+    (body.data.orderNbrs.length !== existing.orders.length ||
+      body.data.orderNbrs.some((orderNbr) => !existing.orders.some((o) => o.orderNbr === orderNbr)));
+  if ((orderListChanged && ACTIVE_APPOINTMENT_STATUSES.includes(nextStatus)) || activatingAppointment) {
     const activeConflicts = await findActiveOrderConflicts(nextOrderNbrs, existing.id);
     if (activeConflicts.length) {
       const first = activeConflicts[0];
@@ -1874,9 +1915,9 @@ pickupsRouter.patch("/:id", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    if (body.data.orderNbrs) {
+    if (orderListChanged) {
       await tx.pickupAppointmentOrder.deleteMany({ where: { appointmentId: existing.id } });
-      const orderRows = body.data.orderNbrs.map((orderNbr) => ({
+      const orderRows = nextOrderNbrs.map((orderNbr) => ({
         appointmentId: existing.id,
         orderNbr,
       }));
@@ -1886,7 +1927,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
       await tx.pickupAppointmentLine.deleteMany({
         where: {
           appointmentId: existing.id,
-          orderNbr: { notIn: body.data.orderNbrs },
+          orderNbr: { notIn: nextOrderNbrs },
         },
       });
     }
@@ -1946,14 +1987,6 @@ pickupsRouter.patch("/:id", async (req, res) => {
     (body.data.status === "Cancelled" ||
       body.data.status === "Completed" ||
       body.data.status === "NoShow");
-
-  const orderListChanged =
-    Array.isArray(body.data.orderNbrs) &&
-    (body.data.orderNbrs.length !== existing.orders.length ||
-      body.data.orderNbrs.some(
-        (orderNbr) =>
-          !existing.orders.some((o: { orderNbr: string }) => o.orderNbr === orderNbr)
-      ));
 
   const existingSelections = Array.from(
     existing.lines.reduce((map, line) => {

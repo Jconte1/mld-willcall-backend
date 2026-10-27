@@ -27,6 +27,11 @@ import { requireAuth } from "../middleware/auth";
 
 export const staffAuthRouter = Router();
 
+staffAuthRouter.get("/me", requireAuth, (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.json({ user: { ...req.auth!, isActive: true } });
+});
+
 const LOGIN_BODY = z.object({
   email: z.string().email(),
   password: z.string().min(1)
