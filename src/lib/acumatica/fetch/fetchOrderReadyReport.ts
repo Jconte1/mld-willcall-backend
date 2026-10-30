@@ -53,14 +53,18 @@ function unwrapValue(value: any) {
   return value;
 }
 
-function parseBoolean(value: any) {
+function parseBoolean(value: unknown, field: string, rowIndex: number): boolean | null {
   const raw = unwrapValue(value);
   if (raw == null) return null;
   if (typeof raw === "boolean") return raw;
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    throw new Error(`Order-ready consent validation failed: unrecognized ${field} value at row ${rowIndex + 1}.`);
+  }
   const s = String(raw).trim().toLowerCase();
-  if (["true", "1", "yes", "y"].includes(s)) return true;
-  if (["false", "0", "no", "n"].includes(s)) return false;
-  return null;
+  if (!s) return null;
+  if (["true", "1", "yes", "y", "opt-in", "opt in", "optin"].includes(s)) return true;
+  if (["false", "0", "no", "n", "opt-out", "opt out", "optout"].includes(s)) return false;
+  throw new Error(`Order-ready consent validation failed: unrecognized ${field} value at row ${rowIndex + 1}.`);
 }
 
 async function fetchRawRows() {
@@ -69,7 +73,10 @@ async function fetchRawRows() {
       "/api/erp/jobs/reports/order-ready",
       {}
     );
-    return Array.isArray(resp?.rows) ? resp.rows : [];
+    if (!Array.isArray(resp?.rows)) {
+      throw new Error("Order-ready report validation failed: queue response must contain a rows array.");
+    }
+    return resp.rows;
   }
 
   const url =
@@ -104,8 +111,10 @@ async function fetchRawRows() {
     throw new Error(`Order-ready OData fetch failed: ${res.status} ${res.statusText}`);
   }
 
-  const json = await res.json().catch(() => ({}));
-  return Array.isArray(json) ? json : Array.isArray(json?.value) ? json.value : [];
+  const json = await res.json();
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json?.value)) return json.value;
+  throw new Error("Order-ready report validation failed: OData response must be an array or contain a value array.");
 }
 
 export async function fetchOrderReadyReport() {
@@ -114,34 +123,21 @@ export async function fetchOrderReadyReport() {
     loggedKeys = true;
     console.log("[order-ready] sample fields", Object.keys(rows[0] || {}).slice(0, 50));
   }
-  return rows.map((row: Record<string, any>): OrderReadyRow => ({
+  // Validate the entire batch before returning anything to the sync's write/send loop.
+  const mappedRows: OrderReadyRow[] = rows.map((row: Record<string, any>, rowIndex: number): OrderReadyRow => ({
     ...(function () {
-      const orderNbr = pickField(row, ["OrderNbr", "SOOrder_OrderNbr", "SOOrder.OrderNbr"]);
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        throw new Error(`Order-ready report validation failed: row ${rowIndex + 1} must be an object.`);
+      }
       const smsOptInRaw = pickCanonicalField(row, "SMSOptin");
       const emailOptInRaw = pickCanonicalField(row, "EmailOptin");
-      const smsOptInParsed = parseBoolean(smsOptInRaw);
-      const emailOptInParsed = parseBoolean(emailOptInRaw);
 
       if (smsOptInRaw === undefined || emailOptInRaw === undefined) {
-        const optInKeys = Object.keys(row).filter((k) => k.toLowerCase().includes("optin"));
-        console.error("[order-ready] opt-in fetch shape mismatch", {
-          orderNbr,
-          expectedKeys: ["SMSOptin", "EmailOptin"],
-          foundOptInKeys: optInKeys,
-          smsOptInRaw,
-          emailOptInRaw,
-        });
+        const missing = [smsOptInRaw === undefined ? "SMSOptin" : null, emailOptInRaw === undefined ? "EmailOptin" : null].filter(Boolean);
+        throw new Error(`Order-ready consent validation failed: missing ${missing.join(", ")} at row ${rowIndex + 1}.`);
       }
-
-      if (smsOptInParsed == null || emailOptInParsed == null) {
-        console.warn("[order-ready] opt-in parse mismatch", {
-          orderNbr,
-          smsOptInRaw,
-          emailOptInRaw,
-          smsOptInParsed,
-          emailOptInParsed,
-        });
-      }
+      const smsOptInParsed = parseBoolean(smsOptInRaw, "SMSOptin", rowIndex);
+      const emailOptInParsed = parseBoolean(emailOptInRaw, "EmailOptin", rowIndex);
 
       return {
     orderType: pickField(row, ["OrderType", "SOOrder_OrderType", "SOOrder.OrderType"]),
@@ -228,4 +224,17 @@ export async function fetchOrderReadyReport() {
       };
     })(),
   }));
+
+  const consentCounts = (field: "attributeSmsOptIn" | "attributeEmailOptIn") =>
+    mappedRows.reduce((counts, row) => {
+      const key = row[field] === true ? "optedIn" : row[field] === false ? "optedOut" : "unset";
+      counts[key] += 1;
+      return counts;
+    }, { optedIn: 0, optedOut: 0, unset: 0 });
+  console.info("[order-ready] consent validation passed", {
+    rows: mappedRows.length,
+    sms: consentCounts("attributeSmsOptIn"),
+    email: consentCounts("attributeEmailOptIn"),
+  });
+  return mappedRows;
 }
