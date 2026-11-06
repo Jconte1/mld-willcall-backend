@@ -15,7 +15,8 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
     "validate:notification-reliability": "ts-node scripts/validate-notification-reliability.ts",
-    "test:order-ready-consent": "node scripts/test-order-ready-consent.cjs"
+    "test:order-ready-consent": "node scripts/test-order-ready-consent.cjs",
+    "test:recurring-pickup-blocks": "node scripts/test-recurring-pickup-blocks.cjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.1",

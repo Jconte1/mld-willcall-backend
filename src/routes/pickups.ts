@@ -10,6 +10,7 @@ import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService"
 import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
+import { findRecurringPickupBlock, isRecurringPickupSlotBlocked } from "../lib/pickupRecurringBlocks";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { prisma } from "../lib/prisma";
 import {
@@ -248,12 +249,14 @@ function getSlotStarts(startAt: Date, endAt: Date) {
   return starts;
 }
 
-async function findManualBlockConflict(
+async function findBookingBlockConflict(
   client: typeof prisma | Prisma.TransactionClient,
   locationId: string,
   startAt: Date,
   endAt: Date
 ) {
+  const recurringBlock = findRecurringPickupBlock(locationId, startAt, endAt);
+  if (recurringBlock) return recurringBlock;
   const slots = getSlotStarts(startAt, endAt);
   if (!slots.length) return null;
   return client.pickupManualBlock.findFirst({
@@ -360,6 +363,7 @@ function buildStaffSlotsForDate(
     const startTime = minutesToTime(minutes);
     const endTime = minutesToTime(minutes + SLOT_MINUTES);
     const manuallyBlocked = manualBlocks.has(startTime);
+    const recurringBlocked = isRecurringPickupSlotBlocked(locationId, dateStr, startTime, endTime);
     const occupied = appointmentBlocks.has(startTime);
     const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
 
@@ -367,8 +371,9 @@ function buildStaffSlotsForDate(
       id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
       startTime,
       endTime,
-      available: !tooEarly && !manuallyBlocked && !occupied,
+      available: !tooEarly && !manuallyBlocked && !occupied && !recurringBlocked,
       manuallyBlocked,
+      recurringBlocked,
       occupied,
       tooEarly,
     });
@@ -1178,6 +1183,12 @@ pickupsRouter.patch("/availability", async (req, res) => {
     return res.status(403).json({ message: "Forbidden" });
   }
 
+  if (body.data.changes.some((change) => change.available && isRecurringPickupSlotBlocked(
+    body.data.locationId, change.date, change.startTime, minutesToTime(timeToMinutes(change.startTime) + SLOT_MINUTES)
+  ))) {
+    return res.status(409).json({ message: "Time slot is reserved for the warehouse team meeting.", code: "SLOT_RECURRING_BLOCKED" });
+  }
+
   const invalidChange = body.data.changes.find((change) => {
     if (isClosedDate(change.date, body.data.locationId)) return true;
     const [hours, minutes] = change.startTime.split(":").map(Number);
@@ -1363,11 +1374,11 @@ pickupsRouter.post("/", async (req, res) => {
     });
   }
 
-  const manualBlockConflict = await findManualBlockConflict(prisma, body.data.locationId, startAt, endAt);
+  const manualBlockConflict = await findBookingBlockConflict(prisma, body.data.locationId, startAt, endAt);
   if (manualBlockConflict) {
     return res.status(409).json({
-      message: "Time slot is manually blocked.",
-      code: "SLOT_MANUALLY_BLOCKED",
+      message: "reason" in manualBlockConflict ? "Time slot is reserved for the warehouse team meeting." : "Time slot is manually blocked.",
+      code: "reason" in manualBlockConflict ? "SLOT_RECURRING_BLOCKED" : "SLOT_MANUALLY_BLOCKED",
       conflict: manualBlockConflict,
     });
   }
@@ -1524,9 +1535,12 @@ pickupsRouter.post("/", async (req, res) => {
         conflict: { appointmentId: occupied.id, startAt: occupied.startAt, endAt: occupied.endAt },
       } };
     }
-    const blocked = await findManualBlockConflict(tx, body.data.locationId, startAt, endAt);
+    const blocked = await findBookingBlockConflict(tx, body.data.locationId, startAt, endAt);
     if (blocked) {
-      return { conflict: { message: "Time slot is manually blocked.", code: "SLOT_MANUALLY_BLOCKED", conflict: blocked } };
+      return { conflict: {
+        message: "reason" in blocked ? "Time slot is reserved for the warehouse team meeting." : "Time slot is manually blocked.",
+        code: "reason" in blocked ? "SLOT_RECURRING_BLOCKED" : "SLOT_MANUALLY_BLOCKED", conflict: blocked,
+      } };
     }
     const appointment = await tx.pickupAppointment.create({
       data: {
@@ -1872,7 +1886,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
       });
     }
 
-    const manualBlockConflict = await findManualBlockConflict(
+    const manualBlockConflict = await findBookingBlockConflict(
       prisma,
       nextScheduleLocationId,
       nextStartAt,
@@ -1880,8 +1894,8 @@ pickupsRouter.patch("/:id", async (req, res) => {
     );
     if (manualBlockConflict) {
       return res.status(409).json({
-        message: "Time slot is manually blocked.",
-        code: "SLOT_MANUALLY_BLOCKED",
+        message: "reason" in manualBlockConflict ? "Time slot is reserved for the warehouse team meeting." : "Time slot is manually blocked.",
+        code: "reason" in manualBlockConflict ? "SLOT_RECURRING_BLOCKED" : "SLOT_MANUALLY_BLOCKED",
         conflict: manualBlockConflict,
       });
     }

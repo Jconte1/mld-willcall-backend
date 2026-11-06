@@ -13,6 +13,7 @@ import { toNumber } from "../lib/orders/orderHelpers";
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
+import { findRecurringPickupBlock } from "../lib/pickupRecurringBlocks";
 
 export const publicAppointmentsRouter = Router();
 
@@ -378,6 +379,10 @@ publicAppointmentsRouter.patch("/:id", async (req, res) => {
   );
   const startAt = makeDateTime(parsed.data.selectedDate, orderedSlots[0].startTime);
   const endAt = makeDateTime(parsed.data.selectedDate, orderedSlots[orderedSlots.length - 1].endTime);
+
+  if (findRecurringPickupBlock(appointment.locationId, startAt, endAt)) {
+    return res.status(409).json({ message: "Time slot is reserved for the warehouse team meeting.", code: "SLOT_RECURRING_BLOCKED" });
+  }
 
   const manualBlock = await prisma.pickupManualBlock.findFirst({
     where: {

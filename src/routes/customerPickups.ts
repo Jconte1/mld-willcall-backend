@@ -11,6 +11,7 @@ import {
 import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocalDateTime";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
+import { findRecurringPickupBlock, isRecurringPickupSlotBlocked } from "../lib/pickupRecurringBlocks";
 
 export const customerPickupsRouter = Router();
 
@@ -493,7 +494,8 @@ function buildSlotsForDate(
     const startTime = minutesToTime(minutes);
     const endTime = minutesToTime(minutes + SLOT_MINUTES);
     const tooEarly = minStartMinutes != null && minutes < minStartMinutes;
-    const available = !tooEarly && !blocked.has(startTime);
+    const available = !tooEarly && !blocked.has(startTime) &&
+      !isRecurringPickupSlotBlocked(locationId, dateStr, startTime, endTime);
     slots.push({
       id: `slot-${dateStr.replace(/-/g, "")}-${startTime.replace(":", "")}`,
       startTime,
@@ -853,6 +855,10 @@ customerPickupsRouter.post("/", async (req, res) => {
       group.selectedDate,
       orderedSlots[orderedSlots.length - 1].endTime
     );
+
+    if (findRecurringPickupBlock(group.locationId, startAt, endAt)) {
+      return res.status(409).json({ message: "Time slot is reserved for the warehouse team meeting.", code: "SLOT_RECURRING_BLOCKED" });
+    }
 
     appointmentsToCreate.push({
       userId: payload.userId ?? null,
