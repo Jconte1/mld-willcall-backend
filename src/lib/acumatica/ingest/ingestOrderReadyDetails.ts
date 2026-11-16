@@ -37,7 +37,7 @@ function normalizeErpLocationId(value: string | null | undefined) {
 }
 
 export async function refreshOrderReadyDetails(input: RefreshInput) {
-  const { baid, orderNbr, status, erpLocationId, shipVia, lastModified } = input;
+  const { baid, orderNbr, erpLocationId, shipVia, lastModified } = input;
   const restService = createAcumaticaService();
   if (!shouldUseQueueErp()) {
     await restService.getToken();
@@ -54,14 +54,27 @@ export async function refreshOrderReadyDetails(input: RefreshInput) {
     });
   }
 
+  const orderNbrs = [normalizedOrderNbr];
+  const [addressRows, paymentRows, detailRows] = await Promise.all([
+    fetchAddressContact(restService, normalizedBaid, { orderNbrs }),
+    fetchPaymentInfo(restService, normalizedBaid, { orderNbrs }),
+    fetchInventoryDetails(restService, normalizedBaid, orderNbrs),
+  ]);
+  const paymentRow = paymentRows.find((row) => String(row.OrderNbr?.value ?? row.OrderNbr ?? "").trim() === normalizedOrderNbr);
+  const freshStatus = String(paymentRow?.Status?.value ?? paymentRow?.Status ?? "").trim();
+  if (!freshStatus) throw new Error(`ERP did not verify current status for ${normalizedOrderNbr}`);
+  const terminal = ["completed", "invoiced", "canceled", "cancelled", "closed", "expired"].includes(freshStatus.toLowerCase());
+  if (!terminal && (detailRows.length !== 1 || !Array.isArray(detailRows[0]?.Details) ||
+    String(detailRows[0]?.OrderNbr?.value ?? detailRows[0]?.OrderNbr ?? "").trim() !== normalizedOrderNbr)) {
+    throw new Error(`ERP did not return a complete inventory snapshot for ${normalizedOrderNbr}`);
+  }
   const now = new Date();
   const summaryUpdate: Record<string, any> = {
-    status: status ?? "Ready",
+    status: freshStatus,
     shipVia: shipVia ?? null,
     lastSeenAt: now,
     isActive: true,
     updatedAt: now,
-    lastAcumaticaPullAt: now,
   };
   if (normalizedErpLocationId && normalizedErpLocationId !== "__PICKUP_ID_BLOCKED__") {
     summaryUpdate.locationId = normalizedErpLocationId;
@@ -76,7 +89,7 @@ export async function refreshOrderReadyDetails(input: RefreshInput) {
       id: randomUUID(),
       baid: normalizedBaid,
       orderNbr: normalizedOrderNbr,
-      status: status ?? "Ready",
+      status: freshStatus,
       locationId:
         normalizedErpLocationId && normalizedErpLocationId !== "__PICKUP_ID_BLOCKED__"
           ? normalizedErpLocationId
@@ -90,22 +103,19 @@ export async function refreshOrderReadyDetails(input: RefreshInput) {
       lastSeenAt: now,
       isActive: true,
       updatedAt: now,
-      lastAcumaticaPullAt: now,
+      lastAcumaticaPullAt: null,
       lastAcumaticaModifiedAt: lastModified ?? null,
     },
     update: summaryUpdate,
   });
 
-  const orderNbrs = [normalizedOrderNbr];
-  const [addressRows, paymentRows, detailRows] = await Promise.all([
-    fetchAddressContact(restService, normalizedBaid, { orderNbrs }),
-    fetchPaymentInfo(restService, normalizedBaid, { orderNbrs }),
-    fetchInventoryDetails(restService, normalizedBaid, orderNbrs),
-  ]);
-
   await writeAddressContact(normalizedBaid, addressRows);
   await writePaymentInfo(normalizedBaid, paymentRows);
-  await writeInventoryDetails(normalizedBaid, detailRows);
+  await writeInventoryDetails(normalizedBaid, terminal ? [] : detailRows, { expectedOrderNbrs: orderNbrs });
+  await prisma.erpOrderSummary.update({
+    where: { baid_orderNbr: { baid: normalizedBaid, orderNbr: normalizedOrderNbr } },
+    data: { lastAcumaticaPullAt: new Date() },
+  });
 
   return { orderNbr: normalizedOrderNbr, refreshedAt: now };
 }

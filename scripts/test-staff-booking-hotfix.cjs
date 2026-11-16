@@ -47,7 +47,7 @@ const db = {
   pickupManualBlock: { findFirst: async () => manualBlock },
   users: { findUnique: async () => null },
   erpOrderLine: { findMany: async () => [line] },
-  erpOrderSummary: { findFirst: async ({ where }) => ({ orderNbr: where.orderNbr, baid: "TEST", status: "Open", ErpOrderLine: [line], ErpOrderPayment: [] }) },
+  erpOrderSummary: { findFirst: async ({ where }) => ({ orderNbr: where.orderNbr, baid: "TEST", status: "Open", ErpOrderLine: [line], ErpOrderPayment: payment }) },
   erpOrderPayment: { findFirst: async () => payment },
   $transaction: async (fn) => {
     let unlock;
@@ -63,6 +63,10 @@ const db = {
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
   if (parent?.filename === routeFile) {
+    if (request === "../lib/acumatica/ingest/refreshVerifiedPickupOrder") {
+      return { ...originalLoad.call(this, request, parent, isMain),
+        refreshVerifiedPickupOrder: async (orderNbr) => db.erpOrderSummary.findFirst({ where: { orderNbr } }) };
+    }
     if (request === "../lib/prisma") return { prisma: db };
     if (request === "../notifications") return new Proxy({}, { get: (_, key) => async (...args) => { notifications.push({ key, args }); } });
     if (request === "../middleware/auth") return { requireAuth() {}, blockIfMustChangePassword() {}, blockIfMustCompleteProfile() {} };

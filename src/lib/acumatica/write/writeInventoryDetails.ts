@@ -1,14 +1,14 @@
 import { prisma } from "../../prisma";
-// writeInventoryDetails.ts
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 type AnyRow = Record<string, any>;
 
-export default async function writeInventoryDetails(
+export function prepareInventoryDetails(
   baid: string,
   detailRows: AnyRow[],
-  { chunkSize = 5000 }: { chunkSize?: number } = {}
+  requireLineIdentity = false
 ) {
   const lines: AnyRow[] = [];
   const affectedNbrs = new Set<string>();
@@ -24,6 +24,9 @@ export default async function writeInventoryDetails(
       const lt = optStr(val(d, "LineType"));
       if (!lt || lt.trim().toLowerCase() !== "goods for inventory") continue;
 
+      const erpId = optStr(val(d, "id")) || optStr(val(d, "LineNbr"));
+      if (requireLineIdentity && !erpId) throw new Error(`Missing ERP line identity on ${orderNbr}`);
+
       const taxZone = pickTaxZone(row, d);
       const taxRate = taxRateFromZone(taxZone);
 
@@ -35,7 +38,7 @@ export default async function writeInventoryDetails(
         allocations.some((a: AnyRow) => Boolean(val(a, "Allocated")) === true) || false;
 
       // allocatedQty = SUM of Qty where Allocated=true (stored as Int in schema)
-      // NOTE: Qty in Acumatica is usually whole units but can be decimal; we round to int for your schema.
+      // The cache column is Int; never round up and advertise more than ERP allocated.
       const allocatedQtyRaw = allocations
         .filter((a: AnyRow) => Boolean(val(a, "Allocated")) === true)
         .reduce((sum: number, a: AnyRow) => {
@@ -44,10 +47,11 @@ export default async function writeInventoryDetails(
         }, 0);
 
       const allocatedQty = Number.isFinite(allocatedQtyRaw)
-        ? Math.round(allocatedQtyRaw)
+        ? Math.floor(allocatedQtyRaw)
         : 0;
 
       lines.push({
+        id: erpId ? createHash("sha256").update(JSON.stringify([baid.trim(), orderNbr.trim(), erpId])).digest("hex") : randomUUID(),
         orderNbr,
         baid,
         lineDescription: optStr(val(d, "LineDescription")),
@@ -67,7 +71,33 @@ export default async function writeInventoryDetails(
     }
   }
 
-  const orderNbrList = Array.from(affectedNbrs);
+  const uniqueLines = new Map<string, AnyRow>();
+  for (const line of lines) {
+    const previous = uniqueLines.get(line.id);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(line)) {
+      throw new Error(`Conflicting ERP rows for the same line on ${line.orderNbr}`);
+    }
+    uniqueLines.set(line.id, line);
+  }
+  return { lines: [...uniqueLines.values()], orderNbrs: Array.from(affectedNbrs) };
+}
+
+export default async function writeInventoryDetails(
+  baid: string,
+  detailRows: AnyRow[],
+  { chunkSize = 5000, expectedOrderNbrs, client, requireLineIdentity = false }: {
+    chunkSize?: number;
+    expectedOrderNbrs?: string[];
+    client?: Prisma.TransactionClient;
+    requireLineIdentity?: boolean;
+  } = {}
+) {
+  const prepared = prepareInventoryDetails(baid, detailRows, requireLineIdentity);
+  const lines = prepared.lines;
+  const orderNbrList = Array.from(new Set(expectedOrderNbrs ?? prepared.orderNbrs));
+  if (prepared.orderNbrs.some((nbr) => !orderNbrList.includes(nbr))) {
+    throw new Error("ERP inventory response contains an unexpected order");
+  }
   if (!orderNbrList.length) {
     return {
       ordersConsidered: Array.isArray(detailRows) ? detailRows.length : 0,
@@ -85,70 +115,77 @@ export default async function writeInventoryDetails(
     };
   }
 
-  const summaries = await prisma.erpOrderSummary.findMany({
-    where: { baid, orderNbr: { in: orderNbrList } },
-    select: { id: true, orderNbr: true },
-  });
-  const idByNbr = new Map(summaries.map((s) => [s.orderNbr, s.id]));
-
-  const { count: deleted } = await prisma.erpOrderLine.deleteMany({
-    where: { baid, orderNbr: { in: orderNbrList } },
-  });
-
-  let inserted = 0;
-  if (lines.length) {
-    const mapped = lines
-      .map((l) => {
-        const orderSummaryId = idByNbr.get(l.orderNbr);
-        if (!orderSummaryId) return null;
-        return {
-          id: randomUUID(),
-          orderSummaryId,
-          baid: l.baid,
-          orderNbr: l.orderNbr,
-          lineDescription: l.lineDescription,
-          warehouse: l.warehouse,
-          inventoryId: l.inventoryId,
-          lineType: l.lineType,
-          openQty: l.openQty,
-          orderQty: l.orderQty,
-          amount: l.amount,
-          taxRate: l.taxRate,
-          isAllocated: l.isAllocated,
-          allocatedQty: l.allocatedQty,
-          unitPrice: l.unitPrice,
-          usrETA: l.usrETA,
-          here: l.here,
-          updatedAt: new Date(),
-        };
-      })
-      .filter(Boolean) as AnyRow[];
-
-    for (let i = 0; i < mapped.length; i += chunkSize) {
-      const slice = mapped.slice(i, i + chunkSize);
-      if (!slice.length) continue;
-      const { count } = await prisma.erpOrderLine.createMany({
-        data: slice as any[],
-        skipDuplicates: true,
-      });
-      inserted += count;
+  const replace = async (tx: Prisma.TransactionClient) => {
+    // Serialize replacement across processes; deletion and insertion must commit together.
+    for (const orderNbr of [...orderNbrList].sort()) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inventory:${baid.trim()}:${orderNbr}`}))`;
     }
-  }
+    const summaries = await tx.erpOrderSummary.findMany({
+      where: { baid, orderNbr: { in: orderNbrList } },
+      select: { id: true, orderNbr: true },
+    });
+    const idByNbr = new Map(summaries.map((s) => [s.orderNbr, s.id]));
+    if (idByNbr.size !== orderNbrList.length) throw new Error("Missing order summary for inventory replacement");
 
-  return {
-    ordersConsidered: Array.isArray(detailRows) ? detailRows.length : 0,
-    ordersAffected: orderNbrList.length,
-    linesKept: lines.length,
-    linesDeleted: deleted,
-    linesInserted: inserted,
-    scan: {
-      ordersScanned: Array.isArray(detailRows) ? detailRows.length : 0,
-      ordersWithoutNbr: 0,
-      ordersWithNoDetails: 0,
+    const { count: deleted } = await tx.erpOrderLine.deleteMany({
+      where: { baid, orderNbr: { in: orderNbrList } },
+    });
+
+    let inserted = 0;
+    if (lines.length) {
+      const mapped = lines
+        .map((l) => {
+          const orderSummaryId = idByNbr.get(l.orderNbr);
+          if (!orderSummaryId) return null;
+          return {
+            id: l.id,
+            orderSummaryId,
+            baid: l.baid,
+            orderNbr: l.orderNbr,
+            lineDescription: l.lineDescription,
+            warehouse: l.warehouse,
+            inventoryId: l.inventoryId,
+            lineType: l.lineType,
+            openQty: l.openQty,
+            orderQty: l.orderQty,
+            amount: l.amount,
+            taxRate: l.taxRate,
+            isAllocated: l.isAllocated,
+            allocatedQty: l.allocatedQty,
+            unitPrice: l.unitPrice,
+            usrETA: l.usrETA,
+            here: l.here,
+            updatedAt: new Date(),
+          };
+        })
+        .filter(Boolean) as AnyRow[];
+
+      for (let i = 0; i < mapped.length; i += chunkSize) {
+        const slice = mapped.slice(i, i + chunkSize);
+        if (!slice.length) continue;
+        const { count } = await tx.erpOrderLine.createMany({
+          data: slice as any[],
+        });
+        inserted += count;
+      }
+    }
+
+    return {
+      ordersConsidered: Array.isArray(detailRows) ? detailRows.length : 0,
+      ordersAffected: orderNbrList.length,
       linesKept: lines.length,
-      linesDroppedEmpty: 0,
-    },
+      linesDeleted: deleted,
+      linesInserted: inserted,
+      scan: {
+        ordersScanned: Array.isArray(detailRows) ? detailRows.length : 0,
+        ordersWithoutNbr: 0,
+        ordersWithNoDetails: 0,
+        linesKept: lines.length,
+        linesDroppedEmpty: 0,
+      },
+    };
   };
+  return client ? replace(client) : prisma.$transaction(replace, { timeout: 30000 });
 }
 
 // Prefer line-level TaxZone if it exists; fallback to order-level if your payload ends up that way.

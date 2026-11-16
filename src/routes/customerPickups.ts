@@ -12,6 +12,8 @@ import { makeDenverDateTime, parseDenverDateOnly } from "../lib/time/denverLocal
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
 import { findRecurringPickupBlock, isRecurringPickupSlotBlocked } from "../lib/pickupRecurringBlocks";
+import { refreshVerifiedPickupOrder, PickupOrderVerificationError } from "../lib/acumatica/ingest/refreshVerifiedPickupOrder";
+import { validatePickupOrderSelections } from "../lib/orders/validatePickupOrderSelections";
 
 export const customerPickupsRouter = Router();
 
@@ -273,14 +275,7 @@ function toNumber(value: Prisma.Decimal | number | string | null | undefined) {
 
 async function getCustomerOrderDetail(orderNbrInput: string): Promise<CustomerOrderDetail | null> {
   const orderNbr = normalizeOrderNbr(orderNbrInput);
-  const summary = await prisma.erpOrderSummary.findFirst({
-    where: { orderNbr, isActive: true },
-    orderBy: [{ updatedAt: "desc" }],
-    include: {
-      ErpOrderPayment: true,
-      ErpOrderLine: true,
-    },
-  });
+  const summary = await refreshVerifiedPickupOrder(orderNbr);
 
   if (!summary) return null;
 
@@ -360,7 +355,7 @@ function getSelectedQtyForLine(
 
   if (!line.inventoryId) return 0;
   return items
-    .filter((item) => item.inventoryId === line.inventoryId)
+    .filter((item) => !item.lineId && item.inventoryId === line.inventoryId)
     .reduce((sum, item) => sum + item.qty, 0);
 }
 
@@ -720,7 +715,16 @@ customerPickupsRouter.post("/", async (req, res) => {
     });
   }
 
-  const orderDetails = await Promise.all(orderNbrs.map((orderNbr) => getCustomerOrderDetail(orderNbr)));
+  let orderDetails: (CustomerOrderDetail | null)[];
+  try {
+    orderDetails = await Promise.all(orderNbrs.map((orderNbr) => getCustomerOrderDetail(orderNbr)));
+  } catch (error) {
+    const verifiedError = error instanceof PickupOrderVerificationError ? error : null;
+    return res.status(verifiedError?.statusCode ?? 503).json({
+      message: verifiedError?.message ?? "Unable to verify current order data. Please retry.",
+      code: verifiedError?.code ?? "ERP_VERIFICATION_FAILED",
+    });
+  }
   const detailMap = new Map<string, CustomerOrderDetail>();
   for (const detail of orderDetails) {
     if (detail) detailMap.set(detail.orderNbr, detail);
@@ -734,58 +738,14 @@ customerPickupsRouter.post("/", async (req, res) => {
     }
   }
 
-  for (const selection of normalizedSelections) {
-    const detail = detailMap.get(selection.orderNbr);
-    if (!detail) {
-      return res.status(404).json({ message: `Order ${selection.orderNbr} was not found.` });
-    }
-    const lineMap = new Map(detail.lines.map((line) => [line.id, line]));
-    const inventoryMap = new Map(
-      detail.lines
-        .filter((line) => line.inventoryId)
-        .map((line) => [String(line.inventoryId), line])
-    );
-
-    for (const item of selection.items) {
-      const lineId = item.lineId ?? "";
-      const line = lineMap.get(lineId) ?? inventoryMap.get(item.inventoryId);
-      if (!line) {
-        console.warn("[customer-pickups][create] blocked: selected line missing", {
-          orderNbr: selection.orderNbr,
-          inventoryId: item.inventoryId,
-          lineId: item.lineId ?? null,
-        });
-        return res.status(400).json({
-          message: `Selected line is not available on order ${selection.orderNbr}.`,
-          code: "SELECTED_LINE_UNAVAILABLE",
-        });
-      }
-      if (!line.isAllocated || line.allocatedQty <= 0) {
-        console.warn("[customer-pickups][create] blocked: item not allocated", {
-          orderNbr: selection.orderNbr,
-          inventoryId: line.inventoryId,
-          lineId: line.id,
-          allocatedQty: line.allocatedQty,
-          isAllocated: line.isAllocated,
-        });
-        return res.status(400).json({
-          message: `Item ${line.inventoryId ?? "line"} is not ready for pickup on ${selection.orderNbr}.`,
-          code: "SELECTED_LINE_NOT_READY",
-        });
-      }
-      if (item.qty > line.openQty) {
-        console.warn("[customer-pickups][create] blocked: item qty exceeds open qty", {
-          orderNbr: selection.orderNbr,
-          inventoryId: line.inventoryId,
-          requestedQty: item.qty,
-          openQty: line.openQty,
-        });
-        return res.status(400).json({
-          message: `Selected quantity exceeds open quantity for ${selection.orderNbr}.`,
-          code: "SELECTED_QTY_EXCEEDS_OPEN_QTY",
-        });
-      }
-    }
+  try {
+    validatePickupOrderSelections([...detailMap.values()], normalizedSelections);
+  } catch (error) {
+    const verifiedError = error instanceof PickupOrderVerificationError ? error : null;
+    return res.status(verifiedError?.statusCode ?? 503).json({
+      message: verifiedError?.message ?? "Unable to verify current item quantities. Please retry.",
+      code: verifiedError?.code ?? "ERP_VERIFICATION_FAILED",
+    });
   }
 
   for (const orderNbr of orderNbrs) {

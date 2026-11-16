@@ -46,6 +46,10 @@ Module._load = function(request, parent, isMain) {
   if (parent?.filename.startsWith(root) && request.startsWith(".")) {
     const target = path.resolve(path.dirname(parent.filename), request);
     if (target === path.join(root, "src/lib/prisma")) return { prisma: db };
+    if (target.endsWith("refreshVerifiedPickupOrder")) {
+      return { ...originalLoad.call(this, request, parent, isMain),
+        refreshVerifiedPickupOrder: async (orderNbr) => db.erpOrderSummary.findFirst({ where: { orderNbr } }) };
+    }
     if (target === path.join(root, "src/notifications")) return new Proxy({}, { get: () => async () => { notifications++; } });
     if (target.endsWith(path.join("notifications", "links", "tokens"))) return { getActiveToken: async () => ({ token: "offline-test" }), createAppointmentToken: async () => ({ token: "offline-test" }) };
     if (target.endsWith(path.join("middleware", "auth"))) return { requireAuth() {}, blockIfMustChangePassword() {}, blockIfMustCompleteProfile() {} };

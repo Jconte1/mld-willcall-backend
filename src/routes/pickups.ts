@@ -4,10 +4,8 @@ import { z } from "zod";
 import { requireAuth, blockIfMustChangePassword, blockIfMustCompleteProfile } from "../middleware/auth";
 import { hasLocationAccess } from "../middleware/location";
 import { expandLocationIds, normalizeLocationId } from "../lib/locationIds";
-import { refreshOrderReadyDetails } from "../lib/acumatica/ingest/ingestOrderReadyDetails";
-import { refreshPrepayPaymentsIfNeeded } from "../lib/acumatica/sync/refreshPrepayPayments";
-import { createAcumaticaService } from "../lib/acumatica/createAcumaticaService";
-import { queueErpJobRequest, shouldUseQueueErp } from "../lib/queue/erpClient";
+import { refreshVerifiedPickupOrder, PickupOrderVerificationError } from "../lib/acumatica/ingest/refreshVerifiedPickupOrder";
+import { validatePickupOrderSelections } from "../lib/orders/validatePickupOrderSelections";
 import { getPickupHours } from "../lib/pickupHours";
 import { isHolidayClosure } from "../lib/pickupClosures";
 import { findRecurringPickupBlock, isRecurringPickupSlotBlocked } from "../lib/pickupRecurringBlocks";
@@ -423,346 +421,11 @@ async function findActiveOrderConflicts(
   }));
 }
 
-async function findOrderSummary(orderNbr: string) {
-  return prisma.erpOrderSummary.findFirst({
-    where: { orderNbr, isActive: true },
-    orderBy: [{ updatedAt: "desc" }],
-    include: {
-      ErpOrderPayment: true,
-      ErpOrderLine: true,
-    },
-  });
-}
-
-type OrderSummarySnapshot = NonNullable<Awaited<ReturnType<typeof findOrderSummary>>>;
-
-function toLogDate(value: Date | null | undefined) {
-  return value ? value.toISOString() : null;
-}
-
-function getLookupProvider() {
-  return shouldUseQueueErp() ? "queue" : "direct-acumatica";
-}
-
-function getLookupErrorDetails(err: unknown) {
-  if (err instanceof Error) {
-    return {
-      errorName: err.name,
-      reason: err.message,
-    };
-  }
-  return {
-    errorName: typeof err,
-    reason: String(err),
-  };
-}
-
-function getOrderSummaryLogSnapshot(summary: OrderSummarySnapshot) {
-  const lineLastUpdatedAt = summary.ErpOrderLine.reduce<Date | null>((latest, line) => {
-    if (!latest || line.updatedAt.getTime() > latest.getTime()) return line.updatedAt;
-    return latest;
-  }, null);
-
-  return {
-    baid: summary.baid,
-    status: summary.status,
-    locationId: summary.locationId,
-    shipVia: summary.shipVia,
-    dbUpdatedAt: toLogDate(summary.updatedAt),
-    lastSeenAt: toLogDate(summary.lastSeenAt),
-    lastAcumaticaPullAt: toLogDate(summary.lastAcumaticaPullAt),
-    lastAcumaticaModifiedAt: toLogDate(summary.lastAcumaticaModifiedAt),
-    lineCount: summary.ErpOrderLine.length,
-    lineLastUpdatedAt: toLogDate(lineLastUpdatedAt),
-    hasPayment: Boolean(summary.ErpOrderPayment),
-    paymentUpdatedAt: toLogDate(summary.ErpOrderPayment?.updatedAt),
-    paymentTerms: summary.ErpOrderPayment?.terms ?? null,
-    paymentUnpaidBalance: toNumber(summary.ErpOrderPayment?.unpaidBalance),
-  };
-}
-
-async function refreshOrderFromSalesOrderEndpoint(orderNbrInput: string) {
+async function getOrRefreshOrderDetail(orderNbrInput: string): Promise<StaffOrderDetail | null> {
   const orderNbr = normalizeOrderNbr(orderNbrInput);
-  console.info("[staff-pickups][lookup] salesorder fallback start", { orderNbr });
-
-  let row: Record<string, any> | null = null;
-
-  if (shouldUseQueueErp()) {
-    const resp = await queueErpJobRequest<{ found: boolean; row?: Record<string, any> | null }>(
-      "/api/erp/jobs/orders/header",
-      { orderNbr }
-    );
-    if (!resp?.found || !resp.row) {
-      console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
-      return false;
-    }
-    row = resp.row;
-  } else {
-    const service = createAcumaticaService();
-    const token = await service.getToken();
-    const base = `${service.baseUrl}/entity/CustomEndpoint/24.200.001/SalesOrder`;
-    const safeOrderNbr = orderNbr.replace(/'/g, "''");
-    const params = new URLSearchParams();
-    params.set("$filter", `OrderNbr eq '${safeOrderNbr}'`);
-    params.set(
-      "$select",
-      [
-        "OrderNbr",
-        "Status",
-        "LocationID",
-        "ShipVia",
-        "CustomerID",
-        "LastModified",
-      ].join(",")
-    );
-    params.set("$top", "1");
-    const url = `${base}?${params.toString()}`;
-
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(text || `SalesOrder lookup failed (${res.status})`);
-    }
-    const parsed = text ? JSON.parse(text) : [];
-    const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.value) ? parsed.value : [];
-    if (!rows.length) {
-      console.info("[staff-pickups][lookup] salesorder fallback no match", { orderNbr });
-      return false;
-    }
-    row = rows[0] ?? {};
-  }
-
-  const baid = String(row?.CustomerID?.value ?? row?.CustomerID ?? "").trim();
-  if (!baid) {
-    console.warn("[staff-pickups][lookup] salesorder fallback missing baid", { orderNbr });
-    return false;
-  }
-
-  const status = String(row?.Status?.value ?? row?.Status ?? "Open");
-  const shipVia = String(row?.ShipVia?.value ?? row?.ShipVia ?? "").trim() || null;
-  const locationId = String(row?.LocationID?.value ?? row?.LocationID ?? "").trim() || null;
-  const lastModifiedRaw = row?.LastModified?.value ?? row?.LastModified ?? null;
-  const lastModified =
-    lastModifiedRaw && !Number.isNaN(new Date(lastModifiedRaw).getTime())
-      ? new Date(lastModifiedRaw)
-      : null;
-
-  await refreshOrderReadyDetails({
-    baid,
-    orderNbr,
-    status,
-    shipVia,
-    erpLocationId: locationId,
-    lastModified,
-  });
-
-  console.info("[staff-pickups][lookup] salesorder fallback complete", {
-    orderNbr,
-    baid,
-    status,
-    shipVia,
-    locationId,
-  });
-  return true;
-}
-
-async function getOrRefreshOrderDetail(
-  orderNbrInput: string,
-  options?: { forceFresh?: boolean }
-): Promise<StaffOrderDetail | null> {
-  const orderNbr = normalizeOrderNbr(orderNbrInput);
-  const forceFresh = Boolean(options?.forceFresh);
-  const provider = getLookupProvider();
-  const refreshFailures: Array<{ phase: string; provider: string; errorName: string; reason: string }> = [];
-
-  console.info("[staff-pickups][lookup] start", { orderNbr, forceFresh, provider });
-  let summary = await findOrderSummary(orderNbr);
-  if (summary) {
-    console.info("[staff-pickups][lookup] db hit", {
-      orderNbr,
-      ...getOrderSummaryLogSnapshot(summary),
-    });
-  } else {
-    console.info("[staff-pickups][lookup] db miss", { orderNbr, provider });
-  }
-
-  if (summary && forceFresh) {
-    const fallbackSummary = summary;
-    const startedAt = Date.now();
-    try {
-      console.info("[staff-pickups][lookup] forced refresh start", {
-        orderNbr,
-        baid: summary.baid,
-        provider,
-        dbSnapshot: getOrderSummaryLogSnapshot(summary),
-      });
-      await refreshOrderReadyDetails({
-        baid: summary.baid,
-        orderNbr,
-        status: summary.status,
-        shipVia: summary.shipVia,
-        erpLocationId: summary.locationId,
-      });
-      summary = await findOrderSummary(orderNbr);
-      if (summary) {
-        console.info("[staff-pickups][lookup] fresh refresh succeeded; using refreshed db snapshot", {
-          orderNbr,
-          provider,
-          durationMs: Date.now() - startedAt,
-          ...getOrderSummaryLogSnapshot(summary),
-        });
-      } else {
-        console.warn("[staff-pickups][lookup] fresh refresh completed but db summary was not found", {
-          orderNbr,
-          provider,
-          durationMs: Date.now() - startedAt,
-        });
-      }
-    } catch (err) {
-      const failure = {
-        phase: "forced-refresh",
-        provider,
-        ...getLookupErrorDetails(err),
-      };
-      refreshFailures.push(failure);
-      console.warn("[staff-pickups][lookup] fresh refresh failed; returning existing db snapshot", {
-        orderNbr,
-        durationMs: Date.now() - startedAt,
-        ...failure,
-        ...getOrderSummaryLogSnapshot(fallbackSummary),
-      });
-    }
-  }
-
-  if (!summary) {
-    const notice = await prisma.orderReadyNotice.findUnique({
-      where: { orderNbr },
-      select: {
-        baid: true,
-        status: true,
-        shipVia: true,
-        locationId: true,
-      },
-    });
-    if (notice?.baid) {
-      console.info("[staff-pickups][lookup] orderReadyNotice fallback start", {
-        orderNbr,
-        baid: notice.baid,
-        provider,
-      });
-      const startedAt = Date.now();
-      try {
-        await refreshOrderReadyDetails({
-          baid: notice.baid,
-          orderNbr,
-          status: notice.status,
-          shipVia: notice.shipVia,
-        });
-      } catch (err) {
-        const failure = {
-          phase: "orderReadyNotice-refresh",
-          provider,
-          ...getLookupErrorDetails(err),
-        };
-        refreshFailures.push(failure);
-        console.warn("[staff-pickups][lookup] orderReadyNotice refresh failed", {
-          orderNbr,
-          durationMs: Date.now() - startedAt,
-          noticeBaid: notice.baid,
-          ...failure,
-        });
-      }
-      summary = await findOrderSummary(orderNbr);
-      console.info("[staff-pickups][lookup] orderReadyNotice fallback result", {
-        orderNbr,
-        provider,
-        durationMs: Date.now() - startedAt,
-        found: Boolean(summary),
-        ...(summary ? getOrderSummaryLogSnapshot(summary) : { refreshFailures }),
-      });
-    }
-  }
-
-  if (!summary) {
-    const startedAt = Date.now();
-    try {
-      const refreshed = await refreshOrderFromSalesOrderEndpoint(orderNbr);
-      if (refreshed) {
-        summary = await findOrderSummary(orderNbr);
-      }
-      console.info("[staff-pickups][lookup] salesorder fallback result", {
-        orderNbr,
-        provider,
-        durationMs: Date.now() - startedAt,
-        refreshed,
-        found: Boolean(summary),
-        ...(summary ? getOrderSummaryLogSnapshot(summary) : { refreshFailures }),
-      });
-    } catch (err) {
-      const failure = {
-        phase: "salesorder-header-refresh",
-        provider,
-        ...getLookupErrorDetails(err),
-      };
-      refreshFailures.push(failure);
-      console.warn("[staff-pickups][lookup] salesorder fallback refresh failed", {
-        orderNbr,
-        durationMs: Date.now() - startedAt,
-        ...failure,
-      });
-    }
-  }
-
-  if (!summary) {
-    console.warn("[staff-pickups][lookup] no db fallback available after lookup attempts", {
-      orderNbr,
-      provider,
-      refreshFailures,
-    });
-    return null;
-  }
-
-  try {
-    await refreshPrepayPaymentsIfNeeded({
-      baid: summary.baid,
-      orderNbrs: [orderNbr],
-      context: "staff-pickups-order-lookup",
-    });
-  } catch (err) {
-    const failure = {
-      phase: "payment-refresh",
-      provider,
-      ...getLookupErrorDetails(err),
-    };
-    refreshFailures.push(failure);
-    console.warn("[payment-refresh][staff-pickups-order-lookup] payment refresh failed; returning DB payment snapshot", {
-      orderNbr,
-      ...failure,
-      ...getOrderSummaryLogSnapshot(summary),
-    });
-  }
-
-  const paymentRow = await prisma.erpOrderPayment.findFirst({
-    where: {
-      baid: summary.baid,
-      orderNbr,
-    },
-    select: {
-      orderTotal: true,
-      unpaidBalance: true,
-      otherFees: true,
-      terms: true,
-      status: true,
-    },
-  });
-
+  const summary = await refreshVerifiedPickupOrder(orderNbr);
+  if (!summary) return null;
+  const paymentRow = summary.ErpOrderPayment;
   const payment = {
     orderTotal: toNumber(paymentRow?.orderTotal),
     otherFees: toNumber(paymentRow?.otherFees),
@@ -828,6 +491,32 @@ async function getOrRefreshOrderDetail(
   };
 }
 
+function sendVerificationError(res: any, error: unknown) {
+  const verifiedError = error instanceof PickupOrderVerificationError ? error : null;
+  console.warn("[staff-pickups] verification blocked request", {
+    code: verifiedError?.code ?? "ERP_VERIFICATION_FAILED",
+    reason: error instanceof Error ? error.message : String(error),
+  });
+  return res.status(verifiedError?.statusCode ?? 503).json({
+    message: verifiedError?.message ?? "Unable to verify current order data. Please retry; no appointment changes were saved.",
+    code: verifiedError?.code ?? "ERP_VERIFICATION_FAILED",
+  });
+}
+
+async function getVerifiedOrderDetails(orderNbrs: string[], res: any) {
+  try {
+    const details = await Promise.all(orderNbrs.map((orderNbr) => getOrRefreshOrderDetail(orderNbr)));
+    if (details.some((detail) => !detail)) {
+      res.status(404).json({ message: "One or more orders were not found in Acumatica.", code: "ORDER_NOT_FOUND" });
+      return null;
+    }
+    return details as StaffOrderDetail[];
+  } catch (error) {
+    sendVerificationError(res, error);
+    return null;
+  }
+}
+
 function findPrepayBlock(
   detail: StaffOrderDetail,
   selectedItems: z.infer<typeof selectedItemsSchema> | undefined
@@ -886,7 +575,7 @@ function getSelectedQtyForLine(
 
   if (!line.inventoryId) return 0;
   return items
-    .filter((item) => item.inventoryId === line.inventoryId)
+    .filter((item) => !item.lineId && item.inventoryId === line.inventoryId)
     .reduce((sum, item) => sum + item.qty, 0);
 }
 
@@ -896,52 +585,22 @@ function normalizeSelections(
 ) {
   if (!selectedItems?.length) return [];
   const allowed = new Set(allowedOrders);
-  return selectedItems
+  const filtered = selectedItems
     .filter((selection) => allowed.has(selection.orderNbr))
     .map((selection) => ({
       orderNbr: selection.orderNbr,
       items: selection.items.filter((item) => item.inventoryId && item.qty > 0),
     }))
     .filter((selection) => selection.items.length > 0);
-}
-
-async function validateSelectedItemQty(
-  selectedItems: z.infer<typeof selectedItemsSchema>[] | undefined
-) {
-  if (!selectedItems?.length) return null;
-  const lineIds = Array.from(
-    new Set(
-      selectedItems.flatMap((selection) =>
-        selection.items.map((item) => item.lineId).filter(Boolean)
-      )
-    )
-  ) as string[];
-  if (!lineIds.length) return null;
-
-  const lines = await prisma.erpOrderLine.findMany({
-    where: { id: { in: lineIds } },
-    select: { id: true, openQty: true, orderNbr: true },
-  });
-  const lineMap = new Map(lines.map((line) => [line.id, line]));
-
-  for (const selection of selectedItems) {
-    for (const item of selection.items) {
-      if (!item.lineId) continue;
-      const line = lineMap.get(item.lineId);
-      if (!line) continue;
-      const openQty = line.openQty == null ? null : Number(line.openQty);
-      if (openQty != null && item.qty > openQty) {
-        return {
-          orderNbr: selection.orderNbr,
-          lineId: item.lineId,
-          maxQty: openQty,
-        };
-      }
-    }
+  const grouped = new Map<string, (typeof filtered)[number]>();
+  for (const selection of filtered) {
+    const previous = grouped.get(selection.orderNbr);
+    if (previous) previous.items.push(...selection.items);
+    else grouped.set(selection.orderNbr, selection);
   }
-
-  return null;
+  return [...grouped.values()];
 }
+
 
 function areSelectedItemsEqual(
   a: { orderNbr: string; items: { inventoryId: string; lineId?: string | null; qty: number }[] }[],
@@ -1259,14 +918,9 @@ pickupsRouter.post("/orders/lookup", async (req, res) => {
     userId: req.auth?.id,
     role: req.auth?.role,
   });
-  const normalizedOrderNbr = normalizeOrderNbr(body.data.orderNbr);
-  const detail = await getOrRefreshOrderDetail(body.data.orderNbr, { forceFresh: true });
-  if (!detail) {
-    console.warn("[staff-pickups][lookup] endpoint not found", {
-      orderNbr: body.data.orderNbr,
-    });
-    return res.status(404).json({ message: "Order not found." });
-  }
+  const details = await getVerifiedOrderDetails([normalizeOrderNbr(body.data.orderNbr)], res);
+  if (!details) return;
+  const detail = details[0];
 
   console.info("[staff-pickups][lookup] endpoint success", {
     orderNbr: detail.orderNbr,
@@ -1419,76 +1073,14 @@ pickupsRouter.post("/", async (req, res) => {
     return res.status(400).json({ message: "Select at least one item." });
   }
 
-  const invalidQty = await validateSelectedItemQty(normalizedSelections);
-  if (invalidQty) {
-    console.warn("[staff-pickups][create] blocked: selected qty exceeds open qty", invalidQty);
-    return res.status(400).json({
-      message: "Selected quantity exceeds open quantity.",
-      orderNbr: invalidQty.orderNbr,
-      lineId: invalidQty.lineId,
-      maxQty: invalidQty.maxQty,
-    });
+  const details = await getVerifiedOrderDetails(orderNbrs, res);
+  if (!details) return;
+  try {
+    validatePickupOrderSelections(details, normalizedSelections);
+  } catch (error) {
+    return sendVerificationError(res, error);
   }
-
-  const details = await Promise.all(orderNbrs.map((orderNbr) => getOrRefreshOrderDetail(orderNbr)));
-  const missingOrder = details.find((detail) => !detail);
-  if (missingOrder) {
-    console.warn("[staff-pickups][create] blocked: missing order detail", { orderNbrs });
-    return res.status(404).json({ message: "One or more orders were not found." });
-  }
-
-  const detailMap = new Map(
-    details.filter(Boolean).map((detail) => [detail!.orderNbr, detail as StaffOrderDetail])
-  );
-  for (const selection of normalizedSelections) {
-    const detail = detailMap.get(selection.orderNbr);
-    if (!detail) {
-      return res.status(404).json({ message: `Order ${selection.orderNbr} was not found.` });
-    }
-    const lineMap = new Map(detail.lines.map((line) => [line.id, line]));
-    const inventoryMap = new Map(
-      detail.lines
-        .filter((line) => line.inventoryId)
-        .map((line) => [String(line.inventoryId), line])
-    );
-    for (const item of selection.items) {
-      const lineId = item.lineId ?? "";
-      const line = lineMap.get(lineId) ?? inventoryMap.get(item.inventoryId);
-      if (!line) {
-        console.warn("[staff-pickups][create] blocked: selected line missing", {
-          orderNbr: selection.orderNbr,
-          inventoryId: item.inventoryId,
-          lineId: item.lineId ?? null,
-        });
-        return res.status(400).json({
-          message: `Selected line is not available on order ${selection.orderNbr}.`,
-        });
-      }
-      if (!line.isAllocated || line.allocatedQty <= 0) {
-        console.warn("[staff-pickups][create] blocked: item not allocated", {
-          orderNbr: selection.orderNbr,
-          inventoryId: line.inventoryId,
-          lineId: line.id,
-          allocatedQty: line.allocatedQty,
-          isAllocated: line.isAllocated,
-        });
-        return res.status(400).json({
-          message: `Item ${line.inventoryId ?? "line"} is not ready for pickup on ${selection.orderNbr}.`,
-        });
-      }
-      if (item.qty > line.openQty) {
-        console.warn("[staff-pickups][create] blocked: item qty exceeds open qty", {
-          orderNbr: selection.orderNbr,
-          inventoryId: line.inventoryId,
-          requestedQty: item.qty,
-          openQty: line.openQty,
-        });
-        return res.status(400).json({
-          message: `Selected quantity exceeds open quantity for ${selection.orderNbr}.`,
-        });
-      }
-    }
-  }
+  const detailMap = new Map(details.map((detail) => [detail.orderNbr, detail]));
 
   if (!prepayOverride) {
     for (const orderNbr of orderNbrs) {
@@ -1799,6 +1391,7 @@ pickupsRouter.patch("/:id", async (req, res) => {
     selectedItems: z.array(selectedItemsSchema).optional(),
     notifyCustomer: z.boolean().optional(),
     cancelReason: z.string().optional(),
+    prepayOverride: z.boolean().optional(),
   }).safeParse(req.body);
 
   if (!body.success) return res.status(400).json({ message: "Invalid request body" });
@@ -1918,14 +1511,41 @@ pickupsRouter.patch("/:id", async (req, res) => {
     }
   }
   const normalizedSelections = normalizeSelections(body.data.selectedItems, nextOrderNbrs);
-  const invalidQty = await validateSelectedItemQty(normalizedSelections);
-  if (invalidQty) {
-    return res.status(400).json({
-      message: "Selected quantity exceeds open quantity.",
-      orderNbr: invalidQty.orderNbr,
-      lineId: invalidQty.lineId,
-      maxQty: invalidQty.maxQty,
-    });
+  const existingSelections = Array.from(
+    existing.lines.reduce((map, line) => {
+      const entry = map.get(line.orderNbr) ?? [];
+      entry.push({ lineId: line.lineId ?? undefined, inventoryId: line.inventoryId, qty: Number(line.qtySelected) });
+      map.set(line.orderNbr, entry);
+      return map;
+    }, new Map<string, { lineId?: string; inventoryId: string; qty: number }[]>())
+  ).map(([orderNbr, items]) => ({ orderNbr, items }));
+  const selectionTotals = (selections: typeof normalizedSelections) => {
+    const totals = new Map<string, number>();
+    for (const selection of selections) for (const item of selection.items) {
+      const key = JSON.stringify([selection.orderNbr, item.lineId ?? "", item.inventoryId]);
+      totals.set(key, (totals.get(key) ?? 0) + item.qty);
+    }
+    return totals;
+  };
+  const before = selectionTotals(existingSelections);
+  const selectionsIncreased = [...selectionTotals(normalizedSelections)].some(([key, qty]) => qty > (before.get(key) ?? 0));
+  const ordersAdded = nextOrderNbrs.some((nbr) => !existing.orders.some((order) => order.orderNbr === nbr));
+  const requiresVerification = ordersAdded || selectionsIncreased || activatingAppointment;
+  if (requiresVerification) {
+    const details = await getVerifiedOrderDetails(nextOrderNbrs, res);
+    if (!details) return;
+    const selections = body.data.selectedItems ? normalizedSelections : existingSelections.filter((s) => nextOrderNbrs.includes(s.orderNbr));
+    try {
+      validatePickupOrderSelections(details, selections);
+    } catch (error) {
+      return sendVerificationError(res, error);
+    }
+    if (!(body.data.prepayOverride && req.auth?.role === "ADMIN")) {
+      for (const detail of details) {
+        const block = findPrepayBlock(detail, selections.find((s) => s.orderNbr === detail.orderNbr));
+        if (block) return res.status(409).json({ message: "Prepay balance requires an admin override.", code: "PREPAY_BLOCKED", ...block });
+      }
+    }
   }
 
   const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -2002,18 +1622,6 @@ pickupsRouter.patch("/:id", async (req, res) => {
       body.data.status === "Completed" ||
       body.data.status === "NoShow");
 
-  const existingSelections = Array.from(
-    existing.lines.reduce((map, line) => {
-      const entry = map.get(line.orderNbr) ?? [];
-      entry.push({
-        lineId: line.lineId ?? undefined,
-        inventoryId: line.inventoryId,
-        qty: Number(line.qtySelected),
-      });
-      map.set(line.orderNbr, entry);
-      return map;
-    }, new Map<string, { lineId?: string; inventoryId: string; qty: number }[]>())
-  ).map(([orderNbr, items]) => ({ orderNbr, items }));
   const itemsChanged = Array.isArray(body.data.selectedItems)
     ? !areSelectedItemsEqual(existingSelections, normalizedSelections)
     : false;
